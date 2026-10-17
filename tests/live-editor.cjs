@@ -1,0 +1,109 @@
+const { chromium } = require('playwright');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+
+// Supply a real Comrak rendering through the same bridge used by the desktop UI.
+// Run after `cargo build --example editor-fixture` (temporary diagnostic helper).
+(async () => {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'folio-live-'));
+  const source = '# Live editing\n\n' + ('A **bold** café 😀 sentence with an [inline link](https://example.com), &amp; and \\*escaped\\* punctuation. '.repeat(5)) + '\n\n- [ ] A task\n- Another item\n\n```mermaid\ngraph TD; A-->B;\n```\n\n```rust\nfn main() {}\n```\n';
+  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1040, height: 900 } });
+    const errors = []; page.on('pageerror', error => errors.push(String(error)));
+    await page.exposeFunction('nativeRender', content => {
+      const file = path.join(scratch, 'input.md'); fs.writeFileSync(file, content);
+      return JSON.parse(execFileSync(path.resolve('target/debug/examples/editor-fixture'), [file], { encoding: 'utf8' }));
+    });
+    await page.addInitScript(source => {
+      window.calls = [];
+      window.__TAURI__ = { core: { invoke: async (command, args = {}) => {
+        window.calls.push(command);
+        if (command === 'bootstrap') return { paths: ['/tmp/live.md'], theme: null };
+        if (command === 'open_document') return { path: '/tmp/live.md', name: 'live.md', content: source };
+        if (command === 'render_markdown') return window.nativeRender(args.content);
+        if (command === 'save_document') { window.savedContent = args.content; return { path: '/tmp/live.md', name: 'live.md' }; }
+        if (command === 'set_task_checked') return args.content.replace('- [ ] A task', '- [x] A task');
+        return null;
+      } }, event: { listen: async () => () => {} }, webview: { getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) } };
+    }, source);
+    await page.goto('file://' + path.resolve('ui/index.html'));
+    await page.waitForFunction(() => !busy && document.querySelector('.mermaid-host svg'));
+    assert.equal(await page.locator('#mode-switch button').count(), 2);
+    const initialCalls = await page.evaluate(() => calls.filter(x => x === 'render_markdown').length);
+    await page.evaluate(() => window.diagram = document.querySelector('.mermaid-host'));
+    await page.locator('#edit-mode').click(); await page.waitForFunction(() => !busy);
+    assert.equal(await page.evaluate(() => calls.filter(x => x === 'render_markdown').length), initialCalls);
+    const paragraph = page.locator('#preview > p').first();
+    const bounds = await paragraph.boundingBox();
+    await page.mouse.click(bounds.x + 120, bounds.y + 72);
+    const editor = page.locator('.live-editor textarea'); await editor.waitFor();
+    const originalLine = await editor.inputValue();
+    assert(originalLine.length < source.split('\n\n')[1].length / 2, 'only a wrapped visual line should become raw Markdown');
+    assert(await page.locator('.live-before').count()); assert(await page.locator('.live-after').count());
+    await page.screenshot({ path: '/tmp/folio-live-line.png' });
+    await editor.fill(originalLine + ' EDITED');
+    assert((await page.evaluate(() => current.content)).includes(' EDITED'));
+    await page.keyboard.press('Control+z'); assert.equal(await editor.inputValue(), originalLine);
+    await page.keyboard.press('Control+Shift+z'); assert((await editor.inputValue()).endsWith(' EDITED'));
+    await page.keyboard.press('Control+z'); await page.keyboard.press('Control+y');
+    assert((await editor.inputValue()).endsWith(' EDITED'));
+    await page.keyboard.press('Control+Enter'); await page.waitForFunction(() => !busy);
+    assert.equal(await page.locator('.live-editor').count(), 0);
+    assert(await page.evaluate(() => window.diagram === document.querySelector('.mermaid-host')), 'unchanged Mermaid DOM is reused');
+    await page.locator('#read-mode').click(); await page.waitForFunction(() => !busy);
+    await page.keyboard.press('Control+z'); await page.waitForFunction(() => !busy);
+    assert.equal(await page.evaluate(() => current.content), source);
+    await page.keyboard.press('Control+y'); await page.waitForFunction(() => !busy);
+    assert((await page.evaluate(() => current.content)).includes(' EDITED'));
+    await page.locator('#edit-mode').click(); await page.waitForFunction(() => !busy);
+    await page.locator('.mermaid-host').click();
+
+    await editor.waitFor();
+    assert((await editor.inputValue()).startsWith('```mermaid'));
+    await editor.fill('```mermaid\ngraph TD; A-->C;\n```');
+    await page.keyboard.press('Control+Enter'); await page.waitForFunction(() => !busy);
+    await page.locator('pre[data-language="rust"]').click(); await editor.waitFor();
+    assert.equal(await editor.inputValue(), '```rust\nfn main() {}\n```');
+    await editor.fill('```rust\nfn main() { println!("hello"); }\n```');
+    await page.locator('#read-mode').click(); await page.waitForFunction(() => !busy);
+    assert((await page.locator('pre[data-language="rust"]').textContent()).includes('println!'));
+    await page.locator('#edit-mode').click(); await page.waitForFunction(() => !busy);
+    await page.locator('#preview h1').click(); await editor.waitFor();
+    await editor.fill('# A heading before the task');
+    await page.locator('input[data-task-index="0"]').check(); await page.waitForFunction(() => !busy);
+    assert((await page.evaluate(() => current.content)).includes('- [x] A task\n- Another item'));
+    assert((await page.evaluate(() => current.content)).startsWith('# A heading before the task'));
+    await page.keyboard.press('Control+z'); await page.waitForFunction(() => !busy);
+    assert.equal(await page.locator('input[data-task-index="0"]').isChecked(), false);
+    await page.keyboard.press('Control+Shift+z'); await page.waitForFunction(() => !busy);
+    assert.equal(await page.locator('input[data-task-index="0"]').isChecked(), true);
+    await page.locator('#preview h1').click(); await editor.waitFor();
+    await editor.fill('# A different heading');
+    await page.keyboard.press('Control+s'); await page.waitForFunction(() => !busy);
+    assert((await page.evaluate(() => window.savedContent)).startsWith('# A different heading'));
+    // Clicking a different line commits the first and opens the next in place.
+    await page.locator('#preview h1').click(); await editor.waitFor();
+    await editor.fill('# Click away commits');
+    const nextBounds = await page.locator('#preview > p').first().boundingBox();
+    await page.mouse.click(nextBounds.x + 50, nextBounds.y + 15);
+    await page.waitForFunction(() => !busy && inlineEdit && inlineEdit.textarea.value !== '# Click away commits');
+    assert((await page.evaluate(() => current.content)).startsWith('# Click away commits'));
+    await page.keyboard.press('Escape'); await page.waitForFunction(() => !busy);
+    await page.keyboard.press('Control+s'); await page.waitForFunction(() => !busy);
+    await page.keyboard.press('Control+n'); await page.waitForFunction(() => !busy && current.content === '');
+    await editor.waitFor(); await editor.fill('A brand new **document**');
+    await page.locator('#read-mode').click(); await page.waitForFunction(() => !busy);
+    assert.equal(await page.locator('#preview p').textContent(), 'A brand new document');
+    await page.keyboard.press('Control+z'); await page.waitForFunction(() => !busy);
+    assert.equal(await page.evaluate(() => current.content), '');
+    assert.equal(await page.locator('[data-empty-edit]').count(), 0, 'Preview must not display an Edit placeholder');
+    await page.keyboard.press('Control+y'); await page.waitForFunction(() => !busy);
+    assert.equal(await page.evaluate(() => current.content), 'A brand new **document**');
+    assert.deepEqual(errors, []);
+    console.log('PASS: real Markdown visual-line editing, Unicode, whole code blocks, cached diagrams, memory commits, save, checkbox history and all undo/redo shortcuts.');
+  } finally { await browser.close(); fs.rmSync(scratch, { recursive: true, force: true }); }
+})().catch(error => { console.error(error); process.exit(1); });
