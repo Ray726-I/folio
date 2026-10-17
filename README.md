@@ -2,6 +2,8 @@
 
 A small Linux Markdown reader and editor built with Rust and Tauri. The interface uses a quiet GNOME-style header and the system WebKitGTK engine. The Markdown parser, syntax highlighter, file operations, and Omarchy theme reader are Rust. The UI is plain HTML/CSS with a little JavaScript; no frontend build step is required.
 
+Folio is an early prototype. Linux is the supported platform; the build uses your system's GTK and WebKitGTK libraries.
+
 ## Run
 
 ```sh
@@ -76,7 +78,7 @@ cargo clippy --all-targets -- -D warnings
 The Rust tests cover external-edit conflicts, atomic save behavior, CRLF/BOM/permission preservation, HTML sanitization, syntax-highlighted Markdown, math and Mermaid source markers, wikilinks, emoji, extension elements, document anchor identifiers, edit-block source mapping, task toggling, local image boundaries, and theme validation. An optional UI smoke test checks keyboard controls, the command window, conditional/live Omarchy themes, theme isolation, unsaved-change prompts, save conflicts, close protection, find, vendored KaTeX/Mermaid loading, the collapsible file tree, and live editing. It mocks the native IPC layer; native filesystem and rendering behavior are covered separately by the Rust tests.
 
 ```sh
-npm install
+npm ci
 npx playwright install chromium
 npm run test:ui
 ```
@@ -87,7 +89,7 @@ npm run test:ui
 - `src/markdown.rs`: parsing (Comrak), syntax highlighting, sanitization, local images.
 - `src/theme.rs`: XDG-aware Omarchy palette detection.
 - `src/main.rs`: desktop lifecycle, native dialogs, commands, direct file launching.
-- `ui/`: bundled interface, command window, and `ui/vendor/` (KaTeX and Mermaid, licensed MIT).
+- `ui/`: bundled interface, command window, and preview dependencies. Dependency licenses are listed in `THIRD_PARTY_NOTICES.md`.
 
 
 For real-parser live editing regression checks:
@@ -96,3 +98,9 @@ For real-parser live editing regression checks:
 cargo build --example editor-fixture
 node tests/live-editor.cjs
 ```
+
+The GitHub Actions workflow runs Rust formatting, tests, Clippy, and the UI checks on Ubuntu. Node.js is needed only for these UI checks.
+
+## License
+
+Folio is licensed under [MIT](LICENSE). Bundled preview libraries and fonts retain their own licenses; see [third-party notices](THIRD_PARTY_NOTICES.md).

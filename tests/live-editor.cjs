@@ -5,11 +5,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-// Supply a real Comrak rendering through the same bridge used by the desktop UI.
-// Run after `cargo build --example editor-fixture` (temporary diagnostic helper).
 (async () => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'folio-live-'));
-  const source = '# Live editing\n\n' + ('A **bold** café 😀 sentence with an [inline link](https://example.com), &amp; and \\*escaped\\* punctuation. '.repeat(5)) + '\n\n- [ ] A task\n- Another item\n\n```mermaid\ngraph TD; A-->B;\n```\n\n```rust\nfn main() {}\n```\n';
+  const source = '# Live editing\n\n' + ('A **bold** café \u{1f600} sentence with an [inline link](https://example.com), &amp; and \\*escaped\\* punctuation. '.repeat(5)) + '\n\n- [ ] A task\n- Another item\n\n```mermaid\ngraph TD; A-->B;\n```\n\n```rust\nfn main() {}\n```\n';
   const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
   try {
     const page = await browser.newPage({ viewport: { width: 1040, height: 900 } });
@@ -85,7 +83,7 @@ const { execFileSync } = require('node:child_process');
     await editor.fill('# A different heading');
     await page.keyboard.press('Control+s'); await page.waitForFunction(() => !busy);
     assert((await page.evaluate(() => window.savedContent)).startsWith('# A different heading'));
-    // Clicking a different line commits the first and opens the next in place.
+
     await page.locator('#preview h1').click(); await editor.waitFor();
     await editor.fill('# Click away commits');
     const nextBounds = await page.locator('#preview > p').first().boundingBox();

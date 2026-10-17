@@ -57,9 +57,6 @@ fn markdown_options() -> Options<'static> {
     extension.header_id_prefix = Some("doc-".into());
     options
 }
-
-/// Convert a comrak line/column position into a byte offset into `source`.
-/// Columns are 1-based UTF-8 byte columns, matching the parser's default.
 fn byte_offset(source: &str, position: LineColumn) -> Option<usize> {
     let mut offset = 0usize;
     for (index, line) in source.split('\n').enumerate() {
@@ -71,16 +68,12 @@ fn byte_offset(source: &str, position: LineColumn) -> Option<usize> {
     }
     None
 }
-
-/// An inclusive source range, converted to `start..end` byte offsets.
 fn node_range(source: &str, node: &comrak::nodes::AstNode) -> Option<(usize, usize)> {
     let position = node.data().sourcepos;
     let start = byte_offset(source, position.start)?;
     let end = byte_offset(source, position.end)? + 1;
     Some((start, end))
 }
-
-/// Source spans for the top-level elements in the rendered preview.
 pub fn edit_blocks(source: &str) -> Vec<EditBlock> {
     let options = markdown_options();
     let arena = Arena::new();
@@ -128,9 +121,6 @@ pub fn edit_blocks(source: &str) -> Vec<EditBlock> {
     }
     blocks
 }
-
-/// Toggle the checkbox symbol of the nth task item in `source`, preserving all
-/// other list text and whitespace.
 pub fn set_task_checked(source: &str, task_index: usize, checked: bool) -> String {
     let options = markdown_options();
     let arena = Arena::new();
@@ -153,9 +143,6 @@ pub fn set_task_checked(source: &str, task_index: usize, checked: bool) -> Strin
 }
 
 static SYNTAXES: LazyLock<SyntectAdapter> = LazyLock::new(|| SyntectAdapter::new(None));
-
-// Syntect's class-based adapter drops Comrak's <pre> attributes. Preserve the
-// source position so rendered code, math and Mermaid remain directly editable.
 struct SourceHighlighter;
 impl SyntaxHighlighterAdapter for SourceHighlighter {
     fn write_highlighted(
@@ -214,9 +201,6 @@ fn local_image(destination: &str, base: Option<&Path>) -> Option<String> {
         STANDARD.encode(fs::read(path).ok()?)
     ))
 }
-
-/// Number each rendered task checkbox so the UI can toggle it and the Rust
-/// side can find it again by index.
 fn patch_task_items(html: &str) -> String {
     let needle = "<input type=\"checkbox\"";
     let mut output = String::with_capacity(html.len());
@@ -366,7 +350,7 @@ mod tests {
     #[test]
     fn live_edit_nodes_preserve_unicode_inline_and_nested_code_ranges() {
         let source =
-            "# Café 😀\n\nA **bold** &amp; \\*word\\*.\n\n> ```rust\n> let café = 1;\n> ```\n";
+            "# Café \u{1f600}\n\nA **bold** &amp; \\*word\\*.\n\n> ```rust\n> let café = 1;\n> ```\n";
         let blocks = edit_blocks(source);
         let nodes: Vec<_> = blocks.iter().flat_map(|block| &block.nodes).collect();
         let bold = nodes
@@ -375,7 +359,7 @@ mod tests {
             .unwrap();
         assert_eq!(&source[bold.start..bold.end], "bold");
         let heading = nodes.iter().find(|node| node.kind == "heading").unwrap();
-        assert_eq!(&source[heading.start..heading.end], "# Café 😀");
+        assert_eq!(&source[heading.start..heading.end], "# Café \u{1f600}");
         let code = nodes.iter().find(|node| node.kind == "code-block").unwrap();
         assert!(source[code.start..code.end].contains("let café = 1;"));
         assert!(render(source, None).contains(&format!("data-sourcepos=\"{}\"", code.sourcepos)));
@@ -391,7 +375,7 @@ mod tests {
             None,
         );
         assert!(rendered.contains("data-wikilink=\"true\""));
-        assert!(rendered.contains("✨"));
+        assert!(rendered.contains("\u{2728}"));
         assert!(rendered.contains("<mark") && rendered.contains(">mark</mark>"));
         assert!(rendered.contains("<ins") && rendered.contains(">added</ins>"));
         assert!(rendered.contains("<sub") && rendered.contains(">2</sub>"));

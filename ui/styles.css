@@ -16,19 +16,19 @@ dialog{color:var(--fg);background:var(--panel);border:1px solid var(--line);padd
 @media(prefers-reduced-motion:reduce){.reader-scroll{scroll-behavior:auto}}
 .button.suggested{background:var(--accent);color:var(--accent-ink,#fff)}.button.suggested:hover{background:color-mix(in srgb,var(--accent) 90%,var(--fg))}
 .welcome-inner>#welcome-folder{margin-left:8px}.document-view:has(#file-browser:not([hidden])) #file-browser{display:block}#file-browser{width:235px;flex-shrink:0;border-right:1px solid var(--line);background:color-mix(in srgb,var(--surface) 55%,var(--bg));padding:22px 11px;overflow:auto}.folder-heading{display:flex;align-items:start;justify-content:space-between;padding:0 6px 12px;border-bottom:1px solid var(--line);margin-bottom:8px}.folder-heading h2{font-size:11px;margin:0;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}.folder-heading p{font-size:12px;font-weight:600;margin:5px 0 0;overflow-wrap:anywhere}.folder-entry{display:flex;align-items:center;width:100%;gap:8px;padding:7px 7px;border-radius:6px;text-align:left;font-size:12px;overflow:hidden}.folder-entry:hover{background:var(--hover)}.folder-entry.selected{background:var(--selection);color:var(--fg)}.folder-entry .icon{width:15px;height:15px;color:var(--muted)}.folder-entry span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.folder-entry.directory{font-weight:600;color:var(--muted)}.folder-empty{max-width:790px;margin:0 auto;padding:16vh 50px;text-align:center;color:var(--muted)}.folder-empty h1{color:var(--fg);font-size:24px}.folder-empty p{font-size:14px}.markdown [contenteditable="true"]{border-radius:3px;outline:1px solid transparent;outline-offset:3px;cursor:text}.markdown [contenteditable="true"]:hover{outline-color:color-mix(in srgb,var(--accent) 28%,transparent)}.markdown [contenteditable="true"]:focus{outline-color:var(--accent);background:color-mix(in srgb,var(--accent) 4%,transparent)}.markdown input[type="checkbox"]:not(:disabled){cursor:pointer}.markdown .footnote-definition-label{vertical-align:super;font-size:.8em}@media(max-width:850px){#file-browser{width:195px;padding:16px 8px}.headerbar{grid-template-columns:auto minmax(45px,1fr) auto;gap:5px}.segmented button{padding:4px 8px;font-size:11px}}
-/* Keep the active reading mode unmistakable across every palette. */
+
 .segmented{gap:2px;border:1px solid var(--line);background:color-mix(in srgb,var(--fg) 7%,var(--surface))}
 .segmented button{border:1px solid transparent;color:var(--muted);transition:background-color .12s ease,color .12s ease,border-color .12s ease}
 .segmented button:hover:not([aria-pressed="true"]){color:var(--fg);background:color-mix(in srgb,var(--fg) 7%,var(--surface))}
 .segmented button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink,#fff);border-color:color-mix(in srgb,var(--accent) 70%,var(--fg));box-shadow:0 1px 3px #0003;font-weight:700}
 .segmented button:focus-visible{outline:2px solid var(--fg);outline-offset:1px}
-/* Folder navigation and adjustable sidebars. */
+
 #outline{width:var(--outline-sidebar-width,215px);border-right:0}
 #file-browser{width:var(--folder-sidebar-width,235px);border-right:0}
 .sidebar-resizer{width:6px;flex:0 0 6px;cursor:col-resize;background:var(--line);opacity:.65;touch-action:none}
 .sidebar-resizer:hover,.sidebar-resizer.dragging,.sidebar-resizer:focus-visible{background:var(--accent);opacity:1;outline:0}
 .folder-heading{align-items:center;gap:6px}.folder-heading>div{flex:1;min-width:0}.folder-heading p{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.folder-glyph{width:12px;flex:none;color:var(--muted)}
-/* Explorer keeps the opened folder fixed while its descendants expand in place. */
+
 #file-browser{padding:12px 7px 20px}
 .folder-heading{padding:5px 5px 12px;margin-bottom:8px}
 .folder-heading h2{font-size:10px}
@@ -44,12 +44,12 @@ dialog{color:var(--fg);background:var(--panel);border:1px solid var(--line);padd
 .tree-spacer{width:12px;flex:none}
 .folder-entry>span:last-child{min-width:0}
 body.focus-mode #file-browser,body.focus-mode .sidebar-resizer{display:none!important}
-/* Read+Edit keeps the rendered page visible around one source block at a time. */
+
 .markdown .preview-editable{cursor:text;border-radius:5px;outline:1px solid transparent;outline-offset:4px}.markdown .preview-editable:hover,.markdown .preview-editable:focus-visible{outline-color:color-mix(in srgb,var(--accent) 70%,transparent)}
 .inline-editor{margin:1.2em 0;padding:12px;border:1px solid var(--accent);border-radius:9px;background:var(--panel);box-shadow:0 4px 14px #0002}.inline-editor textarea{display:block;width:100%;min-height:90px;max-height:420px;resize:vertical;padding:10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);font:14px/1.5 "JetBrains Mono",monospace}.inline-editor-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:9px}.inline-editor-actions span{margin-right:auto;color:var(--muted);font:11px/1.4 "Cantarell",sans-serif}
-/* One picker accepts Markdown files and folders. */
+
 .file-dialog{width:min(720px,calc(100vw - 34px));height:min(650px,calc(100vh - 55px));margin:auto}.file-dialog[open]{display:flex;flex-direction:column}.file-dialog-header,.file-dialog-path,.file-dialog-footer{display:flex;align-items:center;gap:10px;padding:13px 17px}.file-dialog-header{justify-content:space-between;border-bottom:1px solid var(--line)}.file-dialog-header h2{margin:0;font-size:17px}.file-dialog-path{background:var(--surface);border-bottom:1px solid var(--line)}.file-dialog-path input{flex:1;min-width:0;border:1px solid var(--line);border-radius:7px;padding:8px 10px;background:var(--panel);font-size:13px}.file-dialog-items{flex:1;min-height:0;overflow:auto;padding:10px}.file-dialog-item{display:flex;align-items:center;gap:11px;width:100%;padding:9px 10px;border-radius:7px;text-align:left}.file-dialog-item:hover{background:var(--hover)}.file-dialog-item[aria-selected="true"]{background:var(--selection)}.file-dialog-item .icon{width:18px;height:18px;color:var(--accent)}.file-dialog-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.file-dialog-footer{border-top:1px solid var(--line);background:var(--surface)}#open-selection-hint{flex:1;color:var(--muted);font-size:12px}
-/* Math, diagrams, and Comrak extensions. */
+
 .markdown .katex{font-size:1.02em}
 .markdown .katex-display{max-width:100%;overflow-x:auto;overflow-y:hidden;padding:.15em 0}
 .markdown .math-block{margin:1.3em 0;padding:14px 18px;border:1px solid var(--line);background:color-mix(in srgb,var(--surface) 55%,var(--bg));border-radius:10px;overflow-x:auto}
@@ -84,7 +84,7 @@ body.focus-mode #file-browser,body.focus-mode .sidebar-resizer{display:none!impo
 .markdown .markdown-alert-important>.markdown-alert-title{color:var(--purple)}
 .markdown .markdown-alert-warning>.markdown-alert-title{color:var(--yellow)}
 .markdown .markdown-alert-caution>.markdown-alert-title{color:var(--red)}
-/* Preview colors are contrast-checked against the active theme in app.js. */
+
 .markdown{color:var(--read-body,var(--fg));font-weight:400;line-height:1.65}
 .markdown strong,.markdown b,.markdown dt{color:var(--read-strong,var(--fg));font-weight:750}
 .markdown h1{color:var(--read-yellow,var(--yellow));margin-bottom:.85em}
@@ -104,17 +104,16 @@ body.focus-mode #file-browser,body.focus-mode .sidebar-resizer{display:none!impo
 .markdown .markdown-alert-important>.markdown-alert-title{color:var(--read-purple,var(--purple))}
 .markdown .markdown-alert-warning>.markdown-alert-title{color:var(--read-yellow,var(--yellow))}
 .markdown .markdown-alert-caution>.markdown-alert-title{color:var(--read-red,var(--red))}
-/* Centered reading is the default; full width follows the available document pane. */
+
 :root[data-document-width="full"] .markdown{max-width:none;padding-left:32px;padding-right:32px}
 :root[data-document-width="full"] #editor{padding-left:32px;padding-right:32px}
-/* Cells wrap first; tables with too many columns scroll within their own block. */
+
 .markdown .table-scroll{max-width:100%;overflow-x:auto;margin:1.4em 0}
 .markdown .table-scroll table{display:table;width:100%;max-width:none;margin:0;table-layout:auto}
 .markdown .table-scroll :is(th,td){min-width:4em;max-width:32ch;white-space:normal;overflow-wrap:normal;vertical-align:top;padding:9px 8px}
 .markdown .table-scroll code{white-space:normal;overflow-wrap:anywhere}
 .markdown .table-scroll a{overflow-wrap:anywhere}
 
-/* Live editing keeps the surrounding rendered document in place. */
 .live-editor{color:var(--read-body,var(--fg));position:relative;min-width:0}
 .live-editor textarea{display:block;width:100%;resize:none;overflow:hidden;box-sizing:border-box;border:0;border-left:2px solid var(--accent);border-radius:0;padding:0 8px;background:color-mix(in srgb,var(--accent) 5%,var(--bg));color:var(--fg);outline:none;font:inherit;font-weight:400;line-height:inherit;white-space:pre-wrap;overflow-wrap:anywhere;tab-size:4}
 .live-code textarea{font:calc(var(--text-size)*.85)/1.65 "JetBrains Mono","DejaVu Sans Mono",monospace;padding:12px}

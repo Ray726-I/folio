@@ -80,8 +80,6 @@ pub fn changed(document: &OpenDocument) -> bool {
         .map(|bytes| fingerprint(&bytes) != document.fingerprint)
         .unwrap_or(true)
 }
-
-/// Write alongside the destination and rename atomically; never truncate the original.
 pub fn save(
     path: &Path,
     text: &str,

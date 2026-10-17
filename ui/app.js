@@ -1,4 +1,3 @@
-/* Folio's local UI. File access and Markdown parsing live in Rust. */
 'use strict';
 const $ = id => document.getElementById(id);
 const invoke = (command, args = {}) => window.__TAURI__.core.invoke(command, args);
@@ -6,7 +5,7 @@ const listen = (event, callback) => window.__TAURI__.event.listen(event, callbac
 const root = document.documentElement;
 const preferences = {
   get(key, fallback) { try { return JSON.parse(localStorage.getItem(`folio.${key}`)) ?? fallback; } catch { return fallback; } },
-  set(key, value) { try { localStorage.setItem(`folio.${key}`, JSON.stringify(value)); } catch { /* a read-only profile still works */ } }
+  set(key, value) { try { localStorage.setItem(`folio.${key}`, JSON.stringify(value)); } catch {} }
 };
 let current = { path: null, name: 'Untitled.md', content: '', saved: '', active: false };
 let mode = 'read', busy = false, queue = Promise.resolve(), renderGeneration = 0;
@@ -87,7 +86,7 @@ async function renderPreview(restoreScroll) {
   try {
     const result = await invoke('render_markdown', { content });
     if (generation !== renderGeneration) return;
-    $('preview').innerHTML = typeof result === 'string' ? result : result.html; // Rust sanitizes the HTML.
+    $('preview').innerHTML = typeof result === 'string' ? result : result.html;
     previewBlocks = Array.isArray(result.blocks) ? result.blocks : [];
     const sourceIndexes = new Map(previewBlocks.map((block, index) => [block.sourcepos, index]).filter(([position]) => position));
     const elements = [...$('preview').querySelectorAll(':scope > [data-sourcepos]:not(.footnotes), :scope > .footnotes > ol > li[data-sourcepos]')];
@@ -95,7 +94,7 @@ async function renderPreview(restoreScroll) {
       const index = sourceIndexes.get(element.dataset.sourcepos);
       if (index !== undefined) element.dataset.editIndex = String(index);
     }
-    // Compatibility for older/native test responses without source positions.
+
     if (!sourceIndexes.size && $('preview').children.length === previewBlocks.length) {
       [...$('preview').children].forEach((element, index) => { element.dataset.editIndex = String(index); });
     }
@@ -160,7 +159,7 @@ async function renderMath(generation = renderGeneration) {
       } else {
         katex.render(element.textContent, element, { displayMode: display, throwOnError: false });
       }
-    } catch { /* keep the source text visible */ }
+    } catch {}
   }
 }
 const cssProbe = document.createElement('div');
@@ -171,7 +170,7 @@ function normalizeColor(value) {
   const srgb = /^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\)$/.exec(value);
   const rgb = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/.exec(value);
   const channels = srgb ? srgb.slice(1, 4).map(channel => Number(channel) * 255) : rgb?.slice(1, 4).map(Number);
-  // Mermaid's derived colors require hex, including colors resolved from color-mix().
+
   if (channels) return '#' + channels.map(channel => Math.round(Math.max(0, Math.min(255, channel))).toString(16).padStart(2, '0')).join('');
   return value;
 }
@@ -217,7 +216,7 @@ function updatePreviewPalette() {
     const color = cssVarColor(`--${name}`);
     root.style.setProperty(`--read-${name}`, readableColor(dark ? mixColors(color, '#ffffff', .15) : color, background));
   }
-  // Diagram shapes stay neutral; clear outlines do the work instead of a large card.
+
   const node = mixColors(background, foreground, .045);
   root.style.setProperty('--diagram-node', node);
   root.style.setProperty('--diagram-border', readableColor(mixColors(foreground, background, .35), node, 3));
@@ -230,7 +229,7 @@ function mermaidThemeVariables() {
   const text = cssVarColor('--read-strong'), line = cssVarColor('--diagram-line');
   const colors = ['blue', 'green', 'yellow', 'purple', 'red'].map(name => cssVarColor(`--read-${name}`));
   const palette = [...new Set([...colors, ...colors.map((color, index) => mixColors(color, colors[(index + 1) % colors.length], .5)), mixColors(colors[0], colors[2], .5), mixColors(colors[1], colors[3], .5)])];
-  // Some palettes use the same blue and green; categories still need distinct fills.
+
   for (let index = 0; palette.length < 12 && index < 24; index++) {
     const color = mixColors(colors[index % colors.length], background, .08 + index * .02);
     if (!palette.includes(color)) palette.push(color);
@@ -329,8 +328,7 @@ function showDiagramSvg(host, markup) {
   const drawing = host.querySelector('svg');
   const width = drawing?.viewBox.baseVal.width;
   if (width > 0) {
-    // Fit diagrams up to twice the pane width. Larger ones shrink less to keep
-    // labels readable, then scroll; CSS also handles resizing without rendering.
+
     drawing.style.width = `clamp(clamp(${Math.ceil(width * .5)}px, calc(${Math.ceil(width)}px - 100%), ${Math.ceil(width * .75)}px), 100%, ${Math.ceil(width)}px)`;
     drawing.style.maxWidth = 'none';
   }
@@ -347,7 +345,7 @@ async function renderDiagrams(generation = renderGeneration, reusableDiagrams = 
     const reused = reusableDiagrams.get(source)?.pop();
     const host = reused || document.createElement('div');
     host.className = 'mermaid-host';
-    host.dataset.sourcepos = pre.dataset.sourcepos || ''; 
+    host.dataset.sourcepos = pre.dataset.sourcepos || '';
     if (pre.dataset.editIndex !== undefined) host.dataset.editIndex = pre.dataset.editIndex;
     else delete host.dataset.editIndex;
     host.dataset.mermaidSource = source;
@@ -380,11 +378,11 @@ async function refreshMermaid() {
       if (!host.isConnected || generation !== renderGeneration || themeRevision !== diagramThemeRevision) return;
       showDiagramSvg(host, svg);
       host.dataset.themeRevision = String(themeRevision);
-    } catch { /* keep the previous diagram */ }
+    } catch {}
   }
   if (previewSnapshot) previewSnapshot.themeRevision = themeRevision;
 }
-// History belongs to the document, rather than to a temporary textarea.
+
 let undoStack = [], redoStack = [], lastEditTime = 0, historyGroup = null;
 function resetHistory() { undoStack = []; redoStack = []; historyGroup = null; lastEditTime = 0; }
 function changeContent(content, group = null) {
@@ -404,7 +402,7 @@ async function undoRedo(redo = false) {
   const content = from.pop(); to.push(current.content); historyGroup = null;
   const edit = inlineEdit;
   current.content = content;
-  // Keep the active line and caret when its surrounding source is unchanged.
+
   if (edit && content.startsWith(edit.prefix) && content.endsWith(edit.suffix)
       && content.length >= edit.prefix.length + edit.suffix.length) {
     edit.textarea.value = content.slice(edit.prefix.length, content.length - edit.suffix.length);
@@ -452,8 +450,7 @@ function previewBlockAtViewportTop() {
   const element = elements.find(block => block.getBoundingClientRect().bottom > top + 8) || elements.at(-1);
   return element ? Number(element.dataset.editIndex) : -1;
 }
-// Match parser text leaves to DOM text. This preserves Markdown punctuation,
-// escapes and entities while locating the actual wrapped row under the pointer.
+
 function mappedCharacters(original, nodes) {
   const walker = document.createTreeWalker(original, NodeFilter.SHOW_TEXT), dom = [];
   let joined = '';
@@ -518,7 +515,7 @@ function editTarget(target, y) {
   const row = chars.filter(char => Math.abs(char.rect.top + char.rect.height / 2 - (nearest.rect.top + nearest.rect.height / 2)) < nearest.rect.height * .55);
   const first = row[0], last = row.at(-1);
   const firstIndex = chars.indexOf(first), lastIndex = chars.indexOf(last);
-  // Delimiters before the first glyph and after the last belong to this line.
+
   start = firstIndex === 0 ? start : first.start;
   end = lastIndex === chars.length - 1 ? end : last.end;
   const before = document.createRange(); before.selectNodeContents(original); before.setEnd(first.node, first.offset);
@@ -949,7 +946,7 @@ $('preview').addEventListener('click', event => {
   if (mode === 'edit') {
     if (anchor) event.preventDefault();
     if (event.target.closest('input,button,textarea')) return;
-    if (inlineEdit || busy) return; // Outside pointer handler commits before this click.
+    if (inlineEdit || busy) return;
     beginInlineEdit(editTarget(event.target, event.clientY));
     return;
   }
@@ -1067,7 +1064,7 @@ async function start() {
   setInterval(async () => {
     if (!current.path || busy || document.hidden) return;
     const path = current.path;
-    try { const changed = await invoke('document_changed'); if (path === current.path) $('disk-banner').hidden = !changed; } catch { /* a transient disk error will be shown when saving */ }
+    try { const changed = await invoke('document_changed'); if (path === current.path) $('disk-banner').hidden = !changed; } catch {}
   }, 3000);
 }
 start().catch(error => { toast(error); console.error(error); });

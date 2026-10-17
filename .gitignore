@@ -3,4 +3,13 @@
 /node_modules/
 /test-results/
 *.log
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.root
+.DS_Store
+Thumbs.db
 
