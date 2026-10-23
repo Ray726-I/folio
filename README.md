@@ -67,6 +67,21 @@ cargo build --release
 
 The script installs under your user directory and registers Folio as an available Markdown application. It does not change the default app automatically. You can select Folio using the file manager's **Open With** menu, launch it from your app menu, or run `~/.local/bin/folio [FILE]`.
 
+## Download a release
+
+Linux releases are published on [GitHub Releases](https://github.com/Ray726-I/folio/releases) as an AppImage and a Debian package. The AppImage is convenient for a portable user install. The Debian package integrates with the system package manager.
+
+Both packages use the system's GTK and WebKitGTK runtime, so the Linux prerequisites described above still apply. On Debian or Ubuntu, install the matching WebKitGTK 4.1 runtime before launching Folio. On Arch or Omarchy, install `webkit2gtk-4.1` from the distribution repositories.
+
+To publish a new release, update the version in `Cargo.toml` and `tauri.conf.json`, commit the change, then push a matching tag:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+GitHub Actions builds the bundles and attaches them to the release automatically.
+
 ## Development checks
 
 ```sh
