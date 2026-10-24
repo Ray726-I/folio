@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use comrak::{
     adapters::SyntaxHighlighterAdapter,
-    nodes::{LineColumn, NodeValue},
+    nodes::{AstNode, LineColumn, NodeValue},
     options::{Plugins, RenderPlugins},
     parse_document,
     plugins::syntect::SyntectAdapter,
@@ -201,6 +201,57 @@ fn local_image(destination: &str, base: Option<&Path>) -> Option<String> {
         STANDARD.encode(fs::read(path).ok()?)
     ))
 }
+/// Author HTML is emitted verbatim, so it could imitate the `data-sourcepos`
+/// marker Comrak writes for generated task items. Remove that attribute from
+/// raw HTML before rendering; generated markup keeps it.
+fn strip_raw_source_positions<'a>(root: &'a AstNode<'a>) {
+    for node in root.descendants() {
+        let mut data = node.data_mut();
+        match &mut data.value {
+            NodeValue::HtmlBlock(block) => strip_sourcepos_attribute(&mut block.literal),
+            NodeValue::HtmlInline(html) => strip_sourcepos_attribute(html),
+            _ => {}
+        }
+    }
+}
+
+fn strip_sourcepos_attribute(literal: &mut String) {
+    const ATTRIBUTE: &str = "data-sourcepos";
+    let mut search = 0;
+    while let Some(offset) = literal[search..].find(ATTRIBUTE) {
+        let start = search + offset;
+        search = start + ATTRIBUTE.len();
+        if !literal[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|character| character.is_whitespace())
+        {
+            continue;
+        }
+        let rest = literal[search..].trim_start();
+        let Some(value) = rest.strip_prefix('=') else {
+            continue;
+        };
+        let value = value.trim_start();
+        let end = match value.chars().next() {
+            Some(quote @ ('"' | '\'')) => {
+                let Some(length) = value[1..].find(quote) else {
+                    continue;
+                };
+                literal.len() - value.len() + length + 2
+            }
+            _ => {
+                let length = value
+                    .find(|character: char| character.is_whitespace() || character == '>')
+                    .unwrap_or(value.len());
+                literal.len() - value.len() + length
+            }
+        };
+        literal.replace_range(start..end, "");
+        search = start;
+    }
+}
+
 fn patch_task_items(html: &str, task_indices: &HashMap<String, usize>) -> String {
     let mut output = String::with_capacity(html.len());
     let mut rest = html;
@@ -251,6 +302,7 @@ pub fn render(source: &str, base: Option<&Path>) -> String {
     };
     let arena = Arena::new();
     let root = parse_document(&arena, source, &options);
+    strip_raw_source_positions(root);
     let task_indices: HashMap<_, _> = root
         .descendants()
         .filter(|node| matches!(node.data().value, NodeValue::TaskItem(_)))
@@ -261,7 +313,7 @@ pub fn render(source: &str, base: Option<&Path>) -> String {
     let mut html = String::new();
     comrak::format_html_with_plugins(root, &options, &mut html, &plugins)
         .expect("writing Markdown HTML to a string cannot fail");
-    sanitize(&patch_task_items(&html, &task_indices))
+    patch_task_items(&sanitize(&html), &task_indices)
 }
 
 fn sanitize(html: &str) -> String {
@@ -278,7 +330,7 @@ fn sanitize(html: &str) -> String {
             "data-wikilink",
         ])
         .add_tags(["section", "input"])
-        .add_tag_attributes("input", ["type", "checked", "disabled", "data-task-index"])
+        .add_tag_attributes("input", ["type", "checked", "disabled"])
         .add_tag_attributes("section", ["data-footnotes"])
         .add_tag_attributes("th", ["style"])
         .add_tag_attributes("td", ["style"])
@@ -352,6 +404,39 @@ mod tests {
         assert_eq!(task_indices, ["0", "1"], "{rendered}");
         assert!(rendered.contains("<input type=\"checkbox\"> Custom"));
         assert!(rendered.contains("<input type=\"checkbox\" disabled=\"\"> Custom disabled"));
+    }
+
+    #[test]
+    fn raw_html_cannot_spoof_task_source_positions() {
+        let spoofed = concat!(
+            "<ul>\n",
+            "<li data-sourcepos=\"SOURCEPOS\"><input type=\"checkbox\" disabled=\"\"></li>\n",
+            "<li><input type=\"checkbox\" data-task-index=\"0\"></li>\n",
+            "</ul>\n\n",
+            "- [x] Real task\n",
+        );
+        let options = markdown_options();
+        let arena = Arena::new();
+        let root = parse_document(&arena, spoofed, &options);
+        let sourcepos = root
+            .descendants()
+            .find(|node| matches!(node.data().value, NodeValue::TaskItem(_)))
+            .unwrap()
+            .data()
+            .sourcepos
+            .to_string();
+        let rendered = render(&spoofed.replace("SOURCEPOS", &sourcepos), None);
+        assert_eq!(
+            rendered.matches("data-task-index=").count(),
+            1,
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(&format!(
+                "<li data-sourcepos=\"{sourcepos}\"><input type=\"checkbox\" data-task-index=\"0\""
+            )),
+            "{rendered}"
+        );
     }
 
     #[test]
