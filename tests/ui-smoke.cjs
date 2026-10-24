@@ -74,6 +74,18 @@ let errors = [];
   }
   assert.equal(await page.evaluate(() => window.nativeCalls.filter(call => call.command === 'render_markdown').length), initialRenderCalls, 'unchanged mode switches should reuse the rendered preview');
   assert(await page.evaluate(() => window.initialHeading === document.querySelector('#preview h1')), 'unchanged mode switches should preserve the preview DOM');
+
+  await page.evaluate(() => { document.getElementById('preview').insertAdjacentHTML('beforeend', '<p><input type="checkbox" id="raw-html-checkbox" checked> author HTML</p>'); });
+  await page.locator('#edit-mode').click();
+  await page.waitForFunction(() => !busy);
+  assert.equal(await page.locator('#preview input[data-task-index]').first().isDisabled(), false, 'generated task checkboxes should be enabled in Edit mode');
+  assert.equal(await page.locator('#raw-html-checkbox').isDisabled(), true, 'author raw HTML checkboxes should stay disabled in Edit mode');
+  await page.locator('#raw-html-checkbox').click({ force: true });
+  assert.equal(await page.locator('#raw-html-checkbox').isChecked(), true, 'a raw HTML checkbox should not toggle in Edit mode');
+  await page.locator('#read-mode').click();
+  await page.waitForFunction(() => !busy);
+  assert.equal(await page.locator('#preview input[data-task-index]').first().isDisabled(), true, 'generated task checkboxes should be disabled in Preview');
+  assert.equal(await page.locator('#raw-html-checkbox').isDisabled(), true, 'author raw HTML checkboxes stay disabled in Preview');
   assert.equal(await page.locator('html').getAttribute('data-document-width'), 'centered');
   const centeredWidth = await page.locator('#preview').evaluate(element => element.getBoundingClientRect().width);
   await page.locator('#width-toggle').click();
@@ -140,7 +152,16 @@ let errors = [];
   await page.locator('#edit-mode').click();
   assert.equal(await page.evaluate(() => current.content), '# Opened\n\nEdited text');
 
+  await page.setViewportSize({ width: 720, height: 800 });
+  await page.waitForFunction(() => window.matchMedia('(max-width:960px)').matches);
+  await page.locator('#outline-toggle').click();
+  await page.waitForFunction(() => document.getElementById('outline').hidden === false);
+  assert.equal(await page.locator('#file-browser').getAttribute('hidden'), '', 'on narrow screens the outline takes over from the file tree');
+  await page.locator('#folder-toggle').click();
+  await page.waitForFunction(() => document.getElementById('file-browser').hidden === false);
+  assert.equal(await page.locator('#outline').getAttribute('hidden'), '', 'on narrow screens the file tree takes over from the outline');
+
   assert.deepEqual(errors, []);
   await browser.close();
-  console.log('PASS: math and diagrams load, unchanged modes preserve the preview DOM, document width toggles through the toolbar and palette, task boxes and inline edits preserve Markdown, zoom shortcuts work, and the tree sidebar resizes and collapses.');
+  console.log('PASS: math and diagrams load, unchanged modes preserve the preview DOM, document width toggles through the toolbar and palette, task boxes and inline edits preserve Markdown, zoom shortcuts work, the tree sidebar resizes and collapses, raw HTML checkboxes stay read-only, and narrow screens swap the tree and outline instead of stacking them.');
 })().catch(error => { console.error(error); console.error('PAGE ERRORS:', errors); process.exit(1); });
