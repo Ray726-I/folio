@@ -201,16 +201,35 @@ fn local_image(destination: &str, base: Option<&Path>) -> Option<String> {
         STANDARD.encode(fs::read(path).ok()?)
     ))
 }
-fn patch_task_items(html: &str) -> String {
-    let needle = "<input type=\"checkbox\"";
+fn patch_task_items(html: &str, task_indices: &HashMap<String, usize>) -> String {
     let mut output = String::with_capacity(html.len());
     let mut rest = html;
-    let mut index = 0usize;
-    while let Some(position) = rest.find(needle) {
-        output.push_str(&rest[..position + needle.len()]);
-        output.push_str(&format!(" data-task-index=\"{index}\""));
-        rest = &rest[position + needle.len()..];
-        index += 1;
+    let mut annotated = HashSet::new();
+    while let Some(position) = rest.find("<input type=\"checkbox\"") {
+        let start = position + "<input type=\"checkbox\"".len();
+        let Some(end) = rest[start..].find('>') else {
+            break;
+        };
+        let end = start + end;
+        output.push_str(&rest[..start]);
+        let input_attributes = &rest[start..end];
+        let list_item = rest[..position].rfind("<li data-sourcepos=\"");
+        let task_index = list_item.and_then(|list_item| {
+            let sourcepos_start = list_item + "<li data-sourcepos=\"".len();
+            let sourcepos_end = rest[sourcepos_start..].find('"')? + sourcepos_start;
+            let sourcepos = &rest[sourcepos_start..sourcepos_end];
+            (!rest[list_item..position].contains("</li>")
+                && input_attributes.contains(" disabled=\"\"")
+                && annotated.insert(sourcepos.to_owned()))
+            .then(|| task_indices.get(sourcepos).copied())
+            .flatten()
+        });
+        if let Some(index) = task_index {
+            output.push_str(&format!(" data-task-index=\"{index}\""));
+        }
+        output.push_str(input_attributes);
+        output.push('>');
+        rest = &rest[end + 1..];
     }
     output.push_str(rest);
     output
@@ -230,8 +249,19 @@ pub fn render(source: &str, base: Option<&Path>) -> String {
             ..Default::default()
         },
     };
-    let html = comrak::markdown_to_html_with_plugins(source, &options, &plugins);
-    sanitize(&patch_task_items(&html))
+    let arena = Arena::new();
+    let root = parse_document(&arena, source, &options);
+    let task_indices: HashMap<_, _> = root
+        .descendants()
+        .filter(|node| matches!(node.data().value, NodeValue::TaskItem(_)))
+        .map(|node| node.data().sourcepos.to_string())
+        .enumerate()
+        .map(|(index, sourcepos)| (sourcepos, index))
+        .collect();
+    let mut html = String::new();
+    comrak::format_html_with_plugins(root, &options, &mut html, &plugins)
+        .expect("writing Markdown HTML to a string cannot fail");
+    sanitize(&patch_task_items(&html, &task_indices))
 }
 
 fn sanitize(html: &str) -> String {
@@ -306,6 +336,22 @@ mod tests {
         assert!(!rendered.contains("<script"));
         assert!(!rendered.contains("onerror"));
         assert!(!rendered.contains("javascript:"));
+    }
+
+    #[test]
+    fn raw_html_checkboxes_do_not_shift_task_indices() {
+        let rendered = render(
+            "<input type=\"checkbox\"> Custom\n\n<input type=\"checkbox\" disabled=\"\"> Custom disabled\n\n- [ ] First task\n- [x] Second task\n",
+            None,
+        );
+        let task_indices: Vec<_> = rendered
+            .split("data-task-index=\"")
+            .skip(1)
+            .map(|part| part.split('"').next().unwrap())
+            .collect();
+        assert_eq!(task_indices, ["0", "1"], "{rendered}");
+        assert!(rendered.contains("<input type=\"checkbox\"> Custom"));
+        assert!(rendered.contains("<input type=\"checkbox\" disabled=\"\"> Custom disabled"));
     }
 
     #[test]
