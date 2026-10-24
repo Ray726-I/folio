@@ -4,7 +4,8 @@
   "scripts": {
     "check:bundles": "node scripts/check-bundles.cjs",
     "test:paths": "node --test tests/paths.test.cjs",
-    "test:ui": "node tests/ui-smoke.cjs"
+    "test:lazy": "node tests/lazy-assets.cjs",
+    "test:ui": "node tests/lazy-assets.cjs && node tests/ui-smoke.cjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.12.4",

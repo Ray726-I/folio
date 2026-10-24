@@ -74,6 +74,46 @@ function setupSidebarResize(sidebarId, dividerId, key, defaultWidth) {
 }
 setupSidebarResize('file-browser', 'folder-divider', 'folder', 235);
 setupSidebarResize('outline', 'outline-divider', 'outline', 215);
+const assetLoads = new Map();
+function loadAsset(url, style = false) {
+  if (assetLoads.has(url)) return assetLoads.get(url);
+  const promise = new Promise((resolve, reject) => {
+    const element = document.createElement(style ? 'link' : 'script');
+    if (style) { element.rel = 'stylesheet'; element.href = url; }
+    else { element.src = url; element.async = true; }
+    element.addEventListener('load', () => resolve(), { once: true });
+    element.addEventListener('error', () => { element.remove(); assetLoads.delete(url); reject(new Error(`Unable to load ${url}`)); }, { once: true });
+    document.head.append(element);
+  });
+  assetLoads.set(url, promise);
+  return promise;
+}
+let katexLoading = null, mermaidLoading = null;
+function loadKatex() {
+  if (window.katex) return Promise.resolve(window.katex);
+  if (!katexLoading) {
+    const styles = loadAsset('vendor/katex/katex.min.css', true).catch(() => {});
+    katexLoading = Promise.all([styles, loadAsset('vendor/katex/katex.min.js')])
+      .then(() => {
+        if (!window.katex) throw new Error('KaTeX did not initialize');
+        return window.katex;
+      })
+      .catch(error => { katexLoading = null; throw error; });
+  }
+  return katexLoading;
+}
+function loadMermaid() {
+  if (window.mermaid) return Promise.resolve(window.mermaid);
+  if (!mermaidLoading) {
+    mermaidLoading = loadAsset('vendor/mermaid/mermaid.min.js')
+      .then(() => {
+        if (!window.mermaid) throw new Error('Mermaid did not initialize');
+        return window.mermaid;
+      })
+      .catch(error => { mermaidLoading = null; throw error; });
+  }
+  return mermaidLoading;
+}
 async function renderPreview(restoreScroll) {
   if (previewSnapshot?.content === current.content && previewSnapshot.path === current.path) {
     syncPreviewEditing();
@@ -152,7 +192,9 @@ function setupTables() {
   }
 }
 async function renderMath(generation = renderGeneration) {
-  if (typeof katex === 'undefined') return;
+  if (!$('preview').querySelector('[data-math-style]')) return;
+  try { await loadKatex(); } catch { return; }
+  if (generation !== renderGeneration) return;
   const nodes = [...$('preview').querySelectorAll('[data-math-style]')];
   for (const element of nodes) {
     if (generation !== renderGeneration) return;
@@ -163,10 +205,10 @@ async function renderMath(generation = renderGeneration) {
         const pre = element.closest('pre');
         if (pre?.dataset.sourcepos) host.dataset.sourcepos = pre.dataset.sourcepos;
         if (pre?.dataset.editIndex !== undefined) host.dataset.editIndex = pre.dataset.editIndex;
-        katex.render(element.textContent, host, { displayMode: true, throwOnError: false });
+        window.katex.render(element.textContent, host, { displayMode: true, throwOnError: false });
         pre?.replaceWith(host);
       } else {
-        katex.render(element.textContent, element, { displayMode: display, throwOnError: false });
+        window.katex.render(element.textContent, element, { displayMode: display, throwOnError: false });
       }
     } catch {}
   }
@@ -343,15 +385,18 @@ function showDiagramSvg(host, markup) {
   }
 }
 async function renderDiagrams(generation = renderGeneration, reusableDiagrams = new Map()) {
-  if (typeof mermaid === 'undefined') return;
+  if (!$('preview').querySelector('pre > code.language-mermaid')) return;
+  try { await loadMermaid(); } catch { return; }
+  if (generation !== renderGeneration) return;
   const blocks = [...$('preview').querySelectorAll('pre > code.language-mermaid')].map(code => code.closest('pre'));
   if (!blocks.length) return;
   const themeRevision = diagramThemeRevision;
-  try { mermaid.initialize(mermaidConfig()); } catch { try { mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' }); } catch { return; } }
+  try { window.mermaid.initialize(mermaidConfig()); } catch { try { window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' }); } catch { return; } }
   for (const pre of blocks) {
     if (generation !== renderGeneration || !pre.isConnected) return;
     const source = pre.querySelector('code.language-mermaid')?.textContent ?? '';
-    const reused = reusableDiagrams.get(source)?.pop();
+    const candidate = reusableDiagrams.get(source)?.pop();
+    const reused = candidate && Number(candidate.dataset.themeRevision) === themeRevision ? candidate : null;
     const host = reused || document.createElement('div');
     host.className = 'mermaid-host';
     host.dataset.sourcepos = pre.dataset.sourcepos || '';
@@ -362,7 +407,7 @@ async function renderDiagrams(generation = renderGeneration, reusableDiagrams = 
     if (reused) { pre.replaceWith(host); continue; }
     const id = `mermaid-${++mermaidRenderId}`;
     try {
-      const { svg } = await mermaid.render(id, source);
+      const { svg } = await window.mermaid.render(id, source);
       showDiagramSvg(host, svg);
     } catch (error) {
       const message = document.createElement('p'); message.className = 'mermaid-error'; message.textContent = 'Mermaid diagram could not be rendered.';
@@ -374,16 +419,16 @@ async function renderDiagrams(generation = renderGeneration, reusableDiagrams = 
   }
 }
 async function refreshMermaid() {
-  if (typeof mermaid === 'undefined' || !current.active || !$('preview').querySelector('.mermaid-host')) return;
+  if (!window.mermaid || !current.active || !$('preview').querySelector('.mermaid-host')) return;
   const generation = renderGeneration, themeRevision = diagramThemeRevision;
-  try { mermaid.initialize(mermaidConfig()); } catch { try { mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' }); } catch { return; } }
+  try { window.mermaid.initialize(mermaidConfig()); } catch { try { window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' }); } catch { return; } }
   for (const host of $('preview').querySelectorAll('.mermaid-host[data-mermaid-source]')) {
     if (generation !== renderGeneration || themeRevision !== diagramThemeRevision) return;
     if (Number(host.dataset.themeRevision) === themeRevision) continue;
     const source = host.dataset.mermaidSource;
     const id = `mermaid-${++mermaidRenderId}`;
     try {
-      const { svg } = await mermaid.render(id, source);
+      const { svg } = await window.mermaid.render(id, source);
       if (!host.isConnected || generation !== renderGeneration || themeRevision !== diagramThemeRevision) return;
       showDiagramSvg(host, svg);
       host.dataset.themeRevision = String(themeRevision);
