@@ -366,7 +366,7 @@ function mermaidThemeVariables() {
 }
 function mermaidConfig() {
   return {
-    startOnLoad: false, securityLevel: 'strict', theme: 'base', look: 'classic',
+    startOnLoad: false, securityLevel: 'strict', suppressErrorRendering: true, theme: 'base', look: 'classic',
     themeVariables: mermaidThemeVariables(), fontFamily: '"Adwaita Sans","Cantarell",system-ui,sans-serif',
     flowchart: { htmlLabels: true, curve: 'basis', nodeSpacing: 36, rankSpacing: 46, padding: 16, diagramPadding: 8, useMaxWidth: true },
     sequence: { useMaxWidth: true },
@@ -391,7 +391,7 @@ async function renderDiagrams(generation = renderGeneration, reusableDiagrams = 
   const blocks = [...$('preview').querySelectorAll('pre > code.language-mermaid')].map(code => code.closest('pre'));
   if (!blocks.length) return;
   const themeRevision = diagramThemeRevision;
-  try { window.mermaid.initialize(mermaidConfig()); } catch { try { window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' }); } catch { return; } }
+  try { window.mermaid.initialize(mermaidConfig()); } catch { try { window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', suppressErrorRendering: true }); } catch { return; } }
   for (const pre of blocks) {
     if (generation !== renderGeneration || !pre.isConnected) return;
     const source = pre.querySelector('code.language-mermaid')?.textContent ?? '';
@@ -421,7 +421,7 @@ async function renderDiagrams(generation = renderGeneration, reusableDiagrams = 
 async function refreshMermaid() {
   if (!window.mermaid || !current.active || !$('preview').querySelector('.mermaid-host')) return;
   const generation = renderGeneration, themeRevision = diagramThemeRevision;
-  try { window.mermaid.initialize(mermaidConfig()); } catch { try { window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' }); } catch { return; } }
+  try { window.mermaid.initialize(mermaidConfig()); } catch { try { window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', suppressErrorRendering: true }); } catch { return; } }
   for (const host of $('preview').querySelectorAll('.mermaid-host[data-mermaid-source]')) {
     if (generation !== renderGeneration || themeRevision !== diagramThemeRevision) return;
     if (Number(host.dataset.themeRevision) === themeRevision) continue;

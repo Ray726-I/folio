@@ -27,6 +27,11 @@ const fixtures = [
     content: '# Second math document\n\nMore inline $a^2$ and another diagram.',
     html: '<h1 id="doc-math-two">Second math document</h1><p><span data-math-style="inline">a^2</span></p><pre data-sourcepos="3:1-6:3"><code class="language-mermaid">graph LR;\nC--&gt;D;</code></pre>'
   },
+  {
+    path: path.join(fixtureRoot, 'malformed.md'),
+    content: '# Malformed diagram\n\n```mermaid\nnot a diagram\n```',
+    html: '<h1 id="doc-malformed">Malformed diagram</h1><pre><code class="language-mermaid">not a diagram</code></pre>'
+  }
 ];
 
 async function installMock(page) {
@@ -112,6 +117,12 @@ async function installMock(page) {
     assert.equal(requestCount('vendor/mermaid/mermaid.min.js'), 1, 'later diagram documents should reuse loaded Mermaid');
     assert.deepEqual(await moduleState(), loadedScripts, 'later documents should not add duplicate asset elements');
 
+    await page.evaluate(path => requestOpenLocation(path), fixtures[3].path);
+    await page.waitForFunction(() => document.querySelector('#preview h1')?.textContent === 'Malformed diagram' && !busy);
+    await page.waitForFunction(() => document.querySelector('#preview .mermaid-error'));
+    assert.equal(await page.locator('#preview .mermaid-source').textContent(), 'not a diagram', 'invalid Mermaid source should remain available');
+    assert.equal(await page.locator('[id^="dmermaid-"]').count(), 0, 'Mermaid must not append its own error diagram outside the preview');
+    assert.equal(await page.locator('#preview h1').textContent(), 'Malformed diagram', 'the preview should remain usable after a syntax error');
 
     // Failed loads must leave the math and diagram source readable instead of breaking the document.
     const fallbackPage = await browser.newPage({ viewport: { width: 1120, height: 800 } });
