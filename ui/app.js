@@ -46,7 +46,15 @@ function showDocument() {
   $('folder-empty').hidden = current.active || !activeFolder;
   renderFolderEntries();
 }
-function setOutline(visible) { outlineVisible = visible; $('outline').hidden = !visible || !current.active; $('outline-divider').hidden = $('outline').hidden; $('outline-toggle').setAttribute('aria-pressed', String(visible)); preferences.set('outline', visible); }
+const narrowDrawers = () => window.matchMedia('(max-width:960px)').matches;
+function setOutline(visible, persist = true) {
+  outlineVisible = visible;
+  if (visible && narrowDrawers() && !$('file-browser').hidden) setFolderVisible(false);
+  $('outline').hidden = !visible || !current.active;
+  $('outline-divider').hidden = $('outline').hidden;
+  $('outline-toggle').setAttribute('aria-pressed', String(visible));
+  if (persist) preferences.set('outline', visible);
+}
 function setupSidebarResize(sidebarId, dividerId, key, defaultWidth) {
   const sidebar = $(sidebarId), divider = $(dividerId);
   const property = `--${key}-sidebar-width`;
@@ -599,6 +607,10 @@ function applyTheme(id, persist = true) {
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
   if (selectedTheme === 'system') { updatePreviewPalette(); refreshMermaid(); }
 });
+// The outline steps aside for the file tree on narrow screens; give it back when there is room.
+window.matchMedia('(max-width:960px)').addEventListener('change', event => {
+  if (!event.matches && preferences.get('outline', false) && $('outline').hidden) setOutline(true);
+});
 function ask(title, message, choices) {
   return new Promise(resolve => {
     const dialog = $('confirm-dialog'); $('confirm-title').textContent = title; $('confirm-message').textContent = message; $('confirm-actions').replaceChildren();
@@ -679,6 +691,7 @@ function confirmOpenPicker() {
 }
 function setFolderVisible(visible) {
   folderVisible = visible;
+  if (visible && narrowDrawers() && !$('outline').hidden) setOutline(false, false);
   const shown = Boolean(activeFolder && visible);
   $('file-browser').hidden = !shown;
   $('folder-divider').hidden = !shown;
