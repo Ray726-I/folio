@@ -38,6 +38,8 @@ struct FolderListing {
     path: String,
     name: String,
     entries: Vec<FolderEntry>,
+    truncated: bool,
+    skipped: usize,
 }
 
 #[derive(Serialize)]
@@ -49,10 +51,11 @@ struct BrowserListing {
 }
 
 #[tauri::command(async)]
-fn browse_directory(path: Option<String>) -> Result<BrowserListing, String> {
+fn browse_directory(path: Option<String>, app: tauri::AppHandle) -> Result<BrowserListing, String> {
     let requested = path
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+        .or_else(|| app.path().home_dir().ok())
+        .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("/"));
     let path = requested
         .canonicalize()
@@ -104,23 +107,33 @@ fn is_markdown(path: &Path) -> bool {
         })
 }
 
-fn scan_folder(root: &Path) -> Result<Vec<FolderEntry>, String> {
+fn scan_folder(root: &Path) -> Result<(Vec<FolderEntry>, bool, usize), String> {
     fn visit(
         root: &Path,
         directory: &Path,
         depth: usize,
         entries: &mut Vec<FolderEntry>,
+        truncated: &mut bool,
+        skipped: &mut usize,
     ) -> Result<(), String> {
-        if depth > 12 || entries.len() >= 5000 {
+        if entries.len() >= 5000 {
+            *truncated = true;
             return Ok(());
         }
-        let mut children = fs::read_dir(directory)
-            .map_err(|error| format!("Could not read folder: {error}"))?
-            .filter_map(Result::ok)
-            .collect::<Vec<_>>();
+        let mut children = match fs::read_dir(directory) {
+            Ok(children) => children.filter_map(Result::ok).collect::<Vec<_>>(),
+            Err(error) if depth == 0 => {
+                return Err(format!("Could not read folder: {error}"));
+            }
+            Err(_) => {
+                *skipped += 1;
+                return Ok(());
+            }
+        };
         children.sort_by_key(|entry| entry.file_name().to_string_lossy().to_lowercase());
         for child in children {
             if entries.len() >= 5000 {
+                *truncated = true;
                 break;
             }
             let path = child.path();
@@ -128,7 +141,13 @@ fn scan_folder(root: &Path) -> Result<Vec<FolderEntry>, String> {
             if name.starts_with('.') {
                 continue;
             }
-            let metadata = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
+            let metadata = match fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(_) => {
+                    *skipped += 1;
+                    continue;
+                }
+            };
             if metadata.file_type().is_symlink() {
                 continue;
             }
@@ -139,7 +158,11 @@ fn scan_folder(root: &Path) -> Result<Vec<FolderEntry>, String> {
                     depth,
                     directory: true,
                 });
-                visit(root, &path, depth + 1, entries)?;
+                if depth < 12 {
+                    visit(root, &path, depth + 1, entries, truncated, skipped)?;
+                } else {
+                    *truncated = true;
+                }
             } else if metadata.is_file() && is_markdown(&path) && path.starts_with(root) {
                 entries.push(FolderEntry {
                     path: path.to_string_lossy().into(),
@@ -152,8 +175,10 @@ fn scan_folder(root: &Path) -> Result<Vec<FolderEntry>, String> {
         Ok(())
     }
     let mut entries = Vec::new();
-    visit(root, root, 0, &mut entries)?;
-    Ok(entries)
+    let mut truncated = false;
+    let mut skipped = 0;
+    visit(root, root, 0, &mut entries, &mut truncated, &mut skipped)?;
+    Ok((entries, truncated, skipped))
 }
 
 #[derive(Serialize)]
@@ -199,7 +224,7 @@ fn open_folder(
     if !path.is_dir() {
         return Err("Choose a folder to open.".into());
     }
-    let entries = scan_folder(&path)?;
+    let (entries, truncated, skipped) = scan_folder(&path)?;
     *state.folder.lock().unwrap() = Some(path.clone());
     Ok(FolderListing {
         name: path
@@ -209,39 +234,14 @@ fn open_folder(
             .into(),
         path: path.to_string_lossy().into(),
         entries,
+        truncated,
+        skipped,
     })
-}
-
-#[tauri::command(async)]
-fn choose_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    app.dialog()
-        .file()
-        .blocking_pick_folder()
-        .map(|file| {
-            file.into_path()
-                .map(|path| path.to_string_lossy().into_owned())
-                .map_err(|error| error.to_string())
-        })
-        .transpose()
 }
 
 #[tauri::command]
 fn path_is_directory(path: String) -> bool {
     Path::new(&path).is_dir()
-}
-
-#[tauri::command(async)]
-fn choose_document(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    app.dialog()
-        .file()
-        .add_filter("Markdown", &["md", "markdown", "mdown", "txt"])
-        .blocking_pick_file()
-        .map(|file| {
-            file.into_path()
-                .map(|path| path.to_string_lossy().into_owned())
-                .map_err(|e| e.to_string())
-        })
-        .transpose()
 }
 
 #[tauri::command]
@@ -275,6 +275,39 @@ struct Saved {
     name: String,
 }
 
+#[derive(Serialize)]
+struct CommandError {
+    code: &'static str,
+    message: String,
+}
+
+impl From<String> for CommandError {
+    fn from(message: String) -> Self {
+        CommandError {
+            code: "error",
+            message,
+        }
+    }
+}
+
+impl From<&str> for CommandError {
+    fn from(message: &str) -> Self {
+        CommandError {
+            code: "error",
+            message: message.into(),
+        }
+    }
+}
+
+impl From<document::SaveError> for CommandError {
+    fn from(error: document::SaveError) -> Self {
+        CommandError {
+            code: error.code(),
+            message: error.message().into(),
+        }
+    }
+}
+
 #[tauri::command(async)]
 fn save_document(
     content: String,
@@ -282,7 +315,7 @@ fn save_document(
     force: bool,
     app: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
-) -> Result<Option<Saved>, String> {
+) -> Result<Option<Saved>, CommandError> {
     let original = state.document.lock().unwrap().clone();
     let current_path = original.as_ref().map(|document| document.path.clone());
     let path = match (save_as, current_path.as_ref()) {
@@ -315,7 +348,8 @@ fn save_document(
     {
         return Err("The open document changed while saving. Try again.".into());
     }
-    let saved = document::save(&path, &content, current.as_ref(), force)?;
+    let saved =
+        document::save(&path, &content, current.as_ref(), force).map_err(CommandError::from)?;
     let payload = Saved {
         path: saved.path.to_string_lossy().into(),
         name: saved
@@ -336,17 +370,23 @@ struct RenderedMarkdown {
 }
 
 #[tauri::command(async)]
-fn render_markdown(content: String, state: tauri::State<'_, Arc<AppState>>) -> RenderedMarkdown {
+fn render_markdown(
+    content: String,
+    remote_images: bool,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> RenderedMarkdown {
     let path = state
         .document
         .lock()
         .unwrap()
         .as_ref()
         .map(|document| document.path.clone());
-    RenderedMarkdown {
-        html: markdown::render(&content, path.as_deref().and_then(Path::parent)),
-        blocks: markdown::edit_blocks(&content),
-    }
+    let (html, blocks) = markdown::render_with_blocks(
+        &content,
+        path.as_deref().and_then(Path::parent),
+        remote_images,
+    );
+    RenderedMarkdown { html, blocks }
 }
 
 #[tauri::command]
@@ -383,7 +423,11 @@ fn close_window(window: tauri::WebviewWindow) {
 
 #[tauri::command]
 fn open_link(url: String, app: tauri::AppHandle) -> Result<(), String> {
-    if !(url.starts_with("https://") || url.starts_with("http://") || url.starts_with("mailto:")) {
+    let scheme = url.to_ascii_lowercase();
+    if !(scheme.starts_with("https://")
+        || scheme.starts_with("http://")
+        || scheme.starts_with("mailto:"))
+    {
         return Err("Only web and email links can open externally.".into());
     }
     app.opener()
@@ -426,6 +470,56 @@ fn resolve_link_path(base: &Path, link: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+#[cfg(all(test, unix))]
+mod folder_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn unreadable_subdirectories_are_skipped_instead_of_failing_the_folder() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("visible.md"), "# Visible").unwrap();
+        let locked = directory.path().join("locked");
+        fs::create_dir(&locked).unwrap();
+        fs::write(locked.join("hidden.md"), "# Hidden").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = scan_folder(directory.path());
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        let (entries, _, skipped) = result.unwrap();
+
+        assert!(entries.iter().any(|entry| entry.name == "visible.md"));
+        assert_eq!(skipped, 1);
+    }
+}
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::*;
+
+    fn url(value: &str) -> tauri::Url {
+        value.parse().unwrap()
+    }
+
+    #[test]
+    fn only_the_app_origin_is_allowed_as_a_page() {
+        assert!(is_app_navigation(&url("tauri://localhost/index.html")));
+        assert!(is_app_navigation(&url("ipc://localhost/index.html")));
+        assert!(is_app_navigation(&url("http://tauri.localhost/index.html")));
+        assert!(is_app_navigation(&url("about:blank")));
+        assert!(!is_app_navigation(&url("tauri://evil.test/index.html")));
+        assert!(!is_app_navigation(&url("ipc://evil.test/index.html")));
+        assert!(!is_app_navigation(&url(
+            "http://tauri.localhost:8080/index.html"
+        )));
+        assert!(!is_app_navigation(&url("http://ipc.localhost/index.html")));
+        assert!(!is_app_navigation(&url("about:srcdoc")));
+        assert!(!is_app_navigation(&url("https://example.com/")));
+        assert!(!is_app_navigation(&url("data:text/html,boom")));
+        assert!(!is_app_navigation(&url("file:///tmp/note.md")));
+    }
+}
+
 #[cfg(test)]
 mod link_tests {
     use super::*;
@@ -462,6 +556,49 @@ fn paths_from_arguments(arguments: &[String], cwd: &Path) -> Vec<String> {
         .collect()
 }
 
+fn queue_paths(app: &tauri::AppHandle, paths: Vec<String>) {
+    if paths.is_empty() {
+        return;
+    }
+    let state = app.state::<Arc<AppState>>();
+    state.pending.lock().unwrap().extend(paths.iter().cloned());
+    let _ = app.emit("open-files", paths);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+/// Only the app's own origin may become a top-level page. External links go
+/// through the opener plugin, and middle-click/drag on a preview link must not
+/// replace the UI with a remote document.
+fn is_app_navigation(url: &tauri::Url) -> bool {
+    match url.scheme() {
+        "tauri" | "ipc" => url.host_str() == Some("localhost"),
+        "about" => url.path() == "blank",
+        "http" | "https" => {
+            (url.host_str() == Some("tauri.localhost") && url.port().is_none())
+                || (cfg!(dev) && url.host_str() == Some("localhost"))
+        }
+        _ => false,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
+    if let tauri::RunEvent::Opened { urls } = event {
+        let paths = urls
+            .iter()
+            .filter_map(|url| url.to_file_path().ok())
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        queue_paths(app, paths);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn handle_run_event(_app: &tauri::AppHandle, _event: tauri::RunEvent) {}
+
 fn main() {
     let arguments: Vec<_> = std::env::args().collect();
     if arguments
@@ -478,21 +615,10 @@ fn main() {
     let state = Arc::new(AppState::default());
     *state.pending.lock().unwrap() =
         paths_from_arguments(&arguments, &std::env::current_dir().unwrap_or_default());
-    let instance_state = state.clone();
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(
             move |app, arguments, cwd| {
-                let paths = paths_from_arguments(&arguments, Path::new(&cwd));
-                instance_state
-                    .pending
-                    .lock()
-                    .unwrap()
-                    .extend(paths.iter().cloned());
-                let _ = app.emit("open-files", paths);
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
-                }
+                queue_paths(app, paths_from_arguments(&arguments, Path::new(&cwd)));
             },
         ))
         .plugin(tauri_plugin_dialog::init())
@@ -511,6 +637,17 @@ fn main() {
                     }
                 }
             });
+            tauri::WebviewWindowBuilder::new(
+                app,
+                "main",
+                tauri::WebviewUrl::App("index.html".into()),
+            )
+            .title("Folio")
+            .inner_size(1120.0, 800.0)
+            .min_inner_size(600.0, 440.0)
+            .decorations(true)
+            .on_navigation(is_app_navigation)
+            .build()?;
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -524,9 +661,7 @@ fn main() {
             open_document,
             open_folder,
             browse_directory,
-            choose_folder,
             path_is_directory,
-            choose_document,
             set_task_checked,
             new_document,
             save_document,
@@ -538,6 +673,7 @@ fn main() {
             open_link,
             resolve_document_link
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("Folio could not start");
+    app.run(handle_run_event);
 }

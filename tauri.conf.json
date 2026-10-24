@@ -6,11 +6,26 @@
   "build": { "frontendDist": "ui" },
   "app": {
     "withGlobalTauri": true,
-    "windows": [{ "label": "main", "title": "Folio", "width": 1120, "height": 800, "minWidth": 600, "minHeight": 440, "decorations": true }],
+    "windows": [],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'",
       "capabilities": ["main"]
     }
   },
-  "bundle": { "active": true, "targets": ["appimage", "deb"], "icon": ["assets/icon.png"], "category": "Productivity", "shortDescription": "Read and edit Markdown, one file at a time" }
+  "bundle": {
+    "active": true,
+    "targets": ["appimage", "deb"],
+    "icon": ["assets/icon.png"],
+    "category": "Productivity",
+    "shortDescription": "Read and edit Markdown, one file at a time",
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown", "mdown", "mdtxt"],
+        "name": "Markdown document",
+        "description": "Markdown document",
+        "mimeType": "text/markdown",
+        "role": "Editor"
+      }
+    ]
+  }
 }

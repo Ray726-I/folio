@@ -3,8 +3,6 @@
 mod markdown;
 fn main() {
     let source = std::fs::read_to_string(std::env::args().nth(1).unwrap()).unwrap();
-    println!(
-        "{}",
-        serde_json::json!({"html": markdown::render(&source, None), "blocks": markdown::edit_blocks(&source)})
-    );
+    let (html, blocks) = markdown::render_with_blocks(&source, None, false);
+    println!("{}", serde_json::json!({ "html": html, "blocks": blocks }));
 }

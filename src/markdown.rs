@@ -19,6 +19,10 @@ use std::{
 pub struct EditBlock {
     pub start: usize,
     pub end: usize,
+    /// Kept for Rust tests and the debug fixture; the UI slices `current.content`
+    /// from the byte range instead, so this field is not sent over IPC.
+    #[allow(dead_code)]
+    #[serde(skip_serializing)]
     pub source: String,
     pub sourcepos: String,
     pub nodes: Vec<EditNode>,
@@ -74,10 +78,15 @@ fn node_range(source: &str, node: &comrak::nodes::AstNode) -> Option<(usize, usi
     let end = byte_offset(source, position.end)? + 1;
     Some((start, end))
 }
+#[allow(dead_code)] // used by unit tests and the editor fixture
 pub fn edit_blocks(source: &str) -> Vec<EditBlock> {
     let options = markdown_options();
     let arena = Arena::new();
     let root = parse_document(&arena, source, &options);
+    blocks_from_root(root, source)
+}
+
+fn blocks_from_root<'a>(root: &'a AstNode<'a>, source: &str) -> Vec<EditBlock> {
     let mut blocks = Vec::new();
     let mut child = root.first_child();
     while let Some(node) = child {
@@ -170,9 +179,19 @@ impl SyntaxHighlighterAdapter for SourceHighlighter {
     }
 }
 
-fn local_image(destination: &str, base: Option<&Path>) -> Option<String> {
+const BLOCKED_REMOTE_IMAGE: &str = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iNDgiPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiM4ODg4ODgxOCIgc3Ryb2tlPSIjODg4ODg4NjYiLz48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9InNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMTIiIGZpbGw9IiM4ODg4ODgiPlJlbW90ZSBpbWFnZSBibG9ja2VkPC90ZXh0Pjwvc3ZnPg==";
+
+fn local_image(
+    destination: &str,
+    base: Option<&Path>,
+    allow_remote_images: bool,
+) -> Option<String> {
     if destination.starts_with("https://") {
-        return Some(destination.into());
+        return Some(if allow_remote_images {
+            destination.into()
+        } else {
+            BLOCKED_REMOTE_IMAGE.into()
+        });
     }
     if destination.contains(':') || destination.starts_with('/') {
         return None;
@@ -218,7 +237,12 @@ fn strip_raw_source_positions<'a>(root: &'a AstNode<'a>) {
 fn strip_sourcepos_attribute(literal: &mut String) {
     const ATTRIBUTE: &str = "data-sourcepos";
     let mut search = 0;
-    while let Some(offset) = literal[search..].find(ATTRIBUTE) {
+    // HTML attribute names are ASCII case-insensitive. Search a lowercased copy
+    // so `<li DATA-SOURCEPOS="...">` cannot smuggle a marker past sanitization;
+    // ASCII case folding preserves byte offsets, so removal still targets the
+    // original string.
+    let mut lower = literal.to_ascii_lowercase();
+    while let Some(offset) = lower[search..].find(ATTRIBUTE) {
         let start = search + offset;
         search = start + ATTRIBUTE.len();
         if !literal[..start]
@@ -248,6 +272,7 @@ fn strip_sourcepos_attribute(literal: &mut String) {
             }
         };
         literal.replace_range(start..end, "");
+        lower.replace_range(start..end, "");
         search = start;
     }
 }
@@ -286,13 +311,26 @@ fn patch_task_items(html: &str, task_indices: &HashMap<String, usize>) -> String
     output
 }
 
+/// Render Markdown using Folio's default privacy posture (remote images blocked).
+#[allow(dead_code)] // used by unit tests and the editor fixture
 pub fn render(source: &str, base: Option<&Path>) -> String {
+    render_with_blocks(source, base, false).0
+}
+
+/// Render Markdown and build the edit map from a single parse. `allow_remote_images`
+/// is the user's persisted preference; blocking returns a local placeholder instead
+/// of making a network request.
+pub fn render_with_blocks(
+    source: &str,
+    base: Option<&Path>,
+    allow_remote_images: bool,
+) -> (String, Vec<EditBlock>) {
     let mut options = markdown_options();
     options.render.r#unsafe = true;
     options.render.sourcepos = true;
     let base = base.map(Path::to_path_buf);
     options.extension.image_url_rewriter = Some(Arc::new(move |url: &str| {
-        local_image(url, base.as_deref()).unwrap_or_default()
+        local_image(url, base.as_deref(), allow_remote_images).unwrap_or_default()
     }));
     let plugins = Plugins {
         render: RenderPlugins {
@@ -303,6 +341,7 @@ pub fn render(source: &str, base: Option<&Path>) -> String {
     let arena = Arena::new();
     let root = parse_document(&arena, source, &options);
     strip_raw_source_positions(root);
+    let blocks = blocks_from_root(root, source);
     let task_indices: HashMap<_, _> = root
         .descendants()
         .filter(|node| matches!(node.data().value, NodeValue::TaskItem(_)))
@@ -313,10 +352,20 @@ pub fn render(source: &str, base: Option<&Path>) -> String {
     let mut html = String::new();
     comrak::format_html_with_plugins(root, &options, &mut html, &plugins)
         .expect("writing Markdown HTML to a string cannot fail");
-    patch_task_items(&sanitize(&html), &task_indices)
+    let html = patch_task_items(
+        &harden_images(&sanitize(&html, allow_remote_images)),
+        &task_indices,
+    );
+    (html, blocks)
 }
 
-fn sanitize(html: &str) -> String {
+/// Images inside a document must not disclose the app origin or the user's
+/// reading activity to third-party hosts.
+fn harden_images(html: &str) -> String {
+    html.replace("<img ", "<img referrerpolicy=\"no-referrer\" ")
+}
+
+fn sanitize(html: &str, allow_remote_images: bool) -> String {
     let mut sanitizer = ammonia::Builder::default();
     sanitizer
         .add_generic_attributes([
@@ -335,21 +384,43 @@ fn sanitize(html: &str) -> String {
         .add_tag_attributes("th", ["style"])
         .add_tag_attributes("td", ["style"])
         .url_schemes(HashSet::from(["https", "http", "mailto", "data"]))
-        .attribute_filter(|_, attribute, value| match attribute {
-            "id" if !value.starts_with("doc-") => Some(Cow::Owned(format!("doc-{value}"))),
-            "id" => Some(Cow::Borrowed(value)),
-            "href" if value.starts_with('#') => Some(Cow::Owned(format!("#doc-{}", &value[1..]))),
-            "style"
-                if ![
-                    "text-align: left",
-                    "text-align: right",
-                    "text-align: center",
-                ]
-                .contains(&value.trim().trim_end_matches(';')) =>
-            {
-                None
+        .attribute_filter(move |_, attribute, value| {
+            let value_trimmed = value.trim_start();
+            match attribute {
+                // Raw HTML can bypass the Markdown image rewriter; apply the same
+                // remote-image preference to author-supplied `<img src>` values.
+                "src"
+                    if !allow_remote_images
+                        && value_trimmed
+                            .get(..8)
+                            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://")) =>
+                {
+                    Some(Cow::Owned(BLOCKED_REMOTE_IMAGE.to_string()))
+                }
+                "href"
+                    if value_trimmed
+                        .get(..5)
+                        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:")) =>
+                {
+                    None
+                }
+                "id" if !value.starts_with("doc-") => Some(Cow::Owned(format!("doc-{value}"))),
+                "id" => Some(Cow::Borrowed(value)),
+                "href" if value.starts_with('#') => {
+                    Some(Cow::Owned(format!("#doc-{}", &value[1..])))
+                }
+                "style"
+                    if ![
+                        "text-align: left",
+                        "text-align: right",
+                        "text-align: center",
+                    ]
+                    .contains(&value.trim().trim_end_matches(';')) =>
+                {
+                    None
+                }
+                _ => Some(Cow::Borrowed(value)),
             }
-            _ => Some(Cow::Borrowed(value)),
         })
         .link_rel(Some("noopener noreferrer"));
     sanitizer.clean(html).to_string()
@@ -408,9 +479,10 @@ mod tests {
 
     #[test]
     fn raw_html_cannot_spoof_task_source_positions() {
+        // Attribute names are case-insensitive in HTML; the stripper must not be.
         let spoofed = concat!(
             "<ul>\n",
-            "<li data-sourcepos=\"SOURCEPOS\"><input type=\"checkbox\" disabled=\"\"></li>\n",
+            "<li DaTa-SoUrCePoS=\"SOURCEPOS\"><input type=\"checkbox\" disabled=\"\"></li>\n",
             "<li><input type=\"checkbox\" data-task-index=\"0\"></li>\n",
             "</ul>\n\n",
             "- [x] Real task\n",
@@ -432,11 +504,52 @@ mod tests {
             "{rendered}"
         );
         assert!(
+            rendered.contains("<ul>\n<li><input type=\"checkbox\" disabled=\"\"></li>"),
+            "raw HTML must lose a mixed-case data-sourcepos attribute: {rendered}"
+        );
+        assert!(
             rendered.contains(&format!(
                 "<li data-sourcepos=\"{sourcepos}\"><input type=\"checkbox\" data-task-index=\"0\""
             )),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn remote_images_follow_the_privacy_preference() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = "![tracking pixel](https://example.com/pixel.png)";
+        let blocked = render_with_blocks(source, Some(directory.path()), false).0;
+        assert!(blocked.contains("data:image/svg+xml;base64,"), "{blocked}");
+        assert!(!blocked.contains("example.com"), "{blocked}");
+        assert!(blocked.contains("referrerpolicy=\"no-referrer\""));
+
+        let allowed = render_with_blocks(source, Some(directory.path()), true).0;
+        assert!(allowed.contains("src=\"https://example.com/pixel.png\""));
+        assert!(allowed.contains("referrerpolicy=\"no-referrer\""));
+
+        let raw_blocked = render("<img src=\"https://example.com/raw.png\">", None);
+        assert!(raw_blocked.contains("data:image/svg+xml;base64,"));
+        assert!(!raw_blocked.contains("example.com"), "{raw_blocked}");
+        let spaced = render("<img src=\"  https://example.com/spaced.png\">", None);
+        assert!(!spaced.contains("example.com"), "{spaced}");
+        let (raw_allowed, _) =
+            render_with_blocks("<img src=\"https://example.com/raw.png\">", None, true);
+        assert!(raw_allowed.contains("https://example.com/raw.png"));
+    }
+
+    #[test]
+    fn data_url_links_are_removed_but_data_images_remain_available() {
+        let rendered = render(
+            "[click](data:text/html,boom)\n\n<img src=\"data:image/png;base64,AAAA\">",
+            None,
+        );
+        assert!(!rendered.contains("data:text/html"), "{rendered}");
+        assert!(
+            rendered.contains("data:image/png;base64,AAAA"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("referrerpolicy=\"no-referrer\""));
     }
 
     #[test]
@@ -568,10 +681,18 @@ mod tests {
         fs::create_dir(&base).unwrap();
         fs::write(base.join("image.png"), b"image").unwrap();
         fs::write(directory.path().join("secret.png"), b"secret").unwrap();
-        assert!(local_image("image.png", Some(&base))
+        assert!(local_image("image.png", Some(&base), false)
             .unwrap()
             .starts_with("data:image/png;base64,"));
-        assert!(local_image("../secret.png", Some(&base)).is_none());
-        assert!(local_image("%2e%2e/secret.png", Some(&base)).is_none());
+        assert!(local_image("../secret.png", Some(&base), false).is_none());
+        assert!(local_image("%2e%2e/secret.png", Some(&base), false).is_none());
+        assert_eq!(
+            local_image("https://example.com/pixel.png", Some(&base), false),
+            Some(BLOCKED_REMOTE_IMAGE.to_string())
+        );
+        assert_eq!(
+            local_image("https://example.com/pixel.png", Some(&base), true),
+            Some("https://example.com/pixel.png".to_string())
+        );
     }
 }

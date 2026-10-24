@@ -19,6 +19,7 @@ let errors = [];
   await page.addInitScript(fixtures => {
     window.nativeCalls = [];
     window.nativeEvents = {};
+    window.saveFailure = null;
     const escape = value => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
     window.__TAURI__ = {
       core: { invoke: async (command, args = {}) => {
@@ -47,8 +48,9 @@ let errors = [];
             const marker = matches[args.taskIndex].index + 3;
             return args.content.slice(0, marker) + (args.checked ? 'x' : ' ') + args.content.slice(marker + 1);
           }
-          case 'edit_markdown_block': return args.content.replace('Text', args.replacement);
-          case 'save_document': return { path: fixtures.saved, name: window.FolioPaths.basename(fixtures.saved) };
+          case 'save_document':
+            if (window.saveFailure) { const failure = window.saveFailure; window.saveFailure = null; throw failure; }
+            return { path: fixtures.saved, name: window.FolioPaths.basename(fixtures.saved) };
           case 'document_changed': return false;
           default: return null;
         }
@@ -97,6 +99,17 @@ let errors = [];
   }
   assert.equal(await page.evaluate(() => window.nativeCalls.filter(call => call.command === 'render_markdown').length), initialRenderCalls, 'unchanged mode switches should reuse the rendered preview');
   assert(await page.evaluate(() => window.initialHeading === document.querySelector('#preview h1')), 'unchanged mode switches should preserve the preview DOM');
+
+  const lastRemoteFlag = () => page.evaluate(() => window.nativeCalls.filter(call => call.command === 'render_markdown').at(-1)?.args.remoteImages);
+  assert.equal(await lastRemoteFlag(), false, 'remote images should be blocked by default');
+  await page.keyboard.press('Control+Shift+P');
+  await page.locator('#command-search').fill('load remote images');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => window.nativeCalls.filter(call => call.command === 'render_markdown').at(-1)?.args.remoteImages === true);
+  await page.keyboard.press('Control+Shift+P');
+  await page.locator('#command-search').fill('block remote images');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => window.nativeCalls.filter(call => call.command === 'render_markdown').at(-1)?.args.remoteImages === false);
 
   await page.evaluate(() => { document.getElementById('preview').insertAdjacentHTML('beforeend', '<p><input type="checkbox" id="raw-html-checkbox" checked> author HTML</p>'); });
   await page.locator('#edit-mode').click();
@@ -167,6 +180,7 @@ let errors = [];
   await page.waitForFunction(() => document.getElementById('file-browser').hidden === false);
   await page.getByRole('button', { name: 'item.md' }).click();
   await page.locator('#preview h1').waitFor();
+  assert.equal(await page.locator('#line-ending').textContent(), ' · LF', 'the status bar should show the detected line ending');
   await page.locator('#edit-mode').click();
   await page.locator('#preview p').click();
   await page.locator('.live-editor textarea').fill('Edited text');
@@ -174,6 +188,14 @@ let errors = [];
   await page.waitForFunction(() => !busy);
   await page.locator('#edit-mode').click();
   assert.equal(await page.evaluate(() => current.content), '# Opened\n\nEdited text');
+
+  await page.evaluate(() => { window.saveFailure = { code: 'file_changed', message: 'Another app changed this file.' }; });
+  await page.keyboard.press('Control+S');
+  await page.locator('#confirm-dialog').waitFor();
+  assert((await page.locator('#confirm-message').textContent()).includes('Another app changed this file'));
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.waitForFunction(() => document.getElementById('dirty-dot').hidden === false);
+  assert.equal(await page.evaluate(() => Boolean(window.saveFailure)), false, 'a structured file-changed error should be consumed once');
 
   await page.setViewportSize({ width: 720, height: 800 });
   await page.waitForFunction(() => window.matchMedia('(max-width:960px)').matches);
@@ -186,5 +208,5 @@ let errors = [];
 
   assert.deepEqual(errors, []);
   await browser.close();
-  console.log('PASS: unchanged modes preserve the preview DOM, document width toggles through the toolbar and palette, task boxes and inline edits preserve Markdown, zoom shortcuts work, the tree sidebar resizes and collapses, raw HTML checkboxes stay read-only, and narrow screens swap the tree and outline instead of stacking them.');
+  console.log('PASS: unchanged modes preserve the preview DOM, remote images toggle through the palette, structured save conflicts prompt correctly, the status bar reports line endings, document width toggles through the toolbar and palette, task boxes and inline edits preserve Markdown, zoom shortcuts work, the tree sidebar resizes and collapses, raw HTML checkboxes stay read-only, and narrow screens swap the tree and outline instead of stacking them.');
 })().catch(error => { console.error(error); console.error('PAGE ERRORS:', errors); process.exit(1); });
