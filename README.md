@@ -1,8 +1,8 @@
 # Folio
 
-A small Linux Markdown reader and editor built with Rust and Tauri. The interface uses a quiet GNOME-style header and the system WebKitGTK engine. The Markdown parser, syntax highlighter, file operations, and Omarchy theme reader are Rust. The UI is plain HTML/CSS with a little JavaScript; no frontend build step is required.
+A small cross-platform Markdown reader and editor built with Rust and Tauri. It uses the system webview on each platform: WebKitGTK on Linux, WKWebView on macOS, and WebView2 on Windows. The Markdown parser, syntax highlighter, and file operations are Rust. The UI is plain HTML/CSS with a little JavaScript; no frontend build step is required.
 
-Folio is an early prototype. Linux is the supported platform; the build uses your system's GTK and WebKitGTK libraries.
+Folio is an early prototype. Native build configurations and CI checks target Linux, Windows, and macOS; Windows and macOS still need hands-on validation. Published release packages are currently Linux-only.
 
 ## Run
 
@@ -11,15 +11,15 @@ cargo run --release
 cargo run --release -- /path/to/document.md
 ```
 
-After building, run `./target/release/folio [FILE]` directly. `./run.sh [FILE]` uses the release binary if available, otherwise builds it. All fonts, styles, scripts, and parsers are local; reading and editing work offline. Remote images and web links require a connection.
+After building, run `./target/release/folio [FILE]` directly on Linux/macOS, or the generated executable on Windows. `./run.sh [FILE]` is a Linux helper that uses the release binary if available, otherwise builds it. All fonts, styles, scripts, and parsers are local; reading and editing work offline. Remote images and web links require a connection.
 
-The development machine needs Rust, a C toolchain, GTK 3, WebKitGTK 4.1, libsoup 3, OpenSSL, and librsvg. On Arch/Omarchy, see Tauri's [Linux prerequisites](https://v2.tauri.app/start/prerequisites/#linux). No Node runtime is needed to run or build Folio.
+For native prerequisites, follow Tauri's [Linux](https://v2.tauri.app/start/prerequisites/#linux), [macOS](https://v2.tauri.app/start/prerequisites/#macos), or [Windows](https://v2.tauri.app/start/prerequisites/#windows) instructions. Linux builds need GTK 3, WebKitGTK 4.1, libsoup 3, OpenSSL, and librsvg. On Arch/Omarchy, install `webkit2gtk-4.1` from the distribution repositories. No Node runtime is needed to run or build Folio with Cargo.
 
 ## Controls
 
 | Action | Shortcut |
 | --- | --- |
-| Command window (also the header search button) | Ctrl+Shift+P |
+| Command window (also the header search button) | Ctrl+Shift+P (Command+Shift+P on macOS) |
 | Open a Markdown file or folder | Ctrl+O |
 | Show or hide the file tree | Ctrl+B |
 | New document | Ctrl+N |
@@ -35,11 +35,11 @@ The development machine needs Rust, a C toolchain, GTK 3, WebKitGTK 4.1, libsoup
 | Focus mode | F11; Escape exits |
 | Close | Ctrl+W |
 
-The command window supports typing to filter, arrow keys, Enter, and Escape. Search for a theme by name, or select **Change theme…**. There are System, Adwaita Light, Adwaita Dark, Nord, Catppuccin Mocha, Rosé Pine, and Solarized Light themes. Theme and text-size preferences persist locally. Recent files store paths, not document contents; they can be cleared from the command window.
+On macOS, use Command in place of Ctrl for the listed shortcuts. The command window supports typing to filter, arrow keys, Enter, and Escape. Search for a theme by name, or select **Change theme…**. There are System, Adwaita Light, Adwaita Dark, Nord, Catppuccin Mocha, Rosé Pine, and Solarized Light themes. Theme and text-size preferences persist locally. Recent files store paths, not document contents; they can be cleared from the command window.
 
 ## Omarchy
 
-Folio adds a theme named **Omarchy** when it finds a valid current palette. When selected, it reads the active palette's background, foreground, accent, selection, and syntax colors. It checks for changes every two seconds and reapplies them while the app is open. Other selected themes are left alone. If the palette disappears, Omarchy selection falls back to the system appearance until a palette returns.
+On Linux, Folio adds a theme named **Omarchy** when it finds a valid current palette. When selected, it reads the active palette's background, foreground, accent, selection, and syntax colors. It checks for changes every two seconds and reapplies them while the app is open. Other selected themes are left alone. If the palette disappears, Omarchy selection falls back to the system appearance until a palette returns. Omarchy palette detection is not available on Windows or macOS.
 
 Detection respects XDG_STATE_HOME and XDG_CONFIG_HOME, checking:
 
@@ -58,7 +58,7 @@ Relative Markdown images in the document's directory or its descendants are load
 
 Saves write a temporary sibling file and rename it atomically. Content fingerprints detect external changes before saving; the app presents Reload, Overwrite, and Cancel choices. It also shows a disk-change banner while the document is open. Folio opens one document at a time. Opening a folder shows a collapsible file tree. Click a folder to expand it, select a Markdown file to open it, and use the close button or Ctrl+B to hide or show the tree without closing the document. Drag the tree's edge to resize it. In **Edit**, click a rendered text line to reveal its Markdown in place. Other lines stay rendered, including other lines in the same wrapped paragraph. Code, Mermaid, math blocks, and tables reveal their whole source block. Changes apply in memory when you leave the line or press Ctrl+Enter; Ctrl+S saves to disk. Task boxes can be ticked directly. Undo and redo cover text, blocks, and task boxes across mode changes. **Preview** is read-only. Obsidian plugins, PlantUML, and other diagram languages besides Mermaid are not implemented.
 
-## Optional desktop installation
+## Optional Linux desktop installation
 
 ```sh
 cargo build --release
@@ -71,7 +71,7 @@ The script installs under your user directory and registers Folio as an availabl
 
 Linux releases are published on [GitHub Releases](https://github.com/Ray726-I/folio/releases) as an AppImage and a Debian package. The AppImage is convenient for a portable user install. The Debian package integrates with the system package manager.
 
-Both packages use the system's GTK and WebKitGTK runtime, so the Linux prerequisites described above still apply. On Debian or Ubuntu, install the matching WebKitGTK 4.1 runtime before launching Folio. On Arch or Omarchy, install `webkit2gtk-4.1` from the distribution repositories.
+Both Linux packages use the system's GTK and WebKitGTK runtime, so the Linux prerequisites described above still apply. On Debian or Ubuntu, install the matching WebKitGTK 4.1 runtime before launching Folio. On Arch or Omarchy, install `webkit2gtk-4.1` from the distribution repositories. Windows and macOS installers are not currently published by the release workflow.
 
 To publish a new release, update the version in `Cargo.toml` and `tauri.conf.json`, commit the change, then push a matching tag:
 
@@ -114,7 +114,7 @@ cargo build --example editor-fixture
 node tests/live-editor.cjs
 ```
 
-The GitHub Actions workflow runs Rust formatting, tests, Clippy, and the UI checks on Ubuntu. Node.js is needed only for these UI checks.
+The GitHub Actions workflow runs Rust formatting, tests, Clippy, and UI checks on Linux, Windows, and macOS, and builds native bundles on each platform. Node.js is needed only for these UI checks and bundle verification.
 
 ## License
 

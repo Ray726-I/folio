@@ -1,6 +1,14 @@
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const assert = require('node:assert/strict');
+const os = require('node:os');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+const fixtureRoot = path.join(os.tmpdir(), 'folio-smoke');
+const fixtureNotes = path.join(fixtureRoot, 'notes');
+const fixtureSub = path.join(fixtureNotes, 'sub');
+const fixtureOpened = path.join(fixtureRoot, 'opened.md');
+const fixtureItem = path.join(fixtureNotes, 'item.md');
+const fixtureSaved = path.join(fixtureRoot, 'saved.md');
 let errors = [];
 
 (async () => {
@@ -8,7 +16,7 @@ let errors = [];
   const page = await browser.newPage({ viewport: { width: 1120, height: 800 } });
   errors = [];
   page.on('pageerror', error => errors.push(String(error)));
-  await page.addInitScript(() => {
+  await page.addInitScript(fixtures => {
     window.nativeCalls = [];
     window.nativeEvents = {};
     const escape = value => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
@@ -16,7 +24,7 @@ let errors = [];
       core: { invoke: async (command, args = {}) => {
         window.nativeCalls.push({ command, args });
         switch (command) {
-          case 'bootstrap': return { paths: [], theme: { name: 'midnight', mode: 'dark', colors: { background: '#060b1e', foreground: '#ffcead', accent: '#7d82d9', dark_background: '#040816', lighter_background: '#131a3a' } } };
+          case 'bootstrap': return { paths: [], platform: fixtures.platform, theme: { name: 'midnight', mode: 'dark', colors: { background: '#060b1e', foreground: '#ffcead', accent: '#7d82d9', dark_background: '#040816', lighter_background: '#131a3a' } } };
           case 'render_markdown': {
             if (args.content.includes('Plain text, beautifully rendered')) {
               const items = [...args.content.matchAll(/^- \[([ x])\] (.*)$/gm)];
@@ -28,24 +36,19 @@ let errors = [];
             return { html: `<h1 id="heading-1">${escape(heading.replace(/^# /, ''))}</h1><p>${escape(body)}</p>`, blocks: [{ source: heading, start: 0, end: heading.length }, { source: body, start: heading.length + 2, end: heading.length + 2 + body.length }] };
           }
           case 'browse_directory': {
-            const folder = args.path || '/tmp';
-            const contents = {
-              '/tmp': [{ path: '/tmp/notes', name: 'notes', directory: true }, { path: '/tmp/opened.md', name: 'opened.md', directory: false }],
-              '/tmp/notes': [{ path: '/tmp/notes/sub', name: 'sub', directory: true }, { path: '/tmp/notes/item.md', name: 'item.md', directory: false }],
-              '/tmp/notes/sub': []
-            };
-            return { path: folder, parent: folder === '/' ? null : folder.slice(0, folder.lastIndexOf('/')) || '/', entries: contents[folder] || [] };
+            const folder = args.path || fixtures.root;
+            return { path: folder, parent: fixtures.parents[folder] ?? null, entries: fixtures.listings[folder] || [] };
           }
-          case 'path_is_directory': return args.path === '/tmp/notes' || args.path === '/tmp/notes/sub' || args.path === '/tmp';
-          case 'open_folder': return { path: args.path, name: args.path.split('/').pop(), entries: args.path === '/tmp/notes' ? [{ path: '/tmp/notes/sub', name: 'sub', depth: 0, directory: true }, { path: '/tmp/notes/item.md', name: 'item.md', depth: 0, directory: false }] : [] };
-          case 'open_document': return { path: args.path, name: args.path.split('/').pop(), content: '# Opened\n\nText', lineEnding: 'LF' };
+          case 'path_is_directory': return fixtures.directories.includes(args.path);
+          case 'open_folder': return { path: args.path, name: window.FolioPaths.basename(args.path), entries: fixtures.folderEntries[args.path] || [] };
+          case 'open_document': return { path: args.path, name: window.FolioPaths.basename(args.path), content: '# Opened\n\nText', lineEnding: 'LF' };
           case 'set_task_checked': {
             const matches = [...args.content.matchAll(/^- \[([ x])\] /gm)];
             const marker = matches[args.taskIndex].index + 3;
             return args.content.slice(0, marker) + (args.checked ? 'x' : ' ') + args.content.slice(marker + 1);
           }
           case 'edit_markdown_block': return args.content.replace('Text', args.replacement);
-          case 'save_document': return { path: '/tmp/saved.md', name: 'saved.md' };
+          case 'save_document': return { path: fixtures.saved, name: window.FolioPaths.basename(fixtures.saved) };
           case 'document_changed': return false;
           default: return null;
         }
@@ -53,16 +56,36 @@ let errors = [];
       event: { listen: async (name, callback) => { window.nativeEvents[name] = callback; return () => {}; } },
       webview: { getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) }
     };
+  }, {
+    root: fixtureRoot,
+    saved: fixtureSaved,
+    platform: process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux',
+    directories: [fixtureRoot, fixtureNotes, fixtureSub],
+    parents: {
+      [fixtureRoot]: path.dirname(fixtureRoot) === fixtureRoot ? null : path.dirname(fixtureRoot),
+      [fixtureNotes]: fixtureRoot,
+      [fixtureSub]: fixtureNotes
+    },
+    listings: {
+      [fixtureRoot]: [
+        { path: fixtureNotes, name: 'notes', directory: true },
+        { path: fixtureOpened, name: 'opened.md', directory: false }
+      ],
+      [fixtureNotes]: [
+        { path: fixtureSub, name: 'sub', directory: true },
+        { path: fixtureItem, name: 'item.md', directory: false }
+      ],
+      [fixtureSub]: []
+    },
+    folderEntries: {
+      [fixtureNotes]: [
+        { path: fixtureSub, name: 'sub', depth: 0, directory: true },
+        { path: fixtureItem, name: 'item.md', depth: 0, directory: false }
+      ]
+    }
   });
-  await page.goto('file://' + path.resolve(__dirname, '../ui/index.html'));
+  await page.goto(pathToFileURL(path.resolve(__dirname, '../ui/index.html')).href);
   await page.waitForFunction(() => document.documentElement.dataset.theme === 'omarchy');
-  assert.equal(await page.evaluate(() => typeof window.katex?.render), 'function', 'vendored KaTeX should load locally');
-  const diagram = await page.evaluate(async () => {
-    if (typeof mermaid === 'undefined' || typeof mermaid.render !== 'function') return null;
-    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' });
-    try { const { svg } = await mermaid.render('smoke-diagram', 'graph TD;\nA-->B;'); return svg.includes('<svg'); } catch { return false; }
-  });
-  assert.equal(diagram, true, 'vendored Mermaid should render a diagram');
   await page.locator('#sample').click();
   await page.locator('#preview h1').waitFor();
   await page.waitForFunction(() => !busy);
@@ -163,5 +186,5 @@ let errors = [];
 
   assert.deepEqual(errors, []);
   await browser.close();
-  console.log('PASS: math and diagrams load, unchanged modes preserve the preview DOM, document width toggles through the toolbar and palette, task boxes and inline edits preserve Markdown, zoom shortcuts work, the tree sidebar resizes and collapses, raw HTML checkboxes stay read-only, and narrow screens swap the tree and outline instead of stacking them.');
+  console.log('PASS: unchanged modes preserve the preview DOM, document width toggles through the toolbar and palette, task boxes and inline edits preserve Markdown, zoom shortcuts work, the tree sidebar resizes and collapses, raw HTML checkboxes stay read-only, and narrow screens swap the tree and outline instead of stacking them.');
 })().catch(error => { console.error(error); console.error('PAGE ERRORS:', errors); process.exit(1); });

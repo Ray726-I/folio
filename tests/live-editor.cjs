@@ -3,10 +3,15 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const { execFileSync } = require('node:child_process');
 
 (async () => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'folio-live-'));
+  const livePath = path.join(scratch, 'live.md');
+  const fixture = path.resolve('target/debug/examples', `editor-fixture${process.platform === 'win32' ? '.exe' : ''}`);
+  const screenshot = path.join(os.tmpdir(), 'folio-live-line.png');
+  const platform = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux';
   const source = '# Live editing\n\n' + ('A **bold** café \u{1f600} sentence with an [inline link](https://example.com), &amp; and \\*escaped\\* punctuation. '.repeat(5)) + '\n\n- [ ] A task\n- Another item\n\n```mermaid\ngraph TD; A-->B;\n```\n\n```rust\nfn main() {}\n```\n';
   const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
   try {
@@ -14,21 +19,21 @@ const { execFileSync } = require('node:child_process');
     const errors = []; page.on('pageerror', error => errors.push(String(error)));
     await page.exposeFunction('nativeRender', content => {
       const file = path.join(scratch, 'input.md'); fs.writeFileSync(file, content);
-      return JSON.parse(execFileSync(path.resolve('target/debug/examples/editor-fixture'), [file], { encoding: 'utf8' }));
+      return JSON.parse(execFileSync(fixture, [file], { encoding: 'utf8' }));
     });
-    await page.addInitScript(source => {
+    await page.addInitScript(({ source, livePath, platform }) => {
       window.calls = [];
       window.__TAURI__ = { core: { invoke: async (command, args = {}) => {
         window.calls.push(command);
-        if (command === 'bootstrap') return { paths: ['/tmp/live.md'], theme: null };
-        if (command === 'open_document') return { path: '/tmp/live.md', name: 'live.md', content: source };
+        if (command === 'bootstrap') return { paths: [livePath], theme: null, platform };
+        if (command === 'open_document') return { path: livePath, name: 'live.md', content: source };
         if (command === 'render_markdown') return window.nativeRender(args.content);
-        if (command === 'save_document') { window.savedContent = args.content; return { path: '/tmp/live.md', name: 'live.md' }; }
+        if (command === 'save_document') { window.savedContent = args.content; return { path: livePath, name: 'live.md' }; }
         if (command === 'set_task_checked') return args.content.replace('- [ ] A task', '- [x] A task');
         return null;
       } }, event: { listen: async () => () => {} }, webview: { getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) } };
-    }, source);
-    await page.goto('file://' + path.resolve('ui/index.html'));
+    }, { source, livePath, platform });
+    await page.goto(pathToFileURL(path.resolve('ui/index.html')).href);
     await page.waitForFunction(() => !busy && document.querySelector('.mermaid-host svg'));
     assert.equal(await page.locator('#mode-switch button').count(), 2);
     const initialCalls = await page.evaluate(() => calls.filter(x => x === 'render_markdown').length);
@@ -42,7 +47,7 @@ const { execFileSync } = require('node:child_process');
     const originalLine = await editor.inputValue();
     assert(originalLine.length < source.split('\n\n')[1].length / 2, 'only a wrapped visual line should become raw Markdown');
     assert(await page.locator('.live-before').count()); assert(await page.locator('.live-after').count());
-    await page.screenshot({ path: '/tmp/folio-live-line.png' });
+    await page.screenshot({ path: screenshot });
     await editor.fill(originalLine + ' EDITED');
     assert((await page.evaluate(() => current.content)).includes(' EDITED'));
     await page.keyboard.press('Control+z'); assert.equal(await editor.inputValue(), originalLine);

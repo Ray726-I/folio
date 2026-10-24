@@ -1,6 +1,13 @@
 {
   "name": "folio-ui-checks",
   "private": true,
-  "scripts": { "test:ui": "node tests/ui-smoke.cjs" },
-  "devDependencies": { "playwright": "1.62.1" }
+  "scripts": {
+    "check:bundles": "node scripts/check-bundles.cjs",
+    "test:paths": "node --test tests/paths.test.cjs",
+    "test:ui": "node tests/ui-smoke.cjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.4",
+    "playwright": "1.62.1"
+  }
 }

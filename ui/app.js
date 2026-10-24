@@ -3,6 +3,7 @@ const $ = id => document.getElementById(id);
 const invoke = (command, args = {}) => window.__TAURI__.core.invoke(command, args);
 const listen = (event, callback) => window.__TAURI__.event.listen(event, callback);
 const root = document.documentElement;
+const { basename, dirname, isWithin, pathKey, samePath, setPlatform } = window.FolioPaths;
 const preferences = {
   get(key, fallback) { try { return JSON.parse(localStorage.getItem(`folio.${key}`)) ?? fallback; } catch { return fallback; } },
   set(key, value) { try { localStorage.setItem(`folio.${key}`, JSON.stringify(value)); } catch {} }
@@ -31,7 +32,7 @@ function toast(message) { $('toast').textContent = String(message); $('toast').h
 function status(message) { $('app-status').textContent = message; }
 function updateTitle() {
   $('document-name').textContent = current.active ? current.name : activeFolder?.name || 'Folio';
-  $('document-location').textContent = current.path ? current.path.slice(0, current.path.lastIndexOf('/')) : activeFolder?.path || (current.active ? 'Unsaved document' : 'Markdown files and folders');
+  $('document-location').textContent = current.path ? dirname(current.path) : activeFolder?.path || (current.active ? 'Unsaved document' : 'Markdown files and folders');
   $('document-location').title = current.path || activeFolder?.path || '';
   $('dirty-dot').hidden = !dirty();
   invoke('set_title', { name: current.active ? current.name : activeFolder?.name || 'Folio', dirty: dirty() }).catch(() => {});
@@ -702,15 +703,17 @@ function setFolderVisible(visible) {
 }
 function expandParentsOf(path) {
   for (const entry of folderEntries) {
-    if (entry.directory && path.startsWith(`${entry.path}/`)) expandedFolders.add(entry.path);
+    if (entry.directory && isWithin(path, entry.path)) expandedFolders.add(pathKey(entry.path));
   }
 }
 function entryIsVisible(entry) {
   if (!activeFolder) return false;
-  let parent = entry.path.slice(0, entry.path.lastIndexOf('/')) || '/';
-  while (parent !== activeFolder.path && parent.startsWith(`${activeFolder.path.replace(/\/$/, '')}/`)) {
-    if (!expandedFolders.has(parent)) return false;
-    parent = parent.slice(0, parent.lastIndexOf('/')) || '/';
+  let parent = dirname(entry.path);
+  while (parent && !samePath(parent, activeFolder.path) && isWithin(parent, activeFolder.path)) {
+    if (!expandedFolders.has(pathKey(parent))) return false;
+    const next = dirname(parent);
+    if (!next || samePath(next, parent)) break;
+    parent = next;
   }
   return true;
 }
@@ -725,19 +728,19 @@ function renderFolderEntries() {
   for (const entry of folderEntries) {
     if (!entryIsVisible(entry)) continue;
     const button = document.createElement('button');
-    button.className = `folder-entry${entry.directory ? ' directory' : ''}${current.path === entry.path ? ' selected' : ''}`;
+    button.className = `folder-entry${entry.directory ? ' directory' : ''}${samePath(current.path, entry.path) ? ' selected' : ''}`;
     button.style.paddingLeft = `${7 + entry.depth * 16}px`;
     button.title = entry.path;
     if (entry.directory) {
-      const expanded = expandedFolders.has(entry.path);
+      const expanded = expandedFolders.has(pathKey(entry.path));
       button.setAttribute('aria-expanded', String(expanded));
       const chevron = icon('chevron'); chevron.classList.add('tree-chevron'); button.append(chevron);
       button.append(icon('open'));
-      button.onclick = () => { expanded ? expandedFolders.delete(entry.path) : expandedFolders.add(entry.path); renderFolderEntries(); };
+      button.onclick = () => { expanded ? expandedFolders.delete(pathKey(entry.path)) : expandedFolders.add(pathKey(entry.path)); renderFolderEntries(); };
     } else {
       const spacer = document.createElement('span'); spacer.className = 'tree-spacer'; button.append(spacer);
       button.append(icon('file'));
-      if (current.path === entry.path) button.setAttribute('aria-current', 'page');
+      if (samePath(current.path, entry.path)) button.setAttribute('aria-current', 'page');
       button.onclick = () => requestOpen(entry.path);
     }
     const label = document.createElement('span'); label.textContent = entry.name; button.append(label);
@@ -804,13 +807,13 @@ function newDocument(sample = false) {
     showDocument(); $('reader-scroll').scrollTop = 0; await setMode(sample ? 'read' : 'edit');
   });
 }
-function addRecent(path) { const recent = preferences.get('recent', []); preferences.set('recent', [path, ...recent.filter(item => item !== path)].slice(0, 6)); renderRecent(); }
+function addRecent(path) { const recent = preferences.get('recent', []); preferences.set('recent', [path, ...recent.filter(item => !samePath(item, path))].slice(0, 6)); renderRecent(); }
 function renderRecent() {
   const recent = preferences.get('recent', []); $('recent-section').hidden = !recent.length; $('recent-files').replaceChildren();
   for (const path of recent.slice(0, 4)) {
     const button = document.createElement('button'); button.className = 'recent-file'; button.append(icon('file'));
     const text = document.createElement('div'), name = document.createElement('strong'), location = document.createElement('small');
-    name.textContent = path.split('/').pop(); location.textContent = path.slice(0, path.lastIndexOf('/')); text.append(name, location); button.append(text); button.title = path; button.onclick = () => requestOpen(path); $('recent-files').append(button);
+    name.textContent = basename(path); location.textContent = dirname(path); text.append(name, location); button.append(text); button.title = path; button.onclick = () => requestOpen(path); $('recent-files').append(button);
   }
 }
 
@@ -1068,7 +1071,7 @@ async function start() {
   await listen('request-close', requestClose);
   await listen('open-files', event => { for (const path of event.payload) requestOpenLocation(path); });
   await listen('system-theme', event => { omarchy = event.payload; if (selectedTheme === 'omarchy') applyTheme('omarchy', false); else if ($('command-dialog').open) renderCommands(); });
-  const state = await invoke('bootstrap'); omarchy = state.theme;
+  const state = await invoke('bootstrap'); setPlatform(state.platform); omarchy = state.theme;
   if (preferences.get('theme', null) === null && omarchy) selectedTheme = 'omarchy';
   applyTheme(selectedTheme, false);
   for (const path of state.paths) requestOpenLocation(path);

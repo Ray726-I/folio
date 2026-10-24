@@ -10,9 +10,14 @@ permissions:
   contents: read
 
 jobs:
-  linux:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+  checks:
+    name: Native checks (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -20,6 +25,7 @@ jobs:
           node-version: 24
           cache: npm
       - name: Install Linux dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
@@ -36,8 +42,51 @@ jobs:
       - name: Install UI test dependencies
         run: |
           npm ci
-          npx playwright install --with-deps chromium
+          npx playwright install chromium
+      - name: Install Linux UI dependencies
+        if: runner.os == 'Linux'
+        run: npx playwright install-deps chromium
+      - name: Run path helper checks
+        run: npm run test:paths
       - name: Run UI checks
         run: |
           npm run test:ui
           node tests/live-editor.cjs
+
+  native-build:
+    name: Native build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            libxdo-dev \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libfuse2 \
+            file
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+      - name: Install JavaScript dependencies
+        run: npm ci
+      - name: Build native application and bundles
+        run: npx tauri build --ci --no-sign
+      - name: Verify native bundle outputs
+        run: npm run check:bundles

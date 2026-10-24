@@ -156,19 +156,26 @@ mod tests {
 
     #[test]
     fn preserves_crlf_bom_and_permissions() {
-        use std::os::unix::fs::PermissionsExt;
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("note.md");
         fs::write(&path, "\u{feff}Hello\r\nworld\r\n").unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        }
         let (document, data) = load(&path).unwrap();
         assert_eq!(data.content, "Hello\nworld\n");
         let saved = save(&path, "Changed\n", Some(&document), false).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "\u{feff}Changed\r\n");
-        assert_eq!(
-            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-            0o640
-        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o640
+            );
+        }
         assert!(!changed(&saved));
     }
 }

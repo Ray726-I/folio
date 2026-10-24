@@ -12,5 +12,5 @@
       "capabilities": ["main"]
     }
   },
-  "bundle": { "active": true, "targets": ["appimage", "deb"], "icon": ["assets/icon.png"], "category": "Office", "shortDescription": "Read and edit Markdown, one file at a time" }
+  "bundle": { "active": true, "targets": ["appimage", "deb"], "icon": ["assets/icon.png"], "category": "Productivity", "shortDescription": "Read and edit Markdown, one file at a time" }
 }

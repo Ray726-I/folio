@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod document;
 mod markdown;
 mod theme;
@@ -159,6 +161,7 @@ fn scan_folder(root: &Path) -> Result<Vec<FolderEntry>, String> {
 struct Bootstrap {
     paths: Vec<String>,
     theme: Option<theme::Theme>,
+    platform: &'static str,
 }
 
 #[tauri::command]
@@ -166,6 +169,7 @@ fn bootstrap(state: tauri::State<'_, Arc<AppState>>) -> Bootstrap {
     Bootstrap {
         paths: std::mem::take(&mut *state.pending.lock().unwrap()),
         theme: theme::current(),
+        platform: std::env::consts::OS,
     }
 }
 

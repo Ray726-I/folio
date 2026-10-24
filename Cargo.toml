@@ -1,7 +1,7 @@
 [package]
 name = "folio"
 version = "0.1.0"
-description = "A quiet, file-focused Markdown reader and editor for Linux"
+description = "A quiet, file-focused Markdown reader and editor"
 edition = "2021"
 license = "MIT"
 
@@ -28,4 +28,3 @@ syntect = { version = "5", default-features = false, features = ["default-fancy"
 lto = "thin"
 codegen-units = 1
 strip = true
-
