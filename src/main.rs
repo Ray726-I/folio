@@ -386,25 +386,52 @@ fn resolve_document_link(
     link: String,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<String, String> {
-    if link.contains(':') {
-        return Err("Unsupported file link.".into());
-    }
     let current = state.document.lock().unwrap();
     let base = current
         .as_ref()
         .and_then(|document| document.path.parent())
         .ok_or("Save this document before opening relative links.")?;
+    let path = resolve_link_path(base, &link)?;
+    Ok(path.to_string_lossy().into())
+}
+
+fn resolve_link_path(base: &Path, link: &str) -> Result<PathBuf, String> {
+    if link.contains(':') || Path::new(link).is_absolute() {
+        return Err("Unsupported file link.".into());
+    }
     let decoded = percent_encoding::percent_decode_str(link.split('#').next().unwrap_or(""))
         .decode_utf8()
         .map_err(|e| e.to_string())?;
+    let base = base.canonicalize().map_err(|e| e.to_string())?;
     let path = base
         .join(decoded.as_ref())
         .canonicalize()
         .map_err(|e| e.to_string())?;
+    if !path.starts_with(&base) {
+        return Err("This link points outside the document folder.".into());
+    }
     if !path.is_file() {
         return Err("This link does not point to a file.".into());
     }
-    Ok(path.to_string_lossy().into())
+    Ok(path)
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::*;
+
+    #[test]
+    fn relative_links_cannot_escape_the_document_folder() {
+        let directory = tempfile::tempdir().unwrap();
+        let notes = directory.path().join("notes");
+        fs::create_dir(&notes).unwrap();
+        fs::write(notes.join("inside.md"), "inside").unwrap();
+        fs::write(directory.path().join("outside.md"), "outside").unwrap();
+
+        assert!(resolve_link_path(&notes, "inside.md#section").is_ok());
+        assert!(resolve_link_path(&notes, "../outside.md").is_err());
+        assert!(resolve_link_path(&notes, "%2e%2e/outside.md").is_err());
+    }
 }
 
 fn paths_from_arguments(arguments: &[String], cwd: &Path) -> Vec<String> {
