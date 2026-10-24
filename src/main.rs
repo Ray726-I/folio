@@ -279,32 +279,38 @@ fn save_document(
     app: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<Option<Saved>, String> {
-    let mut current = state.document.lock().unwrap();
-    let path = if save_as || current.is_none() {
-        let mut dialog = app
-            .dialog()
-            .file()
-            .add_filter("Markdown", &["md", "markdown"]);
-        if let Some(document) = current.as_ref() {
-            dialog = dialog
-                .set_directory(document.path.parent().unwrap_or(Path::new(".")))
-                .set_file_name(
-                    document
-                        .path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy(),
-                );
-        } else {
-            dialog = dialog.set_file_name("Untitled.md");
+    let original = state.document.lock().unwrap().clone();
+    let current_path = original.as_ref().map(|document| document.path.clone());
+    let path = match (save_as, current_path.as_ref()) {
+        (false, Some(path)) => path.clone(),
+        (_, current_path) => {
+            let mut dialog = app
+                .dialog()
+                .file()
+                .add_filter("Markdown", &["md", "markdown"]);
+            if let Some(path) = current_path {
+                dialog = dialog
+                    .set_directory(path.parent().unwrap_or(Path::new(".")))
+                    .set_file_name(path.file_name().unwrap_or_default().to_string_lossy());
+            } else {
+                dialog = dialog.set_file_name("Untitled.md");
+            }
+            match dialog.blocking_save_file() {
+                Some(file) => file.into_path().map_err(|e| e.to_string())?,
+                None => return Ok(None),
+            }
         }
-        match dialog.blocking_save_file() {
-            Some(file) => file.into_path().map_err(|e| e.to_string())?,
-            None => return Ok(None),
-        }
-    } else {
-        current.as_ref().unwrap().path.clone()
     };
+    let mut current = state.document.lock().unwrap();
+    if current
+        .as_ref()
+        .map(|document| (&document.path, &document.fingerprint))
+        != original
+            .as_ref()
+            .map(|document| (&document.path, &document.fingerprint))
+    {
+        return Err("The open document changed while saving. Try again.".into());
+    }
     let saved = document::save(&path, &content, current.as_ref(), force)?;
     let payload = Saved {
         path: saved.path.to_string_lossy().into(),
