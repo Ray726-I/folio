@@ -425,7 +425,9 @@ async function undoRedo(redo = false) {
 function syncPreviewEditing() {
   const editable = mode === 'edit';
   if (!editable) $('preview').querySelectorAll('[data-empty-edit]').forEach(node => node.remove());
-  $('preview').querySelectorAll('input[type="checkbox"]').forEach(checkbox => { checkbox.disabled = !editable; });
+  // Only generated task checkboxes (tagged with data-task-index) are ever editable;
+  // author-supplied raw HTML checkboxes stay disabled so preview state cannot drift.
+  $('preview').querySelectorAll('input[type="checkbox"]').forEach(checkbox => { checkbox.disabled = !(editable && checkbox.hasAttribute('data-task-index')); });
   $('preview').querySelectorAll('[data-edit-index]').forEach(block => {
     block.classList.toggle('preview-editable', editable);
     if (editable) { block.tabIndex = 0; block.title = 'Click a line to edit Markdown'; }
@@ -972,7 +974,7 @@ $('preview').addEventListener('click', event => {
 });
 document.addEventListener('pointerdown', event => {
   if (!inlineEdit || event.target === inlineEdit.textarea || event.target.closest('dialog,#find-bar')) return;
-  const checkbox = event.target.closest('input[data-task-index]');
+  const checkbox = event.target.closest('input[type="checkbox"][data-task-index]');
   if (checkbox) {
     event.preventDefault();
     const taskIndex = Number(checkbox.dataset.taskIndex), checked = !checkbox.checked;
