@@ -651,7 +651,7 @@ async function openPath(path, confirmed = false) {
   previewSnapshot = null;
   previewBlocks = [];
   current = { path: document.path, name: document.name, content: document.content, saved: document.content, active: true };
-  if (activeFolder && document.path !== activeFolder.path && !document.path.startsWith(`${activeFolder.path.replace(/\/$/, '')}/`)) { activeFolder = null; folderEntries = []; expandedFolders.clear(); }
+  if (activeFolder && !samePath(document.path, activeFolder.path) && !isWithin(document.path, activeFolder.path)) { activeFolder = null; folderEntries = []; expandedFolders.clear(); }
   if (activeFolder) expandParentsOf(document.path);
   savedReaderScroll = 0;
   showDocument(); $('reader-scroll').scrollTop = 0; await setMode('read'); addRecent(current.path); return true;
@@ -680,7 +680,7 @@ async function browseTo(path) {
 }
 async function openChooser() {
   try {
-    const initial = activeFolder?.path || current.path?.slice(0, current.path.lastIndexOf('/')) || null;
+    const initial = activeFolder?.path || (current.path ? dirname(current.path) : null);
     await browseTo(initial);
     if (!$('open-dialog').open) $('open-dialog').showModal();
     $('open-items').querySelector('button')?.focus();
