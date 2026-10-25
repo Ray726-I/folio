@@ -1,5 +1,7 @@
 # Folio
 
+[View the interactive presentation](https://ray726-i.github.io/folio/) · [Download a Linux release](https://github.com/Ray726-I/folio/releases)
+
 A small cross-platform Markdown reader and editor built with Rust and Tauri. It uses the system webview on each platform: WebKitGTK on Linux, WKWebView on macOS, and WebView2 on Windows. The Markdown parser, syntax highlighter, and file operations are Rust. The UI is plain HTML/CSS with a little JavaScript; no frontend build step is required.
 
 Folio is an early prototype. Native build configurations and CI checks target Linux, Windows, and macOS; Windows and macOS still need hands-on validation, including Finder/Explorer “Open With” behaviour. Published release packages are currently Linux-only.
