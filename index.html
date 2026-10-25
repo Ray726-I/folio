@@ -1,0 +1,4350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Folio — A quiet place for your words</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,700;0,800;1,400&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --bg:        #0B0C16;
+    --bg-0:      #06060c;
+    --bg-1:      #080910;
+    --surface:   #10121f;
+    --panel:     #151828;
+    --line:      #232842;
+    --line-2:    #2d3450;
+    --ink:       #ddf7ff;
+    --ink-dim:   #b5c5db;
+    --muted:     #93a0c2;
+    --faint:     #6a6e95;
+
+    --green:     #82FB9C;
+    --green-2:   #4fe88f;
+    --cyan:      #7cf8f7;
+    --blue:      #829dd4;
+    --magenta:   #86a7df;
+    --amber:     #50f7d4;
+    --warn:      #ffb86b;
+    --red:       #ff6b81;
+
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+    --glow: 0 0 28px rgba(130,251,156,.22);
+  }
+
+  *,*::before,*::after{ box-sizing:border-box; }
+  html,body{ height:100%; }
+
+  body{
+    margin:0;
+    background:
+      radial-gradient(1100px 620px at 76% -12%, rgba(130,251,156,.07), transparent 62%),
+      radial-gradient(900px 560px at 4% 108%, rgba(124,248,247,.06), transparent 60%),
+      var(--bg);
+    color:var(--ink);
+    font-family:var(--font-mono);
+    font-size:16px;
+    font-weight:400;
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;
+  }
+
+  ::selection{ background:rgba(130,251,156,.24); color:#fff; }
+  .mono{ font-family:var(--font-mono); }
+
+  /* ---------------- deck shell ---------------- */
+  .deck{ position:fixed; inset:0; }
+
+  .slide{
+    position:absolute;
+    inset:0;
+    overflow-y:auto;
+    overflow-x:hidden;
+    opacity:0;
+    transform:translateY(14px) scale(.996);
+    transition:opacity .4s ease, transform .55s cubic-bezier(.22,.61,.36,1);
+    pointer-events:none;
+    scrollbar-width:thin;
+    will-change:opacity, transform;
+  }
+  .slide::-webkit-scrollbar{ width:8px; }
+  .slide::-webkit-scrollbar-thumb{ background:var(--line-2); }
+  .slide::-webkit-scrollbar-track{ background:transparent; }
+
+  .slide.active{ opacity:1; transform:none; pointer-events:auto; }
+
+  body[data-dir="next"] .slide.active{ animation: enterFromBelow .6s cubic-bezier(.22,.61,.36,1) both; }
+  body[data-dir="prev"] .slide.active{ animation: enterFromAbove .6s cubic-bezier(.22,.61,.36,1) both; }
+
+  /* grid + scanlines */
+  .slide::before{
+    content:"";
+    position:absolute;
+    inset:0;
+    z-index:0;
+    pointer-events:none;
+    background-image:
+      linear-gradient(rgba(130,251,156,.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(130,251,156,.045) 1px, transparent 1px);
+    background-size:68px 68px;
+    -webkit-mask-image: radial-gradient(120% 90% at 50% 40%, #000 25%, transparent 78%);
+            mask-image: radial-gradient(120% 90% at 50% 40%, #000 25%, transparent 78%);
+    opacity:.55;
+  }
+  .slide::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    z-index:0;
+    pointer-events:none;
+    background:repeating-linear-gradient(180deg, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.17) 2px 4px);
+    opacity:.5;
+  }
+  .slide > .inner{ position:relative; z-index:2; }
+
+  .inner{
+    min-height:100%;
+    max-width:1180px;
+    margin:0 auto;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    justify-content: safe center;
+    padding:clamp(44px,6vh,78px) clamp(22px,4.4vw,58px) 126px;
+  }
+
+  /* big folio number */
+  .folio{
+    position:absolute;
+    top:clamp(2px,1.4vw,18px);
+    right:clamp(10px,3vw,46px);
+    z-index:1;
+    font-size:clamp(4.5rem,12vw,10rem);
+    font-weight:800;
+    line-height:.9;
+    letter-spacing:-.06em;
+    color:transparent;
+    -webkit-text-stroke:1px rgba(130,251,156,.16);
+    pointer-events:none;
+    user-select:none;
+  }
+  .slide.active .folio{ animation: folioReveal .9s .1s cubic-bezier(.22,.61,.36,1) both; }
+  @media (max-width:860px){ .folio{ display:none; } }
+
+  /* fixed frame + corner ticks */
+  .frame{ position:fixed; inset:0; z-index:30; pointer-events:none; }
+  .frame i{
+    position:absolute;
+    width:18px; height:18px;
+    border-color:rgba(130,251,156,.4);
+    border-style:solid;
+    border-width:0;
+  }
+  .frame i:nth-child(1){ top:12px; left:12px; border-top-width:1px; border-left-width:1px; }
+  .frame i:nth-child(2){ top:12px; right:12px; border-top-width:1px; border-right-width:1px; }
+  .frame i:nth-child(3){ bottom:12px; left:12px; border-bottom-width:1px; border-left-width:1px; }
+  .frame i:nth-child(4){ bottom:12px; right:12px; border-bottom-width:1px; border-right-width:1px; }
+  .frame::before{
+    content:"";
+    position:absolute; inset:14px;
+    border:1px solid rgba(130,251,156,.05);
+  }
+  @media (max-width:700px){ .frame{ display:none; } }
+
+  .sysline{
+    position:fixed;
+    top:26px;
+    left:clamp(20px,4.4vw,58px);
+    z-index:31;
+    display:flex;
+    align-items:center;
+    gap:9px;
+    font-size:.62rem;
+    letter-spacing:.22em;
+    text-transform:uppercase;
+    color:var(--faint);
+    pointer-events:none;
+  }
+  .sysline b{ color:var(--green); font-weight:500; }
+  .sysline .dot-live{
+    width:6px; height:6px; border-radius:50%;
+    background:var(--green);
+    box-shadow:0 0 10px rgba(130,251,156,.9);
+    animation: blink 2.4s steps(1,end) infinite;
+  }
+  @media (max-width:820px){ .sysline{ display:none; } }
+
+  /* ---------------- typography ---------------- */
+  .eyebrow{
+    margin:0 0 22px;
+    display:flex;
+    align-items:center;
+    gap:12px;
+    font-size:.75rem;
+    font-weight:500;
+    letter-spacing:.26em;
+    text-transform:uppercase;
+    color:var(--faint);
+  }
+  .eyebrow::before{
+    content:"";
+    width:26px; height:1px;
+    background:var(--green);
+    transform-origin:left center;
+    box-shadow:0 0 12px rgba(130,251,156,.8);
+  }
+  .eyebrow b{ color:var(--green); font-weight:500; }
+  .slide.active .eyebrow::before{ animation: growX .7s .12s cubic-bezier(.22,.61,.36,1) both; }
+
+  h1{
+    margin:0 0 22px;
+    font-size:clamp(4.6rem,13.5vw,10.5rem);
+    font-weight:800;
+    line-height:.82;
+    letter-spacing:-.07em;
+    color:var(--ink);
+  }
+
+  h2{
+    margin:0 0 .58em;
+    font-size:clamp(1.85rem,3.9vw,3.05rem);
+    font-weight:700;
+    line-height:1.14;
+    letter-spacing:-.035em;
+    max-width:24ch;
+    color:var(--ink);
+  }
+  h2 em{
+    font-style:normal;
+    color:var(--green);
+    text-shadow:0 0 26px rgba(130,251,156,.35);
+  }
+  h2 .hash{ color:var(--faint); font-weight:400; }
+
+  .lede{
+    margin:0 0 28px;
+    max-width:56ch;
+    font-size:clamp(1.06rem,1.6vw,1.22rem);
+    line-height:1.68;
+    color:var(--muted);
+    font-weight:300;
+  }
+  .lede b{ color:var(--ink-dim); font-weight:500; }
+
+  .body{
+    margin:0;
+    max-width:66ch;
+    font-size:clamp(1rem,1.42vw,1.12rem);
+    line-height:1.72;
+    color:var(--muted);
+    font-weight:300;
+  }
+  .body b{ color:var(--ink-dim); font-weight:500; }
+  .body code{
+    font-family:var(--font-mono);
+    font-size:.9em;
+    color:var(--green-2);
+    background:rgba(130,251,156,.07);
+    border:1px solid rgba(130,251,156,.13);
+    padding:1px 5px;
+  }
+
+  .pull{
+    position:relative;
+    margin:0 0 30px;
+    max-width:52ch;
+    padding:2px 0 2px 22px;
+    border-left:1px solid rgba(130,251,156,.45);
+    font-size:clamp(1.05rem,1.8vw,1.3rem);
+    line-height:1.62;
+    font-weight:300;
+    color:var(--ink-dim);
+  }
+  .pull::before{
+    content:">";
+    position:absolute;
+    left:-22px;
+    color:var(--green);
+    font-weight:700;
+  }
+  .pull b{ color:var(--green); font-weight:500; }
+
+  .stack{
+    margin:26px 0 0;
+    font-size:.8rem;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--faint);
+    line-height:2;
+  }
+  .stack b{ color:var(--green); font-weight:500; }
+
+  .note{
+    margin:26px 0 0;
+    font-size:.92rem;
+    line-height:1.72;
+    color:var(--faint);
+    max-width:68ch;
+  }
+  .note b{ color:var(--muted); font-weight:500; }
+
+  .hint{
+    margin:30px 0 0;
+    font-size:.74rem;
+    letter-spacing:.2em;
+    text-transform:uppercase;
+    color:var(--faint);
+  }
+  .hint::after{ content:"▸"; display:inline-block; margin-left:10px; color:var(--green); }
+  .slide.active .hint::after{ animation: bobX 1.6s ease-in-out infinite; }
+
+  /* ---------------- rows ---------------- */
+  .rows{ display:grid; margin-top:4px; }
+
+  .row{
+    display:grid;
+    grid-template-columns:58px 1fr;
+    gap:16px;
+    padding:17px 14px;
+    margin:0 -14px;
+    border-top:1px solid var(--line);
+    transition:background-color .3s ease, padding-left .3s ease;
+  }
+  .row:last-child{ border-bottom:1px solid var(--line); }
+  .row:hover{ background:rgba(130,251,156,.035); }
+
+  .row .num{
+    font-size:.78rem;
+    font-weight:500;
+    letter-spacing:.1em;
+    color:var(--faint);
+    padding-top:5px;
+    transition:color .3s ease, transform .3s ease;
+  }
+  .row:hover .num{ color:var(--green); transform:translateX(4px); }
+
+  .row h3{
+    margin:0 0 6px;
+    font-size:1.08rem;
+    font-weight:700;
+    letter-spacing:-.01em;
+    color:var(--ink);
+  }
+  .row h3 span{ color:var(--faint); font-weight:400; }
+  .row p{ margin:0; font-size:.97rem; line-height:1.66; color:var(--muted); font-weight:300; }
+  .row code{ color:var(--green-2); }
+
+  /* ---------------- glyph trio ---------------- */
+  .glyphs{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    margin:10px 0 34px;
+  }
+  .glyph{ padding:2px 30px 2px 0; }
+  .glyph + .glyph{ border-left:1px solid var(--line); padding-left:clamp(18px,2.6vw,32px); }
+  .glyph-mark{
+    display:block;
+    margin-bottom:14px;
+    font-size:.7rem;
+    letter-spacing:.16em;
+    text-transform:uppercase;
+    color:var(--green);
+  }
+  .glyph-mark::before{ content:"[ "; color:var(--faint); }
+  .glyph-mark::after{ content:" ]"; color:var(--faint); }
+  .glyph h3{ margin:0 0 8px; font-size:1.1rem; font-weight:700; color:var(--ink); }
+  .glyph p{ margin:0; font-size:.95rem; line-height:1.66; color:var(--muted); font-weight:300; }
+
+  /* ---------------- split ---------------- */
+  .split{
+    display:grid;
+    gap:clamp(24px,3.6vw,50px);
+    grid-template-columns:1fr 1fr;
+    align-items:start;
+  }
+  @media (max-width:940px){ .split{ grid-template-columns:1fr; } }
+
+  /* ---------------- checks ---------------- */
+  .checks{ list-style:none; margin:0; padding:0; display:grid; }
+
+  .checks li{
+    display:grid;
+    grid-template-columns:22px 1fr;
+    gap:12px;
+    padding:11px 10px;
+    margin:0 -10px;
+    border-top:1px solid var(--line);
+    font-size:.97rem;
+    line-height:1.6;
+    color:var(--muted);
+    font-weight:300;
+    transition:background-color .25s ease;
+  }
+  .checks li:last-child{ border-bottom:1px solid var(--line); }
+  .checks li:hover{ background:rgba(130,251,156,.035); }
+  .checks b{ color:var(--ink-dim); font-weight:500; }
+  .check-mark{ color:var(--green); font-size:.78rem; font-weight:700; line-height:1.85; }
+
+  /* ---------------- deflist ---------------- */
+  .deflist{ margin:4px 0 0; display:grid; grid-template-columns:1fr 1fr; gap:0 clamp(24px,3.4vw,44px); }
+  .deflist.one{ grid-template-columns:1fr; }
+  .deflist.one .def{ padding:7px 10px; }
+  .deflist.one .def dd{ line-height:1.55; }
+  @media (max-width:820px){ .deflist{ grid-template-columns:1fr; } }
+
+  .def{
+    display:grid;
+    grid-template-columns:1fr;
+    gap:4px;
+    padding:12px 10px;
+    margin:0 -10px;
+    border-top:1px solid var(--line);
+    transition:background-color .25s ease;
+  }
+  .def:hover{ background:rgba(130,251,156,.035); }
+  .def:last-child{ border-bottom:1px solid var(--line); }
+  .def dt{ margin:0; font-size:.95rem; font-weight:700; color:var(--ink); transition:color .25s ease; }
+  .def:hover dt{ color:var(--green); }
+  .def dd{ margin:0; font-size:.9rem; line-height:1.6; color:var(--muted); font-weight:300; }
+
+  /* ---------------- flow ---------------- */
+  .flow{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:0 clamp(18px,2.4vw,34px);
+    margin-top:6px;
+  }
+  @media (max-width:900px){ .flow{ grid-template-columns:repeat(2,1fr); } }
+
+  .flow .item{
+    padding:20px 14px 22px;
+    margin:0 -14px;
+    border-top:1px solid var(--line-2);
+    transition:background-color .25s ease;
+  }
+  .flow .item:hover{ background:rgba(130,251,156,.035); }
+  .flow .step-n{
+    display:block;
+    margin-bottom:10px;
+    font-size:.64rem;
+    letter-spacing:.16em;
+    color:var(--green);
+  }
+  .flow h3{ margin:0 0 7px; font-size:1.02rem; font-weight:700; color:var(--ink); }
+  .flow p{ margin:0; font-size:.88rem; line-height:1.62; color:var(--muted); font-weight:300; }
+
+  /* ---------------- chips ---------------- */
+  .dialects{ display:grid; grid-template-columns:1fr 1fr; gap:20px clamp(24px,3.6vw,48px); margin-top:6px; }
+  @media (max-width:820px){ .dialects{ grid-template-columns:1fr; } }
+
+  .chip-group{ border-top:1px solid var(--line-2); padding-top:14px; }
+  .chip-group h4{
+    margin:0 0 12px;
+    font-size:.68rem;
+    font-weight:700;
+    letter-spacing:.2em;
+    text-transform:uppercase;
+    color:var(--faint);
+  }
+  .chip-group h4 b{ color:var(--green); font-weight:700; }
+  .chips{ display:flex; flex-wrap:wrap; gap:6px; }
+  .chip{
+    font-size:.79rem;
+    font-weight:400;
+    color:var(--ink-dim);
+    background:rgba(130,251,156,.04);
+    border:1px solid var(--line);
+    padding:4px 8px;
+    line-height:1.4;
+    transition:border-color .25s ease, color .25s ease, transform .25s ease;
+  }
+  .chip:hover{ border-color:rgba(130,251,156,.5); color:var(--green); transform:translateY(-2px); }
+  .chip.mono-key{ color:var(--green-2); }
+
+  /* ---------------- trio ---------------- */
+  .trio{ display:grid; grid-template-columns:repeat(3,1fr); gap:0 clamp(22px,3.2vw,42px); margin-top:6px; }
+  @media (max-width:860px){ .trio{ grid-template-columns:1fr; } }
+
+  .trio .col{ border-top:1px solid var(--line-2); padding:16px 12px 4px; margin:0 -12px; transition:border-top-color .3s ease, background-color .3s ease; }
+  .trio .col:hover{ border-top-color:var(--green); background:rgba(130,251,156,.03); }
+  .trio h4{
+    margin:0 0 10px;
+    font-size:.62rem;
+    letter-spacing:.2em;
+    text-transform:uppercase;
+    font-weight:700;
+    color:var(--green);
+  }
+  .trio h4.warn{ color:var(--warn); }
+  .trio p{ margin:0; font-size:.85rem; line-height:1.75; color:var(--muted); font-weight:300; }
+  .trio p + p{ margin-top:9px; }
+
+  /* ---------------- legend ---------------- */
+  .legend{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:0 clamp(20px,3vw,38px);
+    margin-top:18px;
+    border-top:1px solid var(--line);
+  }
+  .legend .lg{ padding:12px 10px 4px; margin:0 -10px; }
+  .legend .lg span{
+    display:block;
+    margin-bottom:6px;
+    font-size:.6rem;
+    letter-spacing:.18em;
+    text-transform:uppercase;
+    color:var(--faint);
+  }
+  .legend .lg strong{ display:block; font-size:.86rem; color:var(--ink); font-weight:700; margin-bottom:4px; }
+  .legend .lg p{ margin:0; font-size:.76rem; line-height:1.6; color:var(--muted); font-weight:300; }
+  .legend .lg i{ display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:8px; vertical-align:1px; }
+  @media (max-width:820px){ .legend{ grid-template-columns:1fr; } }
+
+  /* ---------------- themes ---------------- */
+  .theme-list{ display:grid; margin-top:2px; }
+  .theme-row{
+    display:grid;
+    grid-template-columns:10px 1fr auto;
+    align-items:center;
+    gap:14px;
+    padding:10px 10px;
+    margin:0 -10px;
+    border-top:1px solid var(--line);
+    transition:background-color .25s ease;
+  }
+  .theme-row:last-of-type{ border-bottom:1px solid var(--line); }
+  .theme-row:hover{ background:rgba(130,251,156,.035); }
+  .theme-swatch{ width:9px; height:22px; border-radius:1px; box-shadow:0 0 14px -2px currentColor; }
+  .theme-name{ font-size:.93rem; color:var(--ink-dim); font-weight:400; }
+  .theme-name small{ display:block; font-size:.74rem; color:var(--faint); letter-spacing:.06em; margin-top:2px; }
+  .theme-hex{ font-size:.74rem; color:var(--faint); letter-spacing:.08em; }
+  .theme-row.live .theme-name{ color:var(--green); }
+  .theme-row.live .theme-name small{ color:rgba(130,251,156,.6); }
+
+  /* ---------------- stats ---------------- */
+  .stats{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:0 clamp(16px,2.6vw,34px);
+    margin:8px 0 26px;
+    border-top:1px solid var(--line-2);
+  }
+  @media (max-width:820px){ .stats{ grid-template-columns:repeat(2,1fr); } }
+  .stat{ padding:18px 10px 6px; margin:0 -10px; }
+  .stat .big{
+    display:block;
+    font-size:clamp(1.5rem,3vw,2.15rem);
+    font-weight:800;
+    letter-spacing:-.04em;
+    color:var(--green);
+    line-height:1;
+    text-shadow:0 0 28px rgba(130,251,156,.22);
+  }
+  .stat .big small{ font-size:.55em; font-weight:400; color:var(--ink-dim); letter-spacing:0; }
+  .stat .cap{ display:block; margin-top:9px; font-size:.74rem; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); line-height:1.6; }
+
+  .loadline{
+    display:flex;
+    align-items:center;
+    flex-wrap:wrap;
+    gap:10px;
+    font-size:.82rem;
+    letter-spacing:.06em;
+    color:var(--faint);
+    padding:12px 0;
+    border-top:1px solid var(--line);
+    border-bottom:1px solid var(--line);
+  }
+  .loadline .node2{
+    color:var(--ink-dim);
+    border:1px solid var(--line);
+    background:rgba(130,251,156,.03);
+    padding:4px 9px;
+  }
+  .loadline .node2.hot{ color:var(--green); border-color:rgba(130,251,156,.35); }
+  .loadline .arw{ color:var(--green); opacity:.7; }
+  .loadline .tag{ margin-left:auto; font-size:.6rem; letter-spacing:.16em; color:var(--faint); }
+  @media (max-width:760px){ .loadline .tag{ margin-left:0; width:100%; } }
+
+  /* ---------------- terminal ---------------- */
+  .term{
+    border:1px solid var(--line-2);
+    background:linear-gradient(180deg, #0a0c14, #07080e);
+    box-shadow:inset 0 0 60px rgba(130,251,156,.03), 0 24px 60px -40px #000;
+  }
+  .term-bar{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding:9px 12px;
+    border-bottom:1px solid var(--line);
+    font-size:.6rem;
+    letter-spacing:.16em;
+    text-transform:uppercase;
+    color:var(--faint);
+  }
+  .term-bar .dots3{ display:flex; gap:5px; }
+  .term-bar .dots3 i{ width:6px; height:6px; border-radius:50%; background:var(--line-2); display:block; }
+  .term-bar .dots3 i:first-child{ background:rgba(130,251,156,.5); }
+  .term-bar b{ margin-left:auto; color:var(--faint); font-weight:400; }
+  .term-body{
+    padding:14px 16px 16px;
+    font-size:.82rem;
+    line-height:1.8;
+    color:var(--muted);
+    white-space:pre-wrap;
+    word-break:break-word;
+    font-weight:300;
+  }
+  .term-body .p{ color:var(--green); }
+  .term-body .c{ color:var(--ink); }
+  .term-body .ok{ color:var(--green); }
+  .term-body .dim{ color:var(--faint); }
+  .term-body .cy{ color:var(--cyan); }
+
+  /* ---------------- mock window ---------------- */
+  .mock{
+    border:1px solid var(--line-2);
+    background:var(--bg-1);
+    box-shadow:0 40px 80px -50px #000, inset 0 0 80px rgba(130,251,156,.02);
+    overflow:hidden;
+  }
+  .mock-bar{
+    display:grid;
+    grid-template-columns:1fr auto 1fr;
+    align-items:center;
+    padding:9px 12px;
+    border-bottom:1px solid var(--line);
+    font-size:.62rem;
+    color:var(--faint);
+    letter-spacing:.08em;
+  }
+  .mock-bar .traffic{ display:flex; gap:5px; }
+  .mock-bar .traffic i{ width:6px; height:6px; border-radius:50%; background:var(--line-2); }
+  .mock-title{ color:var(--ink-dim); letter-spacing:.05em; }
+  .mock-tools{ justify-self:end; display:flex; gap:10px; color:var(--faint); font-size:.62rem; }
+  .mock-tools .on{ color:var(--green); }
+  .mock-body{ display:grid; grid-template-columns:150px 1fr; min-height:250px; }
+  .mock-outline{ border-right:1px solid var(--line); padding:12px 10px; background:rgba(130,251,156,.015); }
+  .mock-outline .oh{ font-size:.54rem; letter-spacing:.18em; color:var(--faint); margin-bottom:10px; }
+  .mock-outline .oi{ font-size:.62rem; color:var(--faint); padding:5px 6px; border-left:1px solid transparent; line-height:1.4; }
+  .mock-outline .oi.on{ color:var(--green); border-left-color:var(--green); background:rgba(130,251,156,.05); }
+  .mock-doc{ padding:16px 18px 20px; }
+  .mock-doc h3{ margin:0 0 12px; font-size:.86rem; color:var(--ink); font-weight:700; letter-spacing:-.01em; }
+  .mock-line{ margin:0 0 8px; font-size:.82rem; line-height:1.75; color:var(--muted); }
+  .mock-line b{ color:var(--ink); }
+  .mock-line.faded{ color:var(--faint); }
+  .mock-src{
+    position:relative;
+    margin:2px -8px 10px;
+    padding:5px 8px;
+    font-size:.82rem;
+    line-height:1.75;
+    color:var(--green);
+    background:rgba(130,251,156,.07);
+    border-left:2px solid var(--green);
+    animation: srcPulse 3.4s ease-in-out infinite;
+  }
+  .mock-src .caret{
+    display:inline-block;
+    width:6px; height:12px;
+    background:var(--green);
+    vertical-align:-1px;
+    margin-right:4px;
+    animation: caret 1.05s steps(1,end) infinite;
+  }
+  .mock-code{
+    margin:12px 0 0;
+    padding:10px 12px;
+    border:1px solid var(--line);
+    background:#07080e;
+    font-size:.76rem;
+    line-height:1.8;
+    color:var(--blue);
+    overflow:auto;
+  }
+  .mock-code .k{ color:var(--magenta); }
+  .mock-code .s{ color:var(--green-2); }
+  .mock-foot{
+    border-top:1px solid var(--line);
+    padding:7px 12px;
+    font-size:.58rem;
+    letter-spacing:.1em;
+    color:var(--faint);
+    display:flex;
+    justify-content:space-between;
+    gap:10px;
+  }
+  @media (max-width:720px){ .mock-body{ grid-template-columns:1fr; } .mock-outline{ display:none; } }
+
+  /* ---------------- comparison (slide 2) ---------------- */
+  .vs-grid{
+    display:grid;
+    grid-template-columns:1fr .92fr 1fr;
+    gap:clamp(14px,2vw,26px);
+    align-items:stretch;
+    margin-top:4px;
+  }
+  @media (max-width:900px){ .vs-grid{ grid-template-columns:1fr; } }
+
+  .vs-col{
+    border:1px solid var(--line);
+    background:linear-gradient(180deg, rgba(255,255,255,.014), transparent 70%);
+    padding:14px 15px 12px;
+    display:flex;
+    flex-direction:column;
+  }
+  .vs-col.bad{ border-color:rgba(255,107,129,.22); }
+  .vs-col.good{ border-color:rgba(130,251,156,.3); box-shadow:inset 0 0 40px rgba(130,251,156,.03); }
+
+  .vs-head{ padding-bottom:10px; border-bottom:1px solid var(--line); }
+  .badge{
+    display:inline-block;
+    font-size:.58rem;
+    letter-spacing:.18em;
+    text-transform:uppercase;
+    font-weight:700;
+  }
+  .badge.bad{ color:var(--red); }
+  .badge.good{ color:var(--green); }
+  .vs-sub{ display:block; margin-top:6px; font-size:.72rem; color:var(--faint); letter-spacing:.04em; }
+
+  .vs-list{ list-style:none; margin:0; padding:0; flex:1; }
+  .vs-list li{
+    display:grid;
+    grid-template-columns:14px 1fr;
+    gap:9px;
+    padding:8px 0;
+    border-bottom:1px solid rgba(35,40,66,.65);
+  }
+  .vs-list li:last-child{ border-bottom:0; }
+  .vs-list li i{ font-style:normal; font-size:.72rem; line-height:1.5; }
+  .vs-col.bad .vs-list li i{ color:var(--red); }
+  .vs-col.good .vs-list li i{ color:var(--green); }
+  .vs-list b{ display:block; font-size:.92rem; font-weight:700; color:var(--ink); }
+  .vs-list span{ display:block; margin-top:3px; font-size:.83rem; line-height:1.55; color:var(--muted); font-weight:300; }
+  .vs-foot{
+    margin:10px 0 0;
+    padding-top:9px;
+    border-top:1px solid var(--line);
+    font-size:.68rem;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--faint);
+  }
+  .vs-col.good .vs-foot{ color:rgba(130,251,156,.75); }
+  .vs-mid{ display:flex; flex-direction:column; justify-content:center; gap:8px; min-width:0; }
+  .vs-caption{
+    margin:0;
+    text-align:center;
+    font-size:.6rem;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--faint);
+  }
+
+  /* ---------------- constraints (slide 3) ---------------- */
+  .constraint-grid{
+    display:grid;
+    grid-template-columns:1.02fr .98fr;
+    gap:clamp(22px,3.4vw,44px);
+    align-items:center;
+    margin-top:4px;
+  }
+  @media (max-width:940px){ .constraint-grid{ grid-template-columns:1fr; } }
+
+  .reject-list{ display:flex; flex-wrap:wrap; gap:6px; margin:12px 0 20px; }
+  .reject{
+    position:relative;
+    font-size:.78rem;
+    color:var(--faint);
+    border:1px solid var(--line);
+    padding:4px 9px;
+    background:rgba(255,107,129,.02);
+  }
+  .reject::after{
+    content:"";
+    position:absolute;
+    left:4px; right:4px; top:50%;
+    height:1px;
+    background:rgba(255,107,129,.5);
+  }
+
+  .survivor-list{ display:grid; margin-top:4px; }
+  .survivor{
+    display:grid;
+    grid-template-columns:16px 1.1fr 1fr;
+    gap:12px;
+    align-items:baseline;
+    padding:10px 8px;
+    margin:0 -8px;
+    border-top:1px solid var(--line);
+  }
+  .survivor:last-child{ border-bottom:1px solid var(--line); }
+  .survivor i{ color:var(--green); font-style:normal; font-size:.72rem; }
+  .survivor b{ font-size:.93rem; color:var(--ink); font-weight:700; }
+  .survivor span{ font-size:.8rem; color:var(--faint); line-height:1.5; }
+
+  /* ---------------- architecture strip (slide 4) ---------------- */
+  .arch-grid{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:0 clamp(14px,2.2vw,30px);
+    margin-top:14px;
+    border-top:1px solid var(--line);
+  }
+  @media (max-width:900px){ .arch-grid{ grid-template-columns:repeat(2,1fr); } }
+
+  .arch-col{ padding:11px 9px 2px; margin:0 -9px; }
+  .arch-col h4{
+    margin:0 0 8px;
+    font-size:.65rem;
+    letter-spacing:.18em;
+    text-transform:uppercase;
+    font-weight:700;
+    color:var(--green);
+  }
+  .arch-col h4.grey{ color:var(--faint); }
+  .arch-col ul{ list-style:none; margin:0; padding:0; }
+  .arch-col li{
+    font-size:.82rem;
+    line-height:1.65;
+    color:var(--muted);
+    border-bottom:1px dashed rgba(45,52,80,.45);
+    padding:3px 0;
+    font-weight:300;
+  }
+  .arch-col li:last-child{ border-bottom:0; }
+  .arch-col li b{ color:var(--ink-dim); font-weight:500; }
+
+  /* ---------------- specimen cards ---------------- */
+  .bento{
+    display:grid;
+    grid-template-columns:1.22fr .92fr .86fr;
+    gap:12px;
+    align-items:start;
+    margin-top:4px;
+  }
+  @media (max-width:1000px){ .bento{ grid-template-columns:1fr 1fr; } }
+  @media (max-width:700px){ .bento{ grid-template-columns:1fr; } }
+
+  .bento-col{ display:grid; gap:12px; align-content:start; }
+
+  .spec{
+    border:1px solid var(--line-2);
+    background:linear-gradient(180deg, #090b12, #07080e);
+    overflow:hidden;
+  }
+  .spec-head{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    padding:7px 11px;
+    border-bottom:1px solid var(--line);
+    font-size:.63rem;
+    letter-spacing:.15em;
+    text-transform:uppercase;
+    color:var(--faint);
+  }
+  .spec-head b{ color:var(--green); font-weight:500; }
+  .spec-body{ padding:10px 12px 12px; }
+
+  .spec-code{
+    margin:0;
+    font-size:.78rem;
+    line-height:1.8;
+    color:var(--blue);
+    white-space:pre;
+    overflow:auto;
+    font-weight:300;
+  }
+  .spec-code .k{ color:var(--magenta); }
+  .spec-code .s{ color:var(--green-2); }
+  .spec-code .f{ color:var(--cyan); }
+  .spec-code .c{ color:var(--faint); font-style:italic; }
+  .spec-code .n{ color:var(--amber); }
+
+  .spec-table{ width:100%; border-collapse:collapse; font-size:.78rem; }
+  .spec-table th{
+    text-align:left;
+    padding:5px 7px;
+    border:1px solid var(--line);
+    background:rgba(130,251,156,.09);
+    color:var(--green);
+    font-weight:500;
+    letter-spacing:.04em;
+  }
+  .spec-table td{
+    padding:5px 7px;
+    border:1px solid var(--line);
+    color:var(--muted);
+    font-weight:300;
+  }
+  .spec-table td b{ color:var(--ink-dim); font-weight:500; }
+  .spec-table td code, .spec-body code{
+    font-family:var(--font-mono);
+    color:var(--green-2);
+    background:rgba(130,251,156,.06);
+    padding:0 3px;
+  }
+
+  .tasks{ list-style:none; margin:0; padding:0; display:grid; gap:6px; }
+  .tasks li{ display:grid; grid-template-columns:14px 1fr; gap:9px; font-size:.82rem; color:var(--muted); line-height:1.5; }
+  .tasks .box{
+    position:relative;
+    width:11px; height:11px;
+    border:1px solid var(--line-2);
+    margin-top:2px;
+  }
+  .tasks .box.on{ border-color:var(--green); background:rgba(130,251,156,.14); }
+  .tasks .box.on::after{
+    content:"✓";
+    position:absolute; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    color:var(--green);
+    font-size:.55rem;
+    line-height:1;
+  }
+  .tasks li.done{ color:var(--faint); text-decoration:line-through; text-decoration-color:rgba(130,251,156,.35); }
+
+  .callout{
+    border-left:2px solid var(--green);
+    background:rgba(130,251,156,.055);
+    padding:9px 11px;
+    font-size:.82rem;
+    line-height:1.6;
+    color:var(--muted);
+    font-weight:300;
+  }
+  .callout b{
+    display:block;
+    margin-bottom:4px;
+    font-size:.54rem;
+    letter-spacing:.16em;
+    text-transform:uppercase;
+    color:var(--green);
+  }
+  .fn{
+    margin:8px 0 0;
+    padding-top:7px;
+    border-top:1px solid var(--line);
+    font-size:.74rem;
+    color:var(--faint);
+    line-height:1.6;
+  }
+  .fn sup{ color:var(--green); }
+  .chip-row{ display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
+  .chip-row .chip{ font-size:.66rem; padding:3px 7px; }
+
+  /* ---------------- three specimens (slide 6) ---------------- */
+  .trio-spec{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:12px;
+    margin-top:6px;
+  }
+  @media (max-width:920px){ .trio-spec{ grid-template-columns:1fr; } }
+
+  .math-box{ text-align:center; padding:6px 4px 2px; }
+  .math-inline{
+    font-family:Georgia, "Times New Roman", serif;
+    font-size:1.15rem;
+    color:var(--ink-dim);
+    font-style:italic;
+  }
+  .math-display{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:8px;
+    margin:12px 0 4px;
+    font-family:Georgia, "Times New Roman", serif;
+    font-size:1.7rem;
+    color:var(--ink);
+    font-style:italic;
+    line-height:1;
+  }
+  .math-display .int{ position:relative; font-size:2.1rem; line-height:.8; }
+  .math-display .lim{
+    display:flex;
+    flex-direction:column;
+    font-size:.55rem;
+    font-style:normal;
+    line-height:1.1;
+    margin-top:-13px;
+    color:var(--ink-dim);
+  }
+  .math-display sup{ font-size:.62em; }
+  .frac{ display:inline-flex; flex-direction:column; align-items:center; font-size:.76em; line-height:1.15; }
+  .frac .num{ padding:0 4px; }
+  .frac .den{ padding:0 6px; border-top:1px solid var(--ink-dim); }
+
+  .math-extra{
+    display:flex;
+    gap:18px;
+    justify-content:center;
+    margin-top:14px;
+    padding-top:11px;
+    border-top:1px solid var(--line);
+    font-family:Georgia, "Times New Roman", serif;
+    font-style:italic;
+    font-size:.92rem;
+    color:var(--muted);
+  }
+  .safe-html.removed{
+    border-color:rgba(255,107,129,.25);
+    background:rgba(255,107,129,.04);
+  }
+  .safe-html.removed .ro-box{ border-color:var(--red); color:var(--red); }
+  .safe-html.removed .ro-tag{ color:var(--red); }
+
+  .mermaid-box{ display:flex; align-items:center; justify-content:center; padding:2px 0; }
+  .mermaid-box svg{ width:100%; height:auto; max-height:170px; }
+
+  .sanitize-flow{ display:grid; gap:8px; }
+  .raw-html{
+    margin:0;
+    padding:7px 8px;
+    border:1px solid rgba(255,107,129,.28);
+    background:rgba(255,107,129,.045);
+    color:#ff9bab;
+    font-size:.63rem;
+    line-height:1.7;
+    white-space:pre-wrap;
+    word-break:break-word;
+  }
+  .sanitize-arrow{ text-align:center; font-size:.58rem; letter-spacing:.18em; color:var(--faint); }
+  .sanitize-arrow b{ color:var(--green); font-weight:400; }
+  .safe-html{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding:8px 9px;
+    border:1px solid rgba(130,251,156,.25);
+    background:rgba(130,251,156,.04);
+    font-size:.68rem;
+    color:var(--muted);
+  }
+  .safe-html .ro-box{
+    display:flex; align-items:center; justify-content:center;
+    width:12px; height:12px;
+    border:1px solid var(--green);
+    color:var(--green);
+    font-size:.55rem;
+    flex:0 0 auto;
+  }
+  .safe-html .ro-tag{ margin-left:auto; font-size:.54rem; letter-spacing:.12em; color:var(--green); text-transform:uppercase; }
+  .spec-note{ margin:9px 0 0; font-size:.7rem; line-height:1.6; color:var(--faint); }
+
+  .engine-strip{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:0 clamp(20px,3vw,40px);
+    margin-top:16px;
+    border-top:1px solid var(--line);
+  }
+  @media (max-width:820px){ .engine-strip{ grid-template-columns:1fr; } }
+  .engine{ padding:11px 10px 0; margin:0 -10px; }
+  .engine h4{
+    margin:0 0 5px;
+    font-size:.64rem;
+    letter-spacing:.16em;
+    text-transform:uppercase;
+    color:var(--green);
+    font-weight:700;
+  }
+  .engine p{ margin:0; font-size:.86rem; line-height:1.6; color:var(--muted); font-weight:300; }
+  .spec-note b{ color:var(--muted); font-weight:500; }
+
+  /* ---------------- platform matrix (slide 14) ---------------- */
+  .matrix{ width:100%; border-collapse:collapse; font-size:.84rem; }
+  .matrix th{
+    text-align:left;
+    font-size:.64rem;
+    letter-spacing:.16em;
+    text-transform:uppercase;
+    font-weight:700;
+    color:var(--faint);
+    padding:0 8px 8px;
+    border-bottom:1px solid var(--line-2);
+  }
+  .matrix td{
+    padding:11px 8px;
+    border-bottom:1px solid var(--line);
+    color:var(--muted);
+    font-weight:300;
+  }
+  .matrix td.os{ color:var(--ink); font-weight:700; white-space:nowrap; }
+  .matrix td.os small{ display:block; margin-top:2px; font-size:.58rem; color:var(--faint); font-weight:400; letter-spacing:.06em; }
+  .st{ display:inline-flex; align-items:center; gap:5px; font-size:.76rem; white-space:nowrap; }
+  .st::before{ content:""; width:6px; height:6px; border-radius:50%; background:currentColor; box-shadow:0 0 8px currentColor; }
+  .st.ok{ color:var(--green); }
+  .st.warn{ color:var(--warn); }
+  .st.no{ color:var(--faint); }
+  .st.no::before{ box-shadow:none; }
+  .absent{ display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .absent .chip{ font-size:.64rem; color:var(--faint); }
+  .matrix-wrap{ border-top:1px solid var(--line-2); padding-top:12px; }
+
+  /* ---------------- three stages ---------------- */
+  .three-stage{
+    position:relative;
+    border:1px solid var(--line-2);
+    background:
+      radial-gradient(70% 80% at 50% 45%, rgba(130,251,156,.075), transparent 68%),
+      linear-gradient(180deg, rgba(21,24,40,.85), rgba(8,9,16,.9));
+    overflow:hidden;
+    height:clamp(270px,40vh,420px);
+    margin:0;
+  }
+  .three-stage::before{
+    content:"";
+    position:absolute; inset:0;
+    background-image:
+      linear-gradient(rgba(130,251,156,.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(130,251,156,.06) 1px, transparent 1px);
+    background-size:34px 34px;
+    -webkit-mask-image: radial-gradient(90% 90% at 50% 50%, #000, transparent 82%);
+            mask-image: radial-gradient(90% 90% at 50% 50%, #000, transparent 82%);
+    pointer-events:none;
+  }
+  .three-stage canvas{ display:block; width:100%; height:100%; }
+  .three-stage .stage-tag{
+    position:absolute;
+    left:10px; bottom:8px;
+    z-index:3;
+    padding:2px 6px;
+    background:rgba(7,8,14,.78);
+    font-size:.62rem;
+    letter-spacing:.16em;
+    text-transform:uppercase;
+    color:rgba(130,251,156,.55);
+    pointer-events:none;
+  }
+  .three-stage .stage-tag b{ color:rgba(130,251,156,.9); font-weight:400; }
+  .hero-three{ height:clamp(300px,52vh,480px); }
+  .summary-stage{ height:clamp(280px,42vh,400px); }
+  .three-stage.compact{ height:clamp(210px,29vh,290px); }
+  .three-stage.tiny{ height:clamp(160px,21vh,215px); }
+
+  /* stacked thesis glyphs */
+  .glyphs.stack3{ grid-template-columns:1fr; gap:0; }
+  .glyphs.stack3 .glyph{ padding:12px 0; }
+  .glyphs.stack3 .glyph + .glyph{
+    border-left:0;
+    border-top:1px solid var(--line);
+    padding-left:0;
+  }
+  .glyphs.stack3 .glyph-mark{ margin-bottom:8px; }
+
+  .node-label{
+    position:absolute;
+    left:50%; top:50%;
+    transform:translate(-50%,-50%);
+    padding:4px 9px;
+    background:rgba(11,12,22,.9);
+    border:1px solid rgba(130,251,156,.28);
+    font-size:.62rem;
+    font-weight:500;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--ink);
+    pointer-events:none;
+    opacity:0;
+    transition:opacity .45s ease;
+    white-space:nowrap;
+    z-index:3;
+  }
+  .node-label.show{ opacity:1; }
+  @media (max-width:640px){ .node-label{ font-size:.5rem; padding:3px 6px; } }
+
+  /* ---------------- hero ---------------- */
+  .hero-grid{
+    display:grid;
+    grid-template-columns:1.02fr .98fr;
+    gap:clamp(24px,4vw,58px);
+    align-items:center;
+  }
+  @media (max-width:900px){ .hero-grid{ grid-template-columns:1fr; } }
+
+  .glitch{
+    position:relative;
+    display:inline-block;
+    text-shadow:0 0 42px rgba(130,251,156,.18);
+  }
+  .glitch::before,
+  .glitch::after{
+    content:attr(data-text);
+    position:absolute;
+    inset:0;
+    pointer-events:none;
+    clip-path:inset(0 0 100% 0);
+    opacity:.85;
+  }
+  .glitch::before{ color:var(--cyan); transform:translate(-2px,1px); }
+  .glitch::after{ color:var(--green); transform:translate(2px,-1px); }
+  .slide.active .glitch::before{ animation: glitchA 5.5s 1.1s steps(1,end) infinite; }
+  .slide.active .glitch::after{ animation: glitchB 6.2s 1.4s steps(1,end) infinite; }
+
+  .hero-meta{ display:flex; flex-wrap:wrap; gap:8px; margin-top:22px; }
+  .pill{
+    font-size:.6rem;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    padding:4px 8px;
+    border:1px solid var(--line);
+    color:var(--faint);
+  }
+  .pill.on{ border-color:rgba(130,251,156,.35); color:var(--green); }
+
+  /* closing */
+  .closing{
+    margin:32px 0 0;
+    padding-top:24px;
+    border-top:1px solid var(--line-2);
+    font-size:clamp(1.08rem,1.8vw,1.3rem);
+    line-height:1.7;
+    color:var(--ink-dim);
+    max-width:64ch;
+    font-weight:300;
+  }
+  .closing b{ color:var(--green); font-weight:500; }
+
+  .kbd{
+    display:inline-block;
+    border:1px solid var(--line-2);
+    border-bottom-width:2px;
+    padding:1px 6px;
+    font-size:.78em;
+    color:var(--ink-dim);
+    background:rgba(130,251,156,.04);
+  }
+
+  /* ---------------- HUD ---------------- */
+  .hud{
+    position:fixed;
+    left:0; right:0; bottom:0;
+    z-index:40;
+    display:flex;
+    align-items:center;
+    gap:18px;
+    padding:11px clamp(20px,4vw,48px) 13px;
+    background:rgba(8,9,16,.86);
+    backdrop-filter:blur(10px);
+    border-top:1px solid var(--line);
+  }
+  .brand{
+    font-size:.68rem;
+    letter-spacing:.22em;
+    text-transform:uppercase;
+    color:var(--faint);
+    white-space:nowrap;
+  }
+  .brand b{ color:var(--green); font-weight:500; }
+  .dots{ display:flex; align-items:center; gap:7px; margin:0 auto; }
+  .dot{
+    width:8px; height:8px;
+    padding:0;
+    border:0;
+    background:var(--line-2);
+    cursor:pointer;
+    transition:width .32s cubic-bezier(.22,.61,.36,1), background-color .32s ease;
+  }
+  .dot:hover{ background:var(--muted); }
+  .dot.on{ width:26px; background:var(--green); box-shadow:0 0 14px rgba(130,251,156,.55); }
+  .dot:focus-visible{ outline:1px solid var(--green); outline-offset:4px; }
+
+  .counter{
+    font-size:.72rem;
+    letter-spacing:.14em;
+    color:var(--faint);
+    white-space:nowrap;
+  }
+  .counter b{ color:var(--ink-dim); font-weight:500; }
+
+  .progress{ position:fixed; left:0; right:0; bottom:0; height:2px; background:rgba(45,52,80,.5); z-index:41; }
+  .progress-fill{
+    height:100%;
+    width:0;
+    background:linear-gradient(90deg, var(--green-2), var(--green), var(--cyan));
+    box-shadow:0 0 12px rgba(130,251,156,.6);
+    transition:width .5s cubic-bezier(.22,.61,.36,1);
+  }
+  @media (max-width:700px){
+    .brand{ display:none; }
+    .hud{ justify-content:space-between; }
+  }
+
+  /* ---------------- keyframes ---------------- */
+  @keyframes fadeUp{ from{ opacity:0; transform:translateY(16px); } to{ opacity:1; transform:translateY(0); } }
+  @keyframes fadeIn{ from{ opacity:0; } to{ opacity:1; } }
+  @keyframes enterFromBelow{ from{ opacity:0; transform:translateY(22px) scale(.998); } to{ opacity:1; transform:none; } }
+  @keyframes enterFromAbove{ from{ opacity:0; transform:translateY(-22px) scale(.998); } to{ opacity:1; transform:none; } }
+  @keyframes growX{ from{ transform:scaleX(0); } to{ transform:scaleX(1); } }
+  @keyframes bobX{ 0%,100%{ transform:translateX(0); } 50%{ transform:translateX(5px); } }
+  @keyframes blink{ 0%,72%{ opacity:1; } 73%,100%{ opacity:.15; } }
+  @keyframes folioReveal{
+    from{ opacity:0; clip-path:inset(0 0 100% 0); transform:translateY(12px); }
+    to{ opacity:1; clip-path:inset(0 0 0 0); transform:translateY(0); }
+  }
+  @keyframes caret{ 0%,50%{ opacity:1; } 51%,100%{ opacity:0; } }
+  @keyframes srcPulse{
+    0%,100%{ background:rgba(130,251,156,.06); }
+    50%{ background:rgba(130,251,156,.12); }
+  }
+  @keyframes glitchA{
+    0%,92%,100%{ clip-path:inset(0 0 100% 0); transform:translate(-2px,1px); }
+    93%{ clip-path:inset(12% 0 62% 0); transform:translate(-6px,-1px); }
+    95%{ clip-path:inset(48% 0 30% 0); transform:translate(4px,1px); }
+    97%{ clip-path:inset(72% 0 8% 0); transform:translate(-3px,0); }
+  }
+  @keyframes glitchB{
+    0%,90%,100%{ clip-path:inset(0 0 100% 0); transform:translate(2px,-1px); }
+    91%{ clip-path:inset(24% 0 54% 0); transform:translate(6px,1px); }
+    94%{ clip-path:inset(60% 0 18% 0); transform:translate(-5px,-1px); }
+    96%{ clip-path:inset(4% 0 82% 0); transform:translate(3px,0); }
+  }
+
+
+  /* ---- composition variety (one pass, no layout breakage) ---- */
+  #s5 .three-stage{ border-color:rgba(130,251,156,.35); }
+  #s5 .chip-row{ margin-top:14px; }
+  #s6 .three-stage{ border-color:rgba(124,248,247,.28); }
+  #s8 .three-stage{ border-color:rgba(255,184,107,.30); }
+  #s8 .checks li{ padding:9px 10px; }
+  #s11 .three-stage{ border-color:rgba(130,157,212,.30); }
+  #s13 .three-stage{ border-color:rgba(130,251,156,.30); }
+  #s15 .three-stage{ border-color:rgba(130,251,156,.35); }
+  @media (max-width:940px){
+    #s8 .split{ grid-template-columns:1fr; }
+  }
+
+  /* ---------------- stagger ---------------- */
+  .slide.active .inner > *:not(.stagger):not([data-words]){
+    animation: fadeUp .6s cubic-bezier(.22,.61,.36,1) both;
+  }
+  .slide.active .inner > *:nth-child(1){ animation-delay:.04s; }
+  .slide.active .inner > *:nth-child(2){ animation-delay:.10s; }
+  .slide.active .inner > *:nth-child(3){ animation-delay:.16s; }
+  .slide.active .inner > *:nth-child(4){ animation-delay:.22s; }
+  .slide.active .inner > *:nth-child(5){ animation-delay:.36s; }
+  .slide.active .inner > *:nth-child(6){ animation-delay:.42s; }
+  .slide.active .inner > *:nth-child(7){ animation-delay:.48s; }
+
+  .slide.active .stagger > *{ animation: fadeUp .5s cubic-bezier(.22,.61,.36,1) both; }
+  .slide.active .stagger > *:nth-child(1){ animation-delay:.20s; }
+  .slide.active .stagger > *:nth-child(2){ animation-delay:.26s; }
+  .slide.active .stagger > *:nth-child(3){ animation-delay:.32s; }
+  .slide.active .stagger > *:nth-child(4){ animation-delay:.38s; }
+  .slide.active .stagger > *:nth-child(5){ animation-delay:.44s; }
+  .slide.active .stagger > *:nth-child(6){ animation-delay:.50s; }
+  .slide.active .stagger > *:nth-child(7){ animation-delay:.56s; }
+  .slide.active .stagger > *:nth-child(8){ animation-delay:.62s; }
+
+  /* short viewports: keep a slide inside one screen */
+  @media (max-height: 940px){
+    .inner{ padding-top: clamp(26px,3.6vh,44px); padding-bottom: 100px; }
+    h2{ font-size: clamp(1.6rem,3.1vw,2.45rem); }
+    .eyebrow{ margin-bottom: 13px; }
+    .lede, .body{ font-size: 1rem; line-height:1.62; }
+    .lede{ margin-bottom:20px; }
+    .row{ padding: 11px 14px; }
+    .row p{ font-size:.9rem; line-height:1.55; }
+    .checks li{ padding: 7px 10px; font-size:.9rem; line-height:1.5; }
+    .def{ padding: 6px 10px; }
+    .def dd{ font-size:.875rem; line-height:1.45; }
+    .def dt{ font-size:.9rem; }
+    .deflist.one .def{ padding:5px 10px; }
+    .theme-row{ padding:6px 10px; }
+    .theme-name{ font-size:.9rem; }
+    .theme-name small{ display:none; }
+    .three-stage[style]{ height: clamp(170px,29vh,270px) !important; }
+    .three-stage{ height: clamp(180px,29vh,270px); }
+    .hero-three{ height: clamp(240px,44vh,400px); }
+    .summary-stage{ height: clamp(230px,34vh,330px); }
+    .term-body{ font-size:.82rem; line-height:1.62; padding:10px 12px 12px; }
+    .bento, .trio-spec{ gap:9px; }
+    .spec-head{ padding:5px 9px; }
+    .spec-body{ padding:8px 10px 9px; }
+    .spec-code{ font-size:.82rem; line-height:1.72; }
+    .spec-table{ font-size:.875rem; }
+    .spec-table th, .spec-table td{ padding:4px 6px; }
+    .callout{ font-size:.875rem; }
+    .chip-row{ margin-top:9px; }
+    .term-bar{ padding:6px 10px; }
+    .mock-body{ min-height:188px; }
+    .mock-line{ margin-bottom:6px; font-size:.875rem; }
+    .mock-doc h3{ margin-bottom:9px; font-size:.8rem; }
+    .mock-doc{ padding:12px 14px 14px; }
+    .mock-code{ font-size:.82rem; padding:8px 10px; }
+    .closing{ font-size:.95rem; margin-top:20px; padding-top:16px; }
+    .note{ font-size:.875rem; margin-top:14px; }
+    .flow .item{ padding:14px 14px 16px; }
+    .glyphs.stack3 .glyph{ padding:9px 0; }
+    .glyph p{ font-size:.82rem; }
+    .legend .lg p{ font-size:.72rem; }
+    .loadline{ padding:9px 0; }
+    .stats{ margin-bottom:16px; }
+    .stat{ padding:12px 10px 4px; }
+    .stat .cap{ margin-top:6px; font-size:.6rem; }
+  }
+
+  @media (prefers-reduced-motion:reduce){
+    .slide, .progress-fill, .dot, .row, .checks li, .def, .chip,
+    .trio .col, .theme-row, .flow .item{ transition:none !important; }
+    *,*::before,*::after{ animation:none !important; }
+    .slide.active{ opacity:1; transform:none; }
+  }
+</style>
+</head>
+<body data-dir="next">
+
+<div class="deck">
+
+  <!-- ============================ 01 · HERO ============================ -->
+  <section class="slide active" id="s1" aria-hidden="false">
+    <span class="folio" aria-hidden="true">01</span>
+    <div class="inner">
+      <div class="hero-grid">
+        <div>
+          <p class="eyebrow">A local Markdown reader · <b>rust + tauri</b></p>
+          <h1 class="glitch" data-text="FOLIO">FOLIO</h1>
+          <p class="lede">
+            A quiet, file-focused Markdown reader and editor. One document at a time,
+            rendered by the engine your OS already ships, parsed by Rust.
+          </p>
+          <p class="pull">“Your files stay yours. <b>No account, no cloud, no CDN</b> in the render path.”</p>
+          <p class="stack mono">
+            <b>Rust</b> · Tauri 2 · Comrak · syntect · KaTeX · Mermaid · WebKitGTK / WKWebView / WebView2
+          </p>
+          <div class="hero-meta">
+            <span class="pill on">offline-first</span>
+            <span class="pill">MIT</span>
+            <span class="pill">Linux · macOS · Windows</span>
+          </div>
+        </div>
+        <div class="three-stage hero-three">
+          <canvas data-scene="stack"></canvas>
+          <div class="stage-tag"><b>FIG. 01</b> — document stack / local file</div>
+        </div>
+      </div>
+      <p class="hint">← → or space to navigate</p>
+    </div>
+  </section>
+
+  <!-- ============================ 02 · THE CHOICE ============================ -->
+  <section class="slide" id="s2" aria-hidden="true">
+    <span class="folio" aria-hidden="true">02</span>
+    <div class="inner">
+      <p class="eyebrow">02 // the choice</p>
+      <h2>Your notes are not a <em>service</em>.</h2>
+
+      <div class="vs-grid">
+        <div class="vs-col bad">
+          <div class="vs-head">
+            <span class="badge bad">A notes platform</span>
+            <span class="vs-sub">source of truth: the workspace</span>
+          </div>
+          <ul class="vs-list">
+            <li><i>×</i><div><b>Account</b><span>Sign in to read a file you already own.</span></div></li>
+            <li><i>×</i><div><b>Database</b><span>Notes live in a workspace and are exported on request.</span></div></li>
+            <li><i>×</i><div><b>Sync loop</b><span>Every edit leaves the machine to come back.</span></div></li>
+            <li><i>×</i><div><b>Remote assets</b><span>Opening a document can quietly make requests.</span></div></li>
+          </ul>
+          <p class="vs-foot">The file is a copy.</p>
+        </div>
+
+        <div class="vs-mid">
+          <div class="three-stage compact" style="height:clamp(200px,29vh,272px);">
+            <canvas data-scene="balance"></canvas>
+            <div class="node-label" data-label="0">platform</div>
+            <div class="node-label" data-label="1">one file</div>
+            <div class="stage-tag"><b>FIG. 02</b> — same bytes, different weight</div>
+          </div>
+          <p class="vs-caption">one is a product · one is a path</p>
+        </div>
+
+        <div class="vs-col good">
+          <div class="vs-head">
+            <span class="badge good">A file reader</span>
+            <span class="vs-sub">source of truth: the path on disk</span>
+          </div>
+          <ul class="vs-list">
+            <li><i>✓</i><div><b>Path on disk</b><span>Open a file, edit it, write it back. No import step.</span></div></li>
+            <li><i>✓</i><div><b>System webview</b><span>WebKitGTK, WKWebView or WebView2 — already installed.</span></div></li>
+            <li><i>✓</i><div><b>Rust parser</b><span>Comrak and syntect produce the HTML before the UI sees it.</span></div></li>
+            <li><i>✓</i><div><b>Local rendering</b><span>Fonts, KaTeX and Mermaid ship with the app.</span></div></li>
+          </ul>
+          <p class="vs-foot">The file is the file.</p>
+        </div>
+      </div>
+
+      <p class="note">
+        That is the whole bet: <b>the operating system already has a renderer</b>, and the
+        document — not the workspace — is the unit.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================ 03 · CONSTRAINTS ============================ -->
+  <section class="slide" id="s3" aria-hidden="true">
+    <span class="folio" aria-hidden="true">03</span>
+    <div class="inner">
+      <p class="eyebrow">03 // constraints</p>
+      <h2>Only three things <em>survive</em>.</h2>
+
+      <div class="constraint-grid">
+        <div>
+          <p class="body">
+            Most editors grow by adding: sync, accounts, a plugin runtime, an embedded browser.
+            Each one moves the source of truth or the render path off the machine.
+            Folio rejects them at the door.
+          </p>
+
+          <div class="reject-list">
+            <span class="reject">sync</span>
+            <span class="reject">accounts</span>
+            <span class="reject">collaboration</span>
+            <span class="reject">plugin runtime</span>
+            <span class="reject">embedded Chromium</span>
+            <span class="reject">frontend toolchain</span>
+            <span class="reject">telemetry</span>
+          </div>
+
+          <div class="survivor-list">
+            <div class="survivor"><i>→</i><b>Open a path</b><span>the file on disk is the document</span></div>
+            <div class="survivor"><i>→</i><b>Render locally</b><span>Rust parses, the OS webview paints</span></div>
+            <div class="survivor"><i>→</i><b>Write back atomically</b><span>temp file, rename, no hidden copy</span></div>
+          </div>
+        </div>
+
+        <div>
+          <div class="three-stage compact" style="height:clamp(280px,38vh,350px);">
+            <canvas data-scene="filter"></canvas>
+            <div class="stage-tag"><b>FIG. 03</b> — requests enter, three constraints survive</div>
+          </div>
+          <p class="note">
+            The filter is not a roadmap item. It is the reason the surface stays small enough
+            to understand without learning a whole platform.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 04 · ARCHITECTURE ============================ -->
+  <section class="slide" id="s4" aria-hidden="true">
+    <span class="folio" aria-hidden="true">04</span>
+    <div class="inner">
+      <p class="eyebrow">04 // architecture</p>
+      <h2>Rust underneath. <em>Your OS</em> on screen.</h2>
+
+      <div class="split" style="grid-template-columns:1.12fr .88fr; align-items:end; margin-bottom:14px;">
+        <p class="body">
+          Rust parses, sanitizes, themes and writes. Tauri is a typed boundary with a policy
+          on every edge. The webview only draws what it is handed.
+        </p>
+        <p class="note" style="margin:0; text-align:right;">
+          <b>One window · one document · no node at run time</b>
+        </p>
+      </div>
+
+      <div class="three-stage" style="height:clamp(240px,34vh,320px);">
+        <canvas data-scene="layers"></canvas>
+        <div class="stage-tag"><b>FIG. 04</b> — commands down, sanitized HTML up</div>
+        <div class="node-label" data-label="0">Rust core</div>
+        <div class="node-label" data-label="1">IPC · commands</div>
+        <div class="node-label" data-label="2">System webview</div>
+      </div>
+
+      <div class="arch-grid">
+        <div class="arch-col">
+          <h4>core / src</h4>
+          <ul>
+            <li><b>document.rs</b> — atomic saves, fingerprints, CRLF / BOM</li>
+            <li><b>markdown.rs</b> — Comrak, syntect, ammonia, edit map</li>
+            <li><b>theme.rs</b> — XDG-aware Omarchy palette</li>
+          </ul>
+        </div>
+        <div class="arch-col">
+          <h4>boundary / tauri</h4>
+          <ul>
+            <li><b>open_document</b> · <b>save_document</b> · <b>render_markdown</b></li>
+            <li><b>open_folder</b> · <b>set_task_checked</b> · <b>open_link</b></li>
+            <li>Navigation allowlist: app origin only</li>
+          </ul>
+        </div>
+        <div class="arch-col">
+          <h4>surface / ui</h4>
+          <ul>
+            <li><b>core.js</b> — DOM, IPC, paths, preferences</li>
+            <li><b>theme.js</b> — palettes, contrast, Mermaid colours</li>
+            <li><b>editor.js</b> · <b>app.js</b> — edit and wiring</li>
+          </ul>
+        </div>
+        <div class="arch-col">
+          <h4 class="grey">targets / webviews</h4>
+          <ul>
+            <li><b>Linux</b> — WebKitGTK 4.1</li>
+            <li><b>macOS</b> — WKWebView</li>
+            <li><b>Windows</b> — WebView2</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 05 · RENDERING ============================ -->
+  <section class="slide" id="s5" aria-hidden="true">
+    <span class="folio" aria-hidden="true">05</span>
+    <div class="inner">
+      <p class="eyebrow">05 // rendering</p>
+
+      <div class="split" style="grid-template-columns:1.16fr .84fr; align-items:center; margin-bottom:12px;">
+        <div>
+          <h2 style="margin-bottom:.3em;">What you wrote is what <em>renders</em>.</h2>
+          <p class="body">
+            GFM structures, fenced code, notes and footnotes — parsed in Rust, sanitized,
+            then painted by the system webview.
+          </p>
+        </div>
+        <div class="three-stage tiny" style="height:clamp(150px,19vh,186px);">
+          <canvas data-scene="pages"></canvas>
+          <div class="stage-tag"><b>FIG. 05</b> — blocks assemble → rendered page</div>
+        </div>
+      </div>
+
+      <div class="bento" style="grid-template-columns:1.15fr .85fr;">
+        <div class="bento-col">
+          <div class="spec">
+            <div class="spec-head"><span>```rust · syntect</span><b>fenced code</b></div>
+            <div class="spec-body">
+<pre class="spec-code"><span class="c">// illustrative rendering pipeline</span>
+<span class="k">let</span> mut options = Options::default();
+options.extension.table = <span class="n">true</span>;
+options.extension.alerts = <span class="n">true</span>;
+<span class="k">let</span> html = <span class="f">markdown_to_html</span>(source, &amp;options)?;
+<span class="f">sanitize</span>(html);  <span class="c">// ammonia</span></pre>
+            </div>
+          </div>
+
+          <div class="spec">
+            <div class="spec-head"><span>GFM · table</span><b>structure</b></div>
+            <div class="spec-body">
+              <table class="spec-table">
+                <thead><tr><th>input</th><th>output</th><th>layer</th></tr></thead>
+                <tbody>
+                  <tr><td><code>**bold**</code></td><td><b>bold</b></td><td>inline</td></tr>
+                  <tr><td><code>| a | b |</code></td><td>table</td><td>GFM</td></tr>
+                  <tr><td><code>- [x]</code></td><td>task</td><td>writable</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="bento-col">
+          <div class="spec">
+            <div class="spec-head"><span>&gt; [!NOTE]</span><b>callout</b></div>
+            <div class="spec-body">
+              <div class="callout">
+                <b>▸ note</b>
+                Remote images are blocked by default. A local placeholder keeps the layout intact.
+              </div>
+            </div>
+          </div>
+
+          <div class="spec">
+            <div class="spec-head"><span>- [x]</span><b>task list</b></div>
+            <div class="spec-body">
+              <ul class="tasks">
+                <li class="done"><span class="box on"></span><span>Tables, tasks, footnotes</span></li>
+                <li class="done"><span class="box on"></span><span>Highlight, insert, wikilinks</span></li>
+                <li><span class="box"></span><span>Your next idea</span></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="chip-row">
+        <span class="chip">definition lists</span>
+        <span class="chip">[[wikilinks]]</span>
+        <span class="chip mono-key">==highlight==</span>
+        <span class="chip mono-key">++insert++</span>
+        <span class="chip">YAML front matter</span>
+        
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============================ 06 · PREVIEWS ============================ -->
+  <section class="slide" id="s6" aria-hidden="true">
+    <span class="folio" aria-hidden="true">06</span>
+    <div class="inner">
+      <p class="eyebrow">06 // previews</p>
+      <h2>One document. <em>Every dialect.</em></h2>
+      <p class="body" style="margin-bottom:16px; max-width:70ch;">
+        Code, tables, math and diagrams are rendered by the same local pipeline — then
+        swapped in place as you move through the document.
+      </p>
+
+      <div class="three-stage" style="height:clamp(280px,38vh,350px);">
+        <canvas data-scene="carousel"></canvas>
+        <div class="stage-tag"><b>FIG. 06</b> — rendered previews, in motion</div>
+      </div>
+
+      <div class="engine-strip">
+        <div class="engine">
+          <h4>KaTeX · math</h4>
+          <p>Inline and display math, rendered from vendored files with <b>throwOnError: false</b>.</p>
+        </div>
+        <div class="engine">
+          <h4>Mermaid · diagrams</h4>
+          <p>Eleven diagram types under <b>securityLevel: strict</b>. A broken source shows its source.</p>
+        </div>
+        <div class="engine">
+          <h4>Ammonia · HTML</h4>
+          <p>Raw HTML is reduced to a safe subset before it reaches the DOM.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 07 · DIALECT WALL ============================ -->
+  <section class="slide" id="s7" aria-hidden="true">
+    <span class="folio" aria-hidden="true">07</span>
+    <div class="inner">
+      <p class="eyebrow">07 // the parser</p>
+      <h2>CommonMark, plus the <em>useful</em> extensions.</h2>
+
+      <div class="split" style="grid-template-columns:1.05fr .95fr; align-items:center; margin-bottom:12px;">
+        <p class="body">
+          One Comrak configuration, one sanitizer, one highlight pass. A single source
+          splits into blocks, inline spans and rendered output — nothing is fetched to do it.
+        </p>
+        <div class="three-stage tiny">
+          <canvas data-scene="split"></canvas>
+          <div class="stage-tag"><b>FIG. 07</b> — source → rendered</div>
+        </div>
+      </div>
+
+      <div class="dialects stagger">
+        <div class="chip-group">
+          <h4><b>01</b> / block structure</h4>
+          <div class="chips">
+            <span class="chip">GFM tables</span>
+            <span class="chip">task lists</span>
+            <span class="chip">footnotes</span>
+            <span class="chip">inline ^[notes]</span>
+            <span class="chip">definition lists</span>
+            <span class="chip">YAML front matter</span>
+            <span class="chip">alerts / callouts</span>
+          </div>
+        </div>
+        <div class="chip-group">
+          <h4><b>02</b> / inline</h4>
+          <div class="chips">
+            <span class="chip">strikethrough</span>
+            <span class="chip mono-key">==highlight==</span>
+            <span class="chip mono-key">++insert++</span>
+            <span class="chip mono-key">x^2^</span>
+            <span class="chip mono-key">[[wikilinks|labels]]</span>
+            <span class="chip mono-key">:shortcodes:</span>
+          </div>
+        </div>
+        <div class="chip-group">
+          <h4><b>03</b> / math</h4>
+          <div class="chips">
+            <span class="chip mono-key">$inline$</span>
+            <span class="chip mono-key">$$display$$</span>
+            <span class="chip"><span class="mono">```math</span> fences</span>
+            <span class="chip">vendored KaTeX</span>
+          </div>
+        </div>
+        <div class="chip-group">
+          <h4><b>04</b> / diagrams</h4>
+          <div class="chips">
+            <span class="chip"><span class="mono">```mermaid</span></span>
+            <span class="chip">flowchart</span>
+            <span class="chip">sequence</span>
+            <span class="chip">class · state</span>
+            <span class="chip">ER</span>
+            <span class="chip">gantt</span>
+            <span class="chip">pie · timeline</span>
+            <span class="chip">git graph · mindmap</span>
+          </div>
+        </div>
+      </div>
+
+      <p class="note">
+        Fenced code is highlighted by <b>syntect</b> in Rust. Invalid Mermaid shows its source
+        with an error note instead of failing silently.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================ 08 · SECURITY ============================ -->
+  <section class="slide" id="s8" aria-hidden="true">
+    <span class="folio" aria-hidden="true">08</span>
+    <div class="inner">
+      <p class="eyebrow">08 // trust boundary</p>
+      <h2>Opening a file is <em>not</em> a request.</h2>
+
+      <div class="split" style="margin-top:6px;">
+        <div>
+          <ul class="checks stagger">
+            <li><span class="check-mark">✓</span><span><b>Sanitized HTML.</b> ammonia strips Markdown HTML to a safe subset before it reaches the DOM.</span></li>
+            <li><span class="check-mark">✓</span><span><b>Remote images blocked.</b> A local placeholder appears until you enable loading in the command window.</span></li>
+            <li><span class="check-mark">✓</span><span><b>No referrer.</b> When enabled, images use <code>referrerpolicy="no-referrer"</code>.</span></li>
+            <li><span class="check-mark">✓</span><span><b>Path boundary.</b> Relative links resolve only inside the document's folder or its descendants.</span></li>
+            <li><span class="check-mark">✓</span><span><b>Scheme policy.</b> Web links go to the default browser; <code>data:</code> links are removed.</span></li>
+            <li><span class="check-mark">✓</span><span><b>Navigation allowlist.</b> Only the app origin is a page. <code>file:</code> and <code>about:srcdoc</code> are rejected.</span></li>
+            <li><span class="check-mark">✓</span><span><b>Checkbox spoofing closed.</b> Raw HTML cannot forge task inputs — even with mixed-case <code>data-sourcepos</code>.</span></li>
+          </ul>
+        </div>
+
+        <div>
+          <div class="three-stage" style="height:clamp(300px,44vh,400px);">
+            <canvas data-scene="gate"></canvas>
+            <div class="stage-tag"><b>FIG. 08</b> — sanitize → allow → clean preview</div>
+          </div>
+          <p class="note" style="margin-top:16px;">
+            KaTeX uses restrictive trust; Mermaid runs at <code>securityLevel: strict</code>.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 09 · EDITING ============================ -->
+  <section class="slide" id="s9" aria-hidden="true">
+    <span class="folio" aria-hidden="true">09</span>
+    <div class="inner">
+      <p class="eyebrow">09 // the editing model</p>
+      <h2>Click a line. <em>Only that line</em> opens.</h2>
+      <p class="body" style="margin-bottom:12px;">
+        Edit mode is not a textarea with a preview beside it. The rendered document stays
+        rendered; the line under your cursor reveals its Markdown in place.
+      </p>
+
+      <div class="split" style="grid-template-columns:1.15fr .85fr; align-items:center;">
+        <div class="mock">
+          <div class="mock-bar">
+            <span class="traffic"><i></i><i></i><i></i></span>
+            <span class="mock-title">notes.md</span>
+            <span class="mock-tools"><span>◉</span><span class="on">✎</span></span>
+          </div>
+          <div class="mock-body">
+            <aside class="mock-outline">
+              <div class="oh">CONTENTS</div>
+              <div class="oi">Reading, first</div>
+              <div class="oi on">Harbour notes</div>
+              <div class="oi">Lists and tasks</div>
+              <div class="oi">Code</div>
+              <div class="oi">Math and diagrams</div>
+            </aside>
+            <div class="mock-doc">
+              <h3>Harbour notes</h3>
+              <p class="mock-line faded">The tide turns before the wind.</p>
+              <p class="mock-src"><span class="caret"></span>The tide turns before **the wind**.</p>
+              <p class="mock-line">Everything around it stays rendered.</p>
+              <p class="mock-line faded">— including this paragraph, and the block below.</p>
+              <pre class="mock-code"><span class="k">fn</span> main() {
+    <span class="k">let</span> greeting = <span class="s">"Hello from Folio"</span>;
+    println!(<span class="s">"{greeting}"</span>);
+}</pre>
+            </div>
+          </div>
+          <div class="mock-foot"><span>EDIT · line 12</span><span>Ctrl+Enter applies · Ctrl+S writes</span></div>
+        </div>
+
+        <div>
+          <div class="three-stage tiny" style="margin-bottom:12px;">
+            <canvas data-scene="editor"></canvas>
+            <div class="stage-tag"><b>FIG. 09</b> — one line opened, the rest intact</div>
+          </div>
+          <ul class="checks stagger">
+            <li><span class="check-mark">›</span><span><b>Source mapping.</b> Rust returns byte ranges and source positions for every block.</span></li>
+            <li><span class="check-mark">›</span><span><b>Block reveal.</b> Code, tables, math and diagrams open their whole source block at once.</span></li>
+            <li><span class="check-mark">›</span><span><b>Preview is read-only.</b> Ticking a box writes through the same command path as typing.</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 10 · THEMES ============================ -->
+  <section class="slide" id="s10" aria-hidden="true">
+    <span class="folio" aria-hidden="true">10</span>
+    <div class="inner">
+      <p class="eyebrow">10 // appearance</p>
+      <h2>Seven themes. <em>One live</em> palette.</h2>
+
+      <div class="split" style="grid-template-columns:.92fr 1.08fr; align-items:center;">
+        <div class="three-stage" style="height:clamp(300px,44vh,400px);">
+          <canvas data-scene="themes"></canvas>
+          <div class="stage-tag"><b>FIG. 10</b> — theme ring, Omarchy node in green</div>
+        </div>
+
+        <div>
+          <div class="theme-list stagger">
+            <div class="theme-row"><span class="theme-swatch" style="background:#fafafa;color:#fafafa"></span><span class="theme-name">Adwaita Light<small>Clean and familiar</small></span><span class="theme-hex">#FAFAFA</span></div>
+            <div class="theme-row"><span class="theme-swatch" style="background:#303030;color:#303030"></span><span class="theme-name">Adwaita Dark<small>Soft charcoal</small></span><span class="theme-hex">#303030</span></div>
+            <div class="theme-row"><span class="theme-swatch" style="background:#88c0d0;color:#88c0d0"></span><span class="theme-name">Nord<small>Cool and quiet</small></span><span class="theme-hex">#88C0D0</span></div>
+            <div class="theme-row"><span class="theme-swatch" style="background:#cba6f7;color:#cba6f7"></span><span class="theme-name">Catppuccin Mocha<small>Warm pastel accents</small></span><span class="theme-hex">#CBA6F7</span></div>
+            <div class="theme-row"><span class="theme-swatch" style="background:#eb6f92;color:#eb6f92"></span><span class="theme-name">Rosé Pine<small>Muted purple and rose</small></span><span class="theme-hex">#EB6F92</span></div>
+            <div class="theme-row"><span class="theme-swatch" style="background:#268bd2;color:#268bd2"></span><span class="theme-name">Solarized Light<small>Warm paper</small></span><span class="theme-hex">#268BD2</span></div>
+            <div class="theme-row live"><span class="theme-swatch" style="background:#82FB9C;color:#82FB9C"></span><span class="theme-name">Omarchy<small>Reads the current desktop palette · polled every 2 s</small></span><span class="theme-hex">#82FB9C</span></div>
+          </div>
+
+          <p class="note">
+            Omarchy detection is XDG-aware and <b>hex-only</b>: a palette value that isn't a plain
+            <code>#rrggbb</code> is rejected. Folio writes only its own preferences and never
+            modifies desktop theme files.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 11 · RUST CORE ============================ -->
+  <section class="slide" id="s11" aria-hidden="true">
+    <span class="folio" aria-hidden="true">11</span>
+    <div class="inner">
+      <p class="eyebrow">11 // file discipline</p>
+      <h2>The boring parts are the <em>product</em>.</h2>
+
+      <div class="split" style="grid-template-columns:1.2fr .8fr;">
+        <div>
+          <p class="body" style="margin-bottom:12px;">
+            Saving a text file sounds solved until it happens over a network share, a synced folder,
+            or another editor. Folio treats the write as a transaction.
+          </p>
+
+          <dl class="deflist one stagger">
+        <div class="def">
+          <dt>Atomic save</dt>
+          <dd>Write a temporary sibling, then rename — the document lock is released for the native save dialog. Readers never observe a half-written file.</dd>
+        </div>
+        <div class="def">
+          <dt>Content fingerprint</dt>
+          <dd>SHA-256 of the bytes detects external edits and offers Reload, Overwrite or Cancel.</dd>
+        </div>
+        <div class="def">
+          <dt>Preserve what exists</dt>
+          <dd>CRLF endings, UTF-8 BOM and permissions survive; new files follow the process umask.</dd>
+        </div>
+        <div class="def">
+          <dt>Bounded scanning</dt>
+          <dd>Folders cap at 5,000 entries and 12 levels; unreadable entries are skipped and reported.</dd>
+        </div>
+        <div class="def">
+          <dt>Hard limits</dt>
+          <dd>20 MB per document, 10 MB per local image, UTF-8 only — enforced, not implied.</dd>
+        </div>
+      </dl>
+        </div>
+
+        <div>
+          <div class="three-stage compact">
+            <canvas data-scene="save"></canvas>
+            <div class="stage-tag"><b>FIG. 11</b> — temp file → rename → final file</div>
+          </div>
+          <p class="note" style="margin-top:14px;">
+            Every line on the left has a Rust test behind it: conflict detection, atomic behaviour,
+            CRLF/BOM and permission preservation, new-file umask, tolerant folder scanning.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 12 · LOCAL ============================ -->
+  <section class="slide" id="s12" aria-hidden="true">
+    <span class="folio" aria-hidden="true">12</span>
+    <div class="inner">
+      <p class="eyebrow">12 // runtime</p>
+      <h2>Nothing loads until the document <em>needs</em> it.</h2>
+
+      <div class="stats stagger">
+        <div class="stat">
+          <span class="big">0</span>
+          <span class="cap">frontend build steps</span>
+        </div>
+        <div class="stat">
+          <span class="big">260<small> KB</small></span>
+          <span class="cap">bundled Inter · Source Serif 4 · JetBrains Mono</span>
+        </div>
+        <div class="stat">
+          <span class="big">4.2<small> MB</small></span>
+          <span class="cap">vendored KaTeX + Mermaid, loaded on demand</span>
+        </div>
+        <div class="stat">
+          <span class="big">0</span>
+          <span class="cap">CDNs or render services in the path</span>
+        </div>
+      </div>
+
+      <div class="loadline">
+        <span class="node2">document.md</span>
+        <span class="arw">→</span>
+        <span class="node2">Rust parser</span>
+        <span class="arw">→</span>
+        <span class="node2">sanitized HTML</span>
+        <span class="arw">→</span>
+        <span class="node2 hot">preview</span>
+        <span class="arw">┄┄→</span>
+        <span class="node2">KaTeX / Mermaid <span style="color:var(--faint)">only if present</span></span>
+        <span class="tag">read + edit work offline</span>
+      </div>
+
+      <div class="split" style="margin-top:18px; grid-template-columns:.9fr 1.1fr; align-items:center;">
+        <div class="three-stage tiny">
+          <canvas data-scene="lazy"></canvas>
+          <div class="stage-tag" style="bottom:auto; top:8px;"><b>FIG. 12</b> — payloads wake only when reached</div>
+        </div>
+        <div>
+          <p class="body">
+            Fonts are shipped with the app, so the document doesn't reflow when the network
+            disappears. The reader defaults to <b>Source Serif 4</b>; a command-window toggle
+            switches the document to sans without touching the interface.
+          </p>
+          <p class="body" style="margin-top:12px;">
+            Diagrams are re-rendered when the theme changes, so they always match the palette —
+            including a live Omarchy theme. Remote images stay a deliberate opt-in, never a default.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 13 · VERIFICATION ============================ -->
+  <section class="slide" id="s13" aria-hidden="true">
+    <span class="folio" aria-hidden="true">13</span>
+    <div class="inner">
+      <p class="eyebrow">13 // verification</p>
+      <h2>Claims have <em>checks</em>.</h2>
+
+      <div class="split" style="grid-template-columns:1fr 1fr; align-items:center;">
+        <div>
+          <div class="three-stage tiny" style="margin-bottom:12px;">
+            <canvas data-scene="checks"></canvas>
+            <div class="stage-tag"><b>FIG. 13</b> — 27 rust checks, all green</div>
+          </div>
+          <div class="term">
+          <div class="term-bar">
+            <span class="dots3"><i></i><i></i><i></i></span>
+            <span>zsh — folio</span>
+            <b>exit 0</b>
+          </div>
+          <div class="term-body"><span class="p">$</span> <span class="c">cargo test</span>
+<span class="ok">test result: ok. 27 passed; 0 failed</span>
+
+<span class="dim">Additional development checks</span>
+<span class="p">$</span> <span class="c">cargo clippy --all-targets</span>
+<span class="p">$</span> <span class="c">npm run test:ui</span>
+
+<span class="dim">CI targets (configured)</span>
+<span class="cy">  Linux · Windows · macOS</span>
+<span class="dim">  fmt · test · clippy · ui · bundles</span></div>
+          </div>
+        </div>
+
+        <div>
+          <div class="trio" style="grid-template-columns:1fr;">
+            <div class="col">
+              <h4>Rust suite</h4>
+              <p>Save conflicts, file preservation, HTML sanitization, remote-image privacy and edit mapping. The parts that protect your work.</p>
+            </div>
+            <div class="col" style="margin-top:14px;">
+              <h4>UI smoke</h4>
+              <p>Playwright exercises the reading and editing UI: navigation, themes, unsaved changes and save conflicts. Native calls are mocked.</p>
+            </div>
+            <div class="col" style="margin-top:14px;">
+              <h4>Manual pass</h4>
+              <p>Real webview, CSP and cross-platform behaviour that a mock cannot cover — documented step by step in <code>docs/manual-verification.md</code>.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 14 · SCOPE ============================ -->
+  <section class="slide" id="s14" aria-hidden="true">
+    <span class="folio" aria-hidden="true">14</span>
+    <div class="inner">
+      <p class="eyebrow">14 // scope</p>
+      <h2>Shipped, and <em>honestly labelled</em>.</h2>
+
+      <div class="split" style="grid-template-columns:1.12fr .88fr; align-items:start; gap:clamp(24px,3.6vw,46px); margin-top:4px;">
+        <div>
+          <table class="matrix">
+            <thead>
+              <tr><th>target</th><th>builds</th><th>packages</th><th>hands-on</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="os">Linux<small>AppImage · .deb</small></td>
+                <td><span class="st ok">passing</span></td>
+                <td><span class="st ok">published</span></td>
+                <td><span class="st ok">in use</span></td>
+              </tr>
+              <tr>
+                <td class="os">macOS<small>WKWebView</small></td>
+                <td><span class="st ok">passing</span></td>
+                <td><span class="st no">not published</span></td>
+                <td><span class="st warn">pending</span></td>
+              </tr>
+              <tr>
+                <td class="os">Windows<small>WebView2</small></td>
+                <td><span class="st ok">passing</span></td>
+                <td><span class="st no">not published</span></td>
+                <td><span class="st warn">pending</span></td>
+              </tr>
+            </tbody>
+          </table>
+
+          <p class="note" style="margin-top:14px;">
+            CI compiles all three and runs the same checks. Only Linux releases are published,
+            and only Linux has had a real desktop behind it long enough to claim.
+          </p>
+
+          <div style="margin-top:20px; border-top:1px solid var(--line); padding-top:12px;">
+            <h4 style="margin:0 0 2px; font-size:.58rem; letter-spacing:.18em; text-transform:uppercase; color:var(--warn); font-weight:700;">
+              Deliberately absent
+            </h4>
+            <div class="absent">
+              <span class="chip">tabs</span>
+              <span class="chip">sync</span>
+              <span class="chip">accounts</span>
+              <span class="chip">plugin runtime</span>
+              <span class="chip">PlantUML</span>
+            </div>
+            <p class="note" style="margin-top:12px;">
+              Bounded on purpose: one document at a time, 20 MB, UTF-8, 5,000 tree entries.
+            </p>
+          </div>
+        </div>
+
+        <div>
+          <div class="three-stage compact" style="height:clamp(250px,34vh,320px);">
+            <canvas data-scene="device"></canvas>
+            <div class="stage-tag"><b>FIG. 14</b> — one app, three targets</div>
+          </div>
+          <p class="note">
+            The same reading experience, packaged for each desktop. Linux is available
+            today; macOS and Windows still need hands-on validation.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 15 · CLOSE ============================ -->
+  <section class="slide" id="s15" aria-hidden="true">
+    <span class="folio" aria-hidden="true">15</span>
+    <div class="inner">
+      <p class="eyebrow">15 // summary</p>
+      <h2>Read. Edit. Save. <em>Nothing else.</em></h2>
+      <p class="body" style="margin-bottom:18px;">
+        Six modules, one system webview, zero cloud.
+      </p>
+
+      <div class="three-stage summary-stage">
+        <canvas data-scene="modules"></canvas>
+        <div class="stage-tag"><b>FIG. 15</b> — six modules, one surface</div>
+        <div class="node-label" data-label="0">document</div>
+        <div class="node-label" data-label="1">markdown</div>
+        <div class="node-label" data-label="2">preview</div>
+        <div class="node-label" data-label="3">editor</div>
+        <div class="node-label" data-label="4">theme</div>
+        <div class="node-label" data-label="5">app</div>
+      </div>
+
+      <p class="closing" data-words style="margin-top:24px;">
+        <b>Your files stay yours.</b> That sentence is the architecture.
+      </p>
+    </div>
+  </section>
+
+</div>
+
+<div class="frame" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+<div class="sysline" aria-hidden="true"><span class="dot-live"></span> <b>folio</b> / v0.1.0</div>
+
+<div class="hud">
+  <a class="brand" href="https://github.com/Ray726-I/folio" target="_blank" rel="noopener noreferrer" aria-label="Folio on GitHub" style="text-decoration:none"><b>folio</b> / GitHub</a>
+  <div class="dots" id="dots"></div>
+  <div class="counter" id="counter"><b>01</b> / 15</div>
+</div>
+
+<div class="progress"><div class="progress-fill" id="progress"></div></div>
+
+<!-- ============================================================
+     THREE.JS
+     ============================================================ -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+// Canvas text is baked once. Wait for the face before making any textures.
+await document.fonts.ready;
+
+const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const v = (x, y, z) => new THREE.Vector3(x, y, z);
+
+const GREEN = 0x82fb9c;
+const CYAN  = 0x7cf8f7;
+const BLUE  = 0x829dd4;
+const MAG   = 0x86a7df;
+const AMBER = 0xffb86b;
+
+/* ---------------- renderer base ---------------- */
+function base(canvas, opts = {}){
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(opts.fov || 40, 1, 0.1, 100);
+  camera.position.set(0, opts.y || 0, opts.z || 8);
+  camera.userData.baseZ = opts.z || 8;
+  camera.lookAt(0, opts.y ? 0 : 0, 0);
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  const root = new THREE.Group();
+  scene.add(root);
+  return { scene, camera, renderer, root };
+}
+
+/* ---------------- canvas helpers ---------------- */
+function makeTex(w, h, draw){
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  draw(g, w, h);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  tex.minFilter = THREE.LinearFilter;
+  return tex;
+}
+
+function label(g, str, x, y, size, color, weight){
+  g.fillStyle = color;
+  g.font = (weight || '400') + ' ' + size + 'px "JetBrains Mono", ui-monospace, monospace';
+  g.textBaseline = 'alphabetic';
+  g.fillText(str, x, y);
+}
+
+function chrome(g, w, h, title, accent){
+  g.fillStyle = '#070a10';
+  g.fillRect(0, 0, w, h);
+  g.fillStyle = '#0b1119';
+  g.fillRect(0, 0, w, 58);
+  g.strokeStyle = 'rgba(130,251,156,.16)';
+  g.lineWidth = 2;
+  g.strokeRect(1, 1, w - 2, h - 2);
+  label(g, title, 24, 38, 24, accent || '#82fb9c', '600');
+  g.fillStyle = 'rgba(130,251,156,.12)';
+  g.fillRect(0, 58, w, 1);
+}
+
+function wrapText(g, str, x, y, maxW, lh, size, color){
+  g.font = '400 ' + size + 'px "JetBrains Mono", ui-monospace, monospace';
+  g.fillStyle = color;
+  const words = str.split(' ');
+  let line = '', yy = y;
+  words.forEach(word => {
+    const test = line ? line + ' ' + word : word;
+    if (g.measureText(test).width > maxW){
+      g.fillText(line, x, yy);
+      line = word;
+      yy += lh;
+    } else line = test;
+  });
+  if (line) g.fillText(line, x, yy);
+  return yy;
+}
+
+/* one flat surface: texture + thin edge */
+function card(tex, w, h, accent, opacity){
+  const group = new THREE.Group();
+  const geo = new THREE.PlaneGeometry(w, h);
+  const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+    map: tex, transparent: true, opacity: opacity == null ? 1 : opacity, side: THREE.DoubleSide
+  }));
+  const edge = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geo),
+    new THREE.LineBasicMaterial({ color: accent, transparent: true, opacity: .45 })
+  );
+  group.add(mesh);
+  group.add(edge);
+  group.userData = { mesh, edge };
+  return group;
+}
+
+function ghost(w, h, color, opacity){
+  const geo = new THREE.PlaneGeometry(w, h);
+  return new THREE.LineSegments(
+    new THREE.EdgesGeometry(geo),
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity })
+  );
+}
+
+function dust(root, count, spread, colorA, colorB){
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  const a = new THREE.Color(colorA), b = new THREE.Color(colorB), tmp = new THREE.Color();
+  for (let i = 0; i < count; i++){
+    positions[i * 3]     = (Math.random() - .5) * spread;
+    positions[i * 3 + 1] = (Math.random() - .5) * spread * .75;
+    positions[i * 3 + 2] = (Math.random() - .5) * spread * .6;
+    tmp.copy(a).lerp(b, Math.random());
+    colors[i * 3] = tmp.r; colors[i * 3 + 1] = tmp.g; colors[i * 3 + 2] = tmp.b;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  const mat = new THREE.PointsMaterial({
+    size: .035, transparent: true, opacity: .5, vertexColors: true,
+    depthWrite: false, blending: THREE.AdditiveBlending
+  });
+  const pts = new THREE.Points(geo, mat);
+  root.add(pts);
+  return pts;
+}
+
+function boom(w, h, color, opacity){
+  return new THREE.Mesh(
+    new THREE.PlaneGeometry(w, h),
+    new THREE.MeshBasicMaterial({ color: 0x0a1119, transparent: true, opacity: opacity == null ? .95 : opacity, side: THREE.DoubleSide })
+  );
+}
+
+function glyphTex(text, color){
+  return makeTex(128, 128, (g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    g.fillStyle = color;
+    g.font = '700 66px "JetBrains Mono", monospace';
+    const measured = g.measureText(text).width;
+    if (measured > w - 16) g.font = `700 ${Math.floor(66 * (w - 16) / measured)}px "JetBrains Mono", monospace`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(text, w / 2, h / 2 + 4);
+  });
+}
+
+/* ---------------- document texture ---------------- */
+function docTex(){
+  return makeTex(512, 680, (g, w, h) => {
+    g.fillStyle = '#090d14';
+    g.fillRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(130,251,156,.22)';
+    g.lineWidth = 2;
+    g.strokeRect(1, 1, w - 2, h - 2);
+
+    label(g, 'Field notes', 40, 84, 28, '#ddf7ff', '700');
+    label(g, 'notes.md · 366 words · LF', 40, 116, 16, '#6a6e95');
+    g.fillStyle = 'rgba(130,251,156,.5)';
+    g.fillRect(40, 134, 64, 2);
+
+    wrapText(g,
+      'The quiet part is the point. Everything around it stays rendered, including this paragraph and the block below.',
+      40, 176, 430, 28, 18, '#8fa0bf');
+
+    g.fillStyle = 'rgba(130,251,156,.10)';
+    g.fillRect(30, 292, w - 60, 44);
+    g.fillStyle = 'rgba(130,251,156,.9)';
+    g.fillRect(30, 292, 3, 44);
+    label(g, 'The quiet part is **the point**.', 46, 320, 17, '#82fb9c');
+
+    g.fillStyle = '#05070c';
+    g.fillRect(40, 368, w - 80, 142);
+    g.strokeStyle = 'rgba(45,52,80,.9)';
+    g.strokeRect(40, 368, w - 80, 142);
+    label(g, 'fn main() {', 58, 404, 16, '#86a7df');
+    label(g, '    let greeting = "Hello";', 58, 432, 16, '#4fe88f');
+    label(g, '    println!("{greeting}");', 58, 460, 16, '#86a7df');
+    label(g, '}', 58, 488, 16, '#86a7df');
+
+    [['Tables, tasks, footnotes', true], ['Local math and diagrams', true], ['Your next idea', false]]
+      .forEach(([txt, on], i) => {
+        const y = 556 + i * 34;
+        g.strokeStyle = on ? '#82fb9c' : '#2d3450';
+        g.lineWidth = 1.5;
+        g.strokeRect(40, y - 13, 14, 14);
+        if (on){ label(g, '✓', 43, y, 12, '#82fb9c'); }
+        label(g, txt, 68, y, 16, on ? '#8fa0bf' : '#5b6480');
+      });
+  });
+}
+
+/* ---------------- preview textures ---------------- */
+function previewCode(){
+  return makeTex(512, 640, (g, w, h) => {
+    chrome(g, w, h, '```rust · preview');
+    label(g, 'Fenced code', 40, 118, 33, '#ddf7ff', '700');
+    g.fillStyle = '#05070c';
+    g.fillRect(32, 146, w - 64, 340);
+    g.strokeStyle = 'rgba(45,52,80,.9)';
+    g.strokeRect(32, 146, w - 64, 340);
+    const lines = [
+      ['fn main() {', '#86a7df'],
+      ['    let greeting =', '#86a7df'],
+      ['        "Hello from Folio";', '#4fe88f'],
+      ['', ''],
+      ['    println!('  , '#86a7df'],
+      ['        "{greeting}"', '#4fe88f'],
+      ['    );', '#86a7df'],
+      ['}', '#86a7df']
+    ];
+    lines.forEach(([txt, color], i) => {
+      label(g, txt, 54, 200 + i * 45, 26, color || '#ddf7ff');
+    });
+    label(g, 'syntect · no remote assets', 40, 575, 19, '#6a6e95');
+  });
+}
+
+function previewMath(){
+  return makeTex(512, 640, (g, w, h) => {
+    chrome(g, w, h, 'math · katex', '#7cf8f7');
+    label(g, 'Display math', 40, 118, 33, '#ddf7ff', '700');
+    g.fillStyle = '#05070c';
+    g.fillRect(32, 146, w - 64, 260);
+    g.strokeStyle = 'rgba(45,52,80,.9)';
+    g.strokeRect(32, 146, w - 64, 260);
+
+    g.fillStyle = '#ddf7ff';
+    g.font = 'italic 62px Georgia, "Times New Roman", serif';
+    g.textAlign = 'center';
+    g.fillText('∫₀¹ x² dx = 1/3', w / 2, 270);
+    g.font = 'italic 34px Georgia, "Times New Roman", serif';
+    g.fillStyle = '#8fa0bf';
+    g.fillText('e^{iπ} + 1 = 0', w / 2, 340);
+    g.textAlign = 'left';
+
+    label(g, 'Inline  $a^2 + b^2 = c^2$', 40, 470, 23, '#8fa0bf');
+    label(g, 'throwOnError: false', 40, 512, 20, '#6a6e95');
+    label(g, 'vendored · lazy', 40, 546, 20, '#6a6e95');
+  });
+}
+
+function previewTable(){
+  return makeTex(512, 640, (g, w, h) => {
+    chrome(g, w, h, 'GFM · table', '#7cf8f7');
+    label(g, 'Tables', 40, 118, 33, '#ddf7ff', '700');
+
+    const x = 32, y = 150, cw = [150, 160, 138], rh = 56;
+    g.fillStyle = 'rgba(130,251,156,.12)';
+    g.fillRect(x, y, 448, rh);
+    ['input', 'output', 'layer'].forEach((t, i) => {
+      label(g, t, x + 14 + cw.slice(0, i).reduce((a, b) => a + b, 0), y + 38, 24, '#82fb9c', '600');
+    });
+    const rows = [
+      ['**bold**', 'bold', 'inline'],
+      ['| a | b |', 'table', 'GFM'],
+      ['- [x]', 'task', 'writes'],
+      ['[[link]]', 'wikilink', 'local']
+    ];
+    rows.forEach((row, ri) => {
+      const ry = y + rh * (ri + 1);
+      g.strokeStyle = 'rgba(45,52,80,.9)';
+      g.lineWidth = 1;
+      g.strokeRect(x, ry, 448, rh);
+      row.forEach((cell, ci) => {
+        label(g, cell, x + 14 + cw.slice(0, ci).reduce((a, b) => a + b, 0), ry + 38, 23, ci === 1 ? '#ddf7ff' : '#8fa0bf', ci === 1 ? '600' : '400');
+      });
+    });
+    label(g, 'alignment · header · inline code', 40, 578, 19, '#6a6e95');
+  });
+}
+
+function previewDiagram(){
+  return makeTex(512, 640, (g, w, h) => {
+    chrome(g, w, h, '```mermaid · strict');
+    label(g, 'Diagram', 40, 118, 33, '#ddf7ff', '700');
+
+    const node = (x, y, ww, hh, txt, color) => {
+      g.fillStyle = '#0c141c';
+      g.fillRect(x, y, ww, hh);
+      g.strokeStyle = color;
+      g.lineWidth = 2;
+      g.strokeRect(x, y, ww, hh);
+      g.fillStyle = '#ddf7ff';
+      g.font = '400 23px "JetBrains Mono", monospace';
+      g.textAlign = 'center';
+      g.fillText(txt, x + ww / 2, y + hh / 2 + 6);
+      g.textAlign = 'left';
+    };
+    node(150, 160, 210, 54, 'source.md', '#82fb9c');
+    node(150, 268, 210, 54, 'comrak', '#82fb9c');
+    node(54, 380, 170, 54, 'sanitized html', '#7cf8f7');
+    node(288, 380, 170, 54, 'preview', '#7cf8f7');
+
+    const arrow = (x1, y1, x2, y2) => {
+      g.strokeStyle = '#4fe88f';
+      g.lineWidth = 2;
+      g.beginPath();
+      g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke();
+      const a = Math.atan2(y2 - y1, x2 - x1);
+      g.beginPath();
+      g.moveTo(x2, y2);
+      g.lineTo(x2 - 9 * Math.cos(a - .4), y2 - 9 * Math.sin(a - .4));
+      g.lineTo(x2 - 9 * Math.cos(a + .4), y2 - 9 * Math.sin(a + .4));
+      g.closePath();
+      g.fillStyle = '#4fe88f';
+      g.fill();
+    };
+    arrow(255, 214, 255, 268);
+    arrow(230, 322, 166, 380);
+    arrow(280, 322, 344, 380);
+
+    label(g, '11 types · invalid source shown', 40, 578, 19, '#6a6e95');
+  });
+}
+
+function previewNote(){
+  return makeTex(512, 640, (g, w, h) => {
+    chrome(g, w, h, 'notes · callouts');
+    label(g, 'Notes and tasks', 40, 118, 33, '#ddf7ff', '700');
+
+    g.fillStyle = 'rgba(130,251,156,.07)';
+    g.fillRect(32, 146, 448, 130);
+    g.fillStyle = '#82fb9c';
+    g.fillRect(32, 146, 3, 130);
+    label(g, '▸ NOTE', 54, 184, 19, '#82fb9c', '600');
+    wrapText(g, 'Remote images are blocked until you allow them. The layout keeps its shape.', 54, 214, 400, 27, 20, '#8fa0bf');
+
+    [['Tables, tasks and footnotes', true], ['Local math and diagrams', true], ['Your next idea', false]]
+      .forEach(([txt, on], i) => {
+        const y = 340 + i * 46;
+        g.strokeStyle = on ? '#82fb9c' : '#2d3450';
+        g.lineWidth = 2;
+        g.strokeRect(36, y - 16, 18, 18);
+        if (on){ label(g, '✓', 40, y, 15, '#82fb9c'); }
+        label(g, txt, 70, y, 24, on ? '#ddf7ff' : '#6a6e95');
+      });
+
+    label(g, '1  footnotes collect at the end', 40, 530, 19, '#6a6e95');
+    label(g, '2  wikilinks stay inside the folder', 40, 560, 19, '#6a6e95');
+  });
+}
+
+/* ============================================================
+   HERO — one sheet, clearly a page
+   ============================================================ */
+function buildStack(canvas){
+  const { scene, camera, renderer, root } = base(canvas, { fov: 40, z: 8.5 });
+
+  dust(root, 170, 12, GREEN, CYAN);
+
+  const sheet = new THREE.Group();
+  root.add(sheet);
+
+  const w = 3.0, h = 4.0;
+
+  const paper = new THREE.Mesh(
+    new THREE.PlaneGeometry(w, h),
+    new THREE.MeshBasicMaterial({ color: 0x0a1119, transparent: true, opacity: .92, side: THREE.DoubleSide })
+  );
+  sheet.add(paper);
+
+  sheet.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.PlaneGeometry(w, h)),
+    new THREE.LineBasicMaterial({ color: GREEN, transparent: true, opacity: .95 })
+  ));
+
+  // ruled text
+  const pts = [];
+  for (let i = 0; i < 13; i++){
+    const y = h / 2 - .55 - i * .27;
+    const lw = i % 5 === 4 ? w * .34 : w * (.60 + (i % 3) * .09);
+    pts.push(v(-w / 2 + .34, y, .01), v(-w / 2 + .34 + lw, y, .01));
+  }
+  sheet.add(new THREE.LineSegments(
+    new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({ color: 0x4a8a86, transparent: true, opacity: .55 })
+  ));
+
+  // corner ticks
+  const ticks = [];
+  [[-1, 1], [1, 1], [-1, -1], [1, -1]].forEach(([sx, sy]) => {
+    const x = sx * (w / 2 - .2), y = sy * (h / 2 - .2);
+    ticks.push(v(x, y, .02), v(x - sx * .24, y, .02));
+    ticks.push(v(x, y, .02), v(x, y - sy * .24, .02));
+  });
+  sheet.add(new THREE.LineSegments(
+    new THREE.BufferGeometry().setFromPoints(ticks),
+    new THREE.LineBasicMaterial({ color: CYAN, transparent: true, opacity: .65 })
+  ));
+
+  // caret on the first line
+  const caret = new THREE.Mesh(
+    new THREE.PlaneGeometry(.05, .28),
+    new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: .95, blending: THREE.AdditiveBlending })
+  );
+  caret.position.set(-w / 2 + .42, h / 2 - 1.08, .03);
+  sheet.add(caret);
+
+  // orbit ellipses
+  const ringA = new THREE.Mesh(
+    new THREE.TorusGeometry(2.7, .005, 5, 140),
+    new THREE.MeshBasicMaterial({ color: CYAN, transparent: true, opacity: .28 })
+  );
+  ringA.rotation.x = 1.32;
+  ringA.rotation.z = .12;
+  root.add(ringA);
+
+  const ringB = new THREE.Mesh(
+    new THREE.TorusGeometry(2.15, .004, 5, 140),
+    new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: .22 })
+  );
+  ringB.rotation.x = 1.1;
+  ringB.rotation.y = .5;
+  root.add(ringB);
+
+  function update(t){
+    sheet.rotation.y = .28 + Math.sin(t * .22) * .08;
+    sheet.rotation.x = -.02 + Math.sin(t * .18) * .02;
+    sheet.position.y = Math.sin(t * .8) * .05;
+    caret.material.opacity = Math.sin(t * 4) > 0 ? .95 : .06;
+
+    ringA.rotation.z = .12 + t * .06;
+    ringB.rotation.y = .5 + t * .04;
+
+    camera.position.x = Math.sin(t * .15) * .35;
+    camera.lookAt(0, 0, 0);
+  }
+
+  return { scene, camera, renderer, update };
+}
+
+/* ============================================================
+   BALANCE — a platform's weight vs one file
+   ============================================================ */
+function buildBalance(canvas){
+  const { scene, camera, renderer, root } = base(canvas, { fov: 40, y: .1, z: 8.0 });
+
+  const basePlate = new THREE.Mesh(
+    new THREE.BoxGeometry(1.7, .08, .9),
+    new THREE.MeshBasicMaterial({ color: 0x121b28 })
+  );
+  basePlate.position.y = -2.0;
+  root.add(basePlate);
+
+  const post = new THREE.Mesh(
+    new THREE.CylinderGeometry(.05, .07, 2.8, 14),
+    new THREE.MeshBasicMaterial({ color: 0x3d5570 })
+  );
+  post.position.y = -.65;
+  root.add(post);
+
+  const pivot = new THREE.Group();
+  pivot.position.y = .7;
+  root.add(pivot);
+
+  const beam = new THREE.Mesh(
+    new THREE.BoxGeometry(4.3, .08, .16),
+    new THREE.MeshBasicMaterial({ color: 0x33445f })
+  );
+  pivot.add(beam);
+  const beamEdge = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(4.3, .08, .16)),
+    new THREE.LineBasicMaterial({ color: 0x6b8f9c })
+  );
+  pivot.add(beamEdge);
+  pivot.add(new THREE.Mesh(
+    new THREE.SphereGeometry(.1, 16, 16),
+    new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: .9, blending: THREE.AdditiveBlending })
+  ));
+
+  const sides = [];
+  [{ x: -1.6, kind: 'heavy' }, { x: 1.6, kind: 'light' }].forEach(spec => {
+    const side = new THREE.Group();
+    side.position.x = spec.x;
+    pivot.add(side);
+
+    side.add(new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([v(0, 0, 0), v(0, -.55, 0)]),
+      new THREE.LineBasicMaterial({ color: 0x3d5570 })
+    ));
+
+    const pan = new THREE.Mesh(
+      new THREE.CylinderGeometry(.52, .52, .04, 26),
+      new THREE.MeshBasicMaterial({ color: 0x1a2536 })
+    );
+    pan.position.y = -.6;
+    side.add(pan);
+    side.add(new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.CylinderGeometry(.52, .52, .04, 26)),
+      new THREE.LineBasicMaterial({ color: 0x4a6a78, transparent: true, opacity: .7 })
+    ).translateY(-.6));
+
+    if (spec.kind === 'heavy'){
+      const cube = new THREE.Mesh(
+        new THREE.BoxGeometry(1.1, 1.1, 1.1),
+        new THREE.MeshBasicMaterial({ color: 0x18233a })
+      );
+      cube.position.y = -.02;
+      side.add(cube);
+      side.add(new THREE.LineSegments(
+        new THREE.EdgesGeometry(new THREE.BoxGeometry(1.1, 1.1, 1.1)),
+        new THREE.LineBasicMaterial({ color: 0x7d94ad })
+      ).translateY(-.02));
+    } else {
+      const sheet = card(docTex(), .82, 1.08, GREEN, 1);
+      sheet.position.y = .06;
+      side.add(sheet);
+    }
+
+    const anchor = new THREE.Object3D();
+    anchor.position.y = -1.15;
+    side.add(anchor);
+    sides.push({ side, anchor });
+  });
+
+  function update(t){
+    const tilt = Math.sin(t * .7) * .11;
+    pivot.rotation.z = tilt;
+    sides.forEach(s => { s.side.rotation.z = -tilt; });
+
+    camera.position.x = Math.sin(t * .18) * .25;
+    camera.lookAt(0, -.4, 0);
+  }
+
+  function positionLabels(){
+    const host = canvas.parentElement;
+    if (!host) return;
+    const labels = host.querySelectorAll('.node-label');
+    const cw = canvas.clientWidth, ch = canvas.clientHeight;
+    if (!cw || !ch) return;
+    root.updateMatrixWorld();
+    sides.forEach((s, i) => {
+      if (!labels[i]) return;
+      const p = new THREE.Vector3().setFromMatrixPosition(s.anchor.matrixWorld).project(camera);
+      labels[i].style.left = Math.max(56, Math.min(cw - 56, (p.x * .5 + .5) * cw)) + 'px';
+      labels[i].style.top = Math.max(16, Math.min(ch - 16, (-p.y * .5 + .5) * ch)) + 'px';
+      labels[i].classList.add('show');
+    });
+  }
+
+  return { scene, camera, renderer, update, positionLabels };
+}
+
+/* ============================================================
+   FILTER — requests fall on a plate with three slots
+   ============================================================ */
+function buildFilter(canvas){
+  const { scene, camera, renderer, root } = base(canvas, { fov: 40, y: .2, z: 7.0 });
+
+  const plate = new THREE.Mesh(
+    new THREE.BoxGeometry(4.4, .14, 2.4),
+    new THREE.MeshBasicMaterial({ color: 0x0e1520 })
+  );
+  plate.position.y = .25;
+  root.add(plate);
+  root.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(4.4, .14, 2.4)),
+    new THREE.LineBasicMaterial({ color: 0x4a6a78, transparent: true, opacity: .9 })
+  ).translateY(.25));
+
+  const slots = [-1.15, 0, 1.15];
+  slots.forEach(x => {
+    const hole = new THREE.Mesh(
+      new THREE.PlaneGeometry(.42, .9),
+      new THREE.MeshBasicMaterial({ color: 0x04060a, side: THREE.DoubleSide })
+    );
+    hole.rotation.x = -Math.PI / 2;
+    hole.position.set(x, .335, 0);
+    root.add(hole);
+    const outline = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.PlaneGeometry(.42, .9)),
+      new THREE.LineBasicMaterial({ color: GREEN, transparent: true, opacity: .7 })
+    );
+    outline.rotation.x = -Math.PI / 2;
+    outline.position.set(x, .34, 0);
+    root.add(outline);
+  });
+
+  [[-1.95, -1.05], [1.95, -1.05], [-1.95, 1.05], [1.95, 1.05]].forEach(([x, z]) => {
+    const leg = new THREE.Mesh(
+      new THREE.BoxGeometry(.08, 2.1, .08),
+      new THREE.MeshBasicMaterial({ color: 0x2c3a52 })
+    );
+    leg.position.set(x, -.8, z);
+    root.add(leg);
+  });
+
+  const drops = [];
+  for (let i = 0; i < 15; i++){
+    const accepted = i < 3;
+    const size = accepted ? .3 : .42 + Math.random() * .16;
+    const m = new THREE.Mesh(
+      new THREE.BoxGeometry(size, size, size),
+      new THREE.MeshBasicMaterial({
+        color: accepted ? GREEN : 0x5b7288,
+        transparent: true,
+        opacity: accepted ? .7 : .9
+      })
+    );
+    root.add(m);
+    drops.push({
+      m, accepted,
+      x: accepted ? slots[i] : (Math.random() - .5) * 3.6,
+      z: accepted ? 0 : (Math.random() - .5) * 1.9,
+      t: Math.random(),
+      speed: .16 + Math.random() * .1
+    });
+  }
+
+  const tray = new THREE.Mesh(
+    new THREE.BoxGeometry(2.6, .08, 1.5),
+    new THREE.MeshBasicMaterial({ color: 0x0c131c })
+  );
+  tray.position.y = -1.75;
+  root.add(tray);
+  root.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(2.6, .08, 1.5)),
+    new THREE.LineBasicMaterial({ color: 0x3d6b74, transparent: true, opacity: .9 })
+  ).translateY(-1.75));
+
+  slots.forEach(x => {
+    const pad = new THREE.Mesh(
+      new THREE.PlaneGeometry(.42, .42),
+      new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: .08, blending: THREE.AdditiveBlending, side: THREE.DoubleSide })
+    );
+    pad.rotation.x = -Math.PI / 2;
+    pad.position.set(x, -1.68, 0);
+    root.add(pad);
+  });
+
+  let elapsed = 0;
+  function update(t){
+    const dt = Math.min(t - elapsed, .1);
+    elapsed = t;
+
+    root.rotation.y = Math.sin(t * .2) * .22;
+    root.rotation.x = .14;
+
+    drops.forEach(d => {
+      d.t += dt * d.speed;
+      if (d.t > 1) d.t -= 1;
+      const y = 2.9 - d.t * 4.6;
+      if (d.accepted){
+        d.m.position.set(d.x, Math.max(-1.6, y), d.z);
+        d.m.material.opacity = .75;
+      } else if (y < .5 && y > -1.2){
+        d.m.position.set(d.x, Math.max(.5, y), d.z);
+        d.m.material.opacity = .9 * Math.max(0, 1 - (d.t - .55) / .45);
+      } else if (y >= .5){
+        d.m.position.set(d.x, y, d.z);
+        d.m.material.opacity = .9;
+      } else {
+        d.m.material.opacity = 0;
+      }
+    });
+
+    camera.position.x = Math.sin(t * .14) * .3;
+    camera.lookAt(0, -.2, 0);
+  }
+
+  return { scene, camera, renderer, update };
+}
+
+/* ============================================================
+   LAYERS — the only intentionally exploded view
+   ============================================================ */
+function buildLayers(canvas){
+  const { scene, camera, renderer, root } = base(canvas, { fov: 40, y: .9, z: 8.5 });
+
+  const specs = [
+    { y: -1.5, color: GREEN, label: 'Rust core' },
+    { y: 0, color: CYAN, label: 'IPC' },
+    { y: 1.5, color: BLUE, label: 'Webview' }
+  ];
+  const slabs = [];
+
+  specs.forEach((s, i) => {
+    const geo = new THREE.BoxGeometry(6.0, .12, 3.2);
+    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: s.color, transparent: true, opacity: .06 }));
+    mesh.position.y = s.y;
+    root.add(mesh);
+    const edge = new THREE.LineSegments(
+      new THREE.EdgesGeometry(geo),
+      new THREE.LineBasicMaterial({ color: s.color, transparent: true, opacity: .85 })
+    );
+    edge.position.y = s.y;
+    root.add(edge);
+
+    const grid = new THREE.GridHelper(5.1, 8, s.color, s.color);
+    grid.material.transparent = true;
+    grid.material.opacity = .14;
+    grid.position.y = s.y + .07;
+    root.add(grid);
+
+    const anchor = new THREE.Object3D();
+    anchor.position.set(2.8, s.y + .42, .85);
+    root.add(anchor);
+
+    slabs.push({ anchor, y: s.y, label: s.label });
+  });
+
+  [{ x: -.55, dir: -1, color: CYAN }, { x: .55, dir: 1, color: GREEN }].forEach(a => {
+    root.add(new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([v(a.x, -1.3 * a.dir, 0), v(a.x, 1.3 * a.dir, 0)]),
+      new THREE.LineBasicMaterial({ color: a.color, transparent: true, opacity: .3 })
+    ));
+    const tip = new THREE.Mesh(
+      new THREE.ConeGeometry(.06, .18, 8),
+      new THREE.MeshBasicMaterial({ color: a.color, transparent: true, opacity: .7 })
+    );
+    tip.position.set(a.x, 1.3 * a.dir, 0);
+    if (a.dir < 0) tip.rotation.z = Math.PI;
+    root.add(tip);
+  });
+
+  const packets = [];
+  for (let i = 0; i < 5; i++){
+    const m = new THREE.Mesh(
+      new THREE.SphereGeometry(.045, 8, 8),
+      new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: .85, blending: THREE.AdditiveBlending })
+    );
+    root.add(m);
+    packets.push({ m, t: Math.random(), x: (Math.random() - .5) * 4.8, z: (Math.random() - .5) * 2.4 });
+  }
+
+  function update(t){
+    root.rotation.y = Math.sin(t * .2) * .26;
+    root.rotation.x = .14 + Math.sin(t * .16) * .02;
+
+    packets.forEach((p, i) => {
+      p.t = (t * .3 + i / packets.length) % 1;
+      p.m.position.set(p.x, -1.5 + p.t * 3.0, p.z);
+      p.m.material.opacity = .3 + Math.sin(p.t * Math.PI) * .6;
+    });
+
+    camera.position.x = Math.sin(t * .12) * .4;
+    camera.lookAt(0, 0, 0);
+  }
+
+  function positionLabels(){
+    const host = canvas.parentElement;
+    if (!host) return;
+    const labels = host.querySelectorAll('.node-label');
+    const cw = canvas.clientWidth, ch = canvas.clientHeight;
+    if (!cw || !ch) return;
+    root.updateMatrixWorld();
+    slabs.forEach((s, i) => {
+      if (!labels[i]) return;
+      const p = new THREE.Vector3().setFromMatrixPosition(s.anchor.matrixWorld).project(camera);
+      labels[i].style.left = Math.max(74, Math.min(cw - 74, (p.x * .5 + .5) * cw)) + 'px';
+      labels[i].style.top = Math.max(22, Math.min(ch - 22, (-p.y * .5 + .5) * ch)) + 'px';
+      labels[i].classList.add('show');
+    });
+  }
+
+  return { scene, camera, renderer, update, positionLabels };
+}
+
+/* ============================================================
+   PAGES — one page, built from blocks
+   ============================================================ */
+function blockTex(){
+  return makeTex(380, 500, (g, w, h) => {
+    g.fillStyle = '#0a0f16'; g.fillRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(130,251,156,.35)'; g.lineWidth = 2; g.strokeRect(1, 1, w - 2, h - 2);
+
+    // heading
+    g.fillStyle = '#82fb9c';
+    g.fillRect(34, 44, 150, 16);
+    g.fillStyle = 'rgba(130,251,156,.35)';
+    g.fillRect(34, 70, 66, 4);
+
+    // paragraph
+    g.fillStyle = 'rgba(143,160,191,.55)';
+    [0, 1, 2, 3].forEach(i => {
+      g.fillRect(34, 100 + i * 22, 250 - i * 24, 8);
+    });
+
+    // code block
+    g.fillStyle = '#05070c';
+    g.fillRect(34, 200, w - 68, 96);
+    g.strokeStyle = 'rgba(130,157,212,.55)';
+    g.strokeRect(34, 200, w - 68, 96);
+    g.fillStyle = '#829dd4';
+    g.font = '700 34px "JetBrains Mono", monospace';
+    g.fillText('</>', 52, 260);
+    g.fillStyle = 'rgba(130,251,156,.5)';
+    g.fillRect(120, 236, 120, 7);
+    g.fillStyle = 'rgba(143,160,191,.45)';
+    g.fillRect(120, 254, 170, 7);
+    g.fillRect(120, 272, 94, 7);
+
+    // table
+    g.strokeStyle = 'rgba(130,251,156,.35)';
+    g.lineWidth = 1;
+    g.fillStyle = 'rgba(130,251,156,.10)';
+    g.fillRect(34, 330, w - 68, 26);
+    for (let r = 0; r < 3; r++){
+      for (let c = 0; c < 3; c++){
+        g.strokeRect(34 + c * 104, 330 + r * 26, 104, 26);
+      }
+    }
+    g.fillStyle = 'rgba(143,160,191,.5)';
+    for (let r = 1; r < 3; r++){
+      for (let c = 0; c < 3; c++){
+        g.fillRect(44 + c * 104, 330 + r * 26 + 10, 56, 5);
+      }
+    }
+
+    // tasks
+    g.strokeStyle = '#82fb9c';
+    [[0, true], [1, true], [2, false]].forEach(([i, on]) => {
+      const y = 430 + i * 24;
+      g.strokeRect(34, y, 13, 13);
+      if (on){
+        g.fillStyle = '#82fb9c';
+        g.fillRect(37, y + 3, 7, 7);
+      }
+      g.fillStyle = 'rgba(143,160,191,.5)';
+      g.fillRect(58, y + 3, 120 - i * 22, 6);
+    });
+  });
+}
+
+function buildPages(canvas){
+  const { scene, camera, renderer, root } = base(canvas, { fov: 40, z: 5.9 });
+
+  const back = ghost(2.5, 3.1, 0x2f5060, .3);
+  back.position.set(.3, 0, -.45);
+  back.rotation.z = .05;
+  root.add(back);
+
+  const page = card(blockTex(), 2.35, 3.0, GREEN, 1);
+  root.add(page);
+
+  const scan = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.3, .02),
+    new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: .5, blending: THREE.AdditiveBlending })
+  );
+  scan.position.z = .02;
+  root.add(scan);
+
+  const tokens = [
+    { text: '#',  color: '#82fb9c', x: -.55, y: 1.02 },
+    { text: 'Aa', color: '#8fa0bf', x: -.62, y: .58 },
+    { text: '</>', color: '#829dd4', x: .05, y: -.18 },
+    { text: '▦',  color: '#7cf8f7', x: .05, y: -.98 }
+  ].map(tk => {
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(.36, .36),
+      new THREE.MeshBasicMaterial({ map: glyphTex(tk.text, tk.color), transparent: true, depthWrite: false })
+    );
+    root.add(mesh);
+    return { ...tk, mesh };
+  });
+
+  function update(t){
+    root.rotation.y = -.2;
+    root.rotation.x = .02;
+
+    scan.position.y = -1.4 + ((t * .2) % 1) * 2.8;
+    scan.material.opacity = .22 + Math.sin(t * 2.2) * .14;
+
+    tokens.forEach((tk, i) => {
+      // Give each token its own turn; the old phase offsets made all four
+      // overlap the document at once, with some starting outside the frame.
+      const step = (t % 8) / 2;
+      const p = step - i;
+      tk.mesh.visible = p >= 0 && p < 1;
+      const phase = Math.max(0, Math.min(1, p));
+      const ease = phase * phase * (3 - 2 * phase);
+      tk.mesh.position.set(tk.x, tk.y + (1 - ease) * .12, .04 + (1 - ease) * .55);
+      tk.mesh.scale.setScalar(1);
+      tk.mesh.material.opacity = phase < .12 ? phase / .12 : phase > .78 ? (1 - phase) / .22 : 1;
+    });
+
+    camera.position.x = Math.sin(t * .12) * .15;
+    camera.lookAt(0, 0, 0);
+  }
+
+  return { scene, camera, renderer, update };
+}
+
+/* ============================================================
+   CAROUSEL — sliding preview frames (FIG 06)
+   ============================================================ */
+function buildCarousel(canvas){
+  const { scene, camera, renderer, root } = base(canvas, { fov: 40, z: 6.6, y: .1 });
+
+  const texes = [previewCode(), previewMath(), previewTable(), previewDiagram(), previewNote()];
+  const accents = [GREEN, CYAN, BLUE, GREEN, AMBER];
+  const spacing = 3.2;
+  const total = texes.length * spacing;
+
+  const cards = texes.map((tex, i) => {
+    const c = card(tex, 2.9, 3.62, accents[i], 1);
+    root.add(c);
+    return c;
+  });
+
+  // a plinth, so the frames sit in a structure rather than in space
+  const plinth = new THREE.Mesh(
+    new THREE.BoxGeometry(8.2, .1, 1.0),
+    new THREE.MeshBasicMaterial({ color: 0x0c131c })
+  );
+  plinth.position.y = -2.0;
+  root.add(plinth);
+  root.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(8.2, .1, 1.0)),
+    new THREE.LineBasicMaterial({ color: 0x2f5060, transparent: true, opacity: .7 })
+  ).translateY(-2.0));
+
+  function update(t){
+    const shift = (t * .55) % total;
+
+    cards.forEach((c, i) => {
+      let x = i * spacing - shift;
+      if (x > total / 2) x -= total;
+      if (x < -total / 2) x += total;
+
+      const k = 1 - Math.min(1, Math.abs(x) / (total * .40));
+      c.position.set(x, .15 + Math.sin(t * .6 + i) * .02, -Math.abs(x) * .22);
+      c.rotation.y = -x * .085;
+      c.userData.mesh.material.opacity = .22 + k * .78;
+      c.userData.edge.material.opacity = .06 + k * .5;
+      c.scale.setScalar(.9 + k * .1);
+    });
+
+    root.rotation.x = .02;
+    camera.position.x = Math.sin(t * .12) * .15;
+    camera.lookAt(0, 0, 0);
+  }
+
+  return { scene, camera, renderer, update };
+}
+
+/* ============================================================
+   SPLIT — source on the left, rendered page on the right
+   ============================================================ */
+function sourceTex(){
+  return makeTex(400, 480, (g, w, h) => {
+    g.fillStyle = '#0a0f16'; g.fillRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(124,248,247,.4)'; g.lineWidth = 2; g.strokeRect(1, 1, w - 2, h - 2);
+    g.fillStyle = '#0b1119'; g.fillRect(0, 0, w, 44);
+    label(g, 'source.md', 18, 29, 18, '#7cf8f7', '600');
+    g.fillStyle = 'rgba(124,248,247,.18)'; g.fillRect(0, 44, w, 1);
+
+    const lines = [
+      ['# Field guide: estuary', '#ddf7ff', 24],
+      ['', '', 18],
+      ['| a | b |', '#8fa0bf', 22],
+      ['| - | - |', '#8fa0bf', 22],
+      ['', '', 18],
+      ['```mermaid', '#7cf8f7', 22],
+      ['graph TD;', '#8fa0bf', 22],
+      ['```', '#7cf8f7', 22],
+      ['', '', 18],
+      ['- [x] local', '#4fe88f', 22]
+    ];
+    lines.forEach(([txt, color, size], i) => {
+      label(g, txt, 20, 92 + i * 34, size, color);
+    });
+  });
+}
+
+function renderTex(){
+  return makeTex(400, 480, (g, w, h) => {
+    g.fillStyle = '#0a0f16'; g.fillRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(130,251,156,.4)'; g.lineWidth = 2; g.strokeRect(1, 1, w - 2, h - 2);
+
+    label(g, 'Field guide: estuary', 24, 58, 24, '#ddf7ff', '700');
+    g.fillStyle = 'rgba(130,251,156,.5)'; g.fillRect(24, 74, 62, 3);
+
+    g.fillStyle = 'rgba(143,160,191,.55)';
+    [0, 1, 2].forEach(i => g.fillRect(24, 100 + i * 22, 320 - i * 34, 8));
+
+    g.fillStyle = 'rgba(130,251,156,.12)';
+    g.fillRect(18, 184, w - 36, 38);
+    g.fillStyle = '#82fb9c';
+    g.fillRect(18, 184, 3, 38);
+    label(g, 'The quiet part is **the point**.', 30, 209, 16, '#82fb9c');
+
+    g.fillStyle = '#05070c'; g.fillRect(24, 240, w - 48, 96);
+    g.strokeStyle = 'rgba(130,157,212,.5)'; g.strokeRect(24, 240, w - 48, 96);
+    label(g, '</>', 42, 302, 32, '#829dd4', '700');
+    g.fillStyle = 'rgba(130,251,156,.45)';
+    g.fillRect(108, 272, 120, 7);
+    g.fillStyle = 'rgba(143,160,191,.4)';
+    g.fillRect(108, 290, 170, 7);
+    g.fillRect(108, 308, 96, 7);
+
+    g.fillStyle = 'rgba(130,251,156,.10)';
+    g.fillRect(24, 356, w - 48, 22);
+    g.strokeStyle = 'rgba(130,251,156,.3)';
+    g.strokeRect(24, 356, w - 48, 66);
+    for (let r = 1; r < 3; r++){
+      g.beginPath(); g.moveTo(24, 356 + r * 22); g.lineTo(w - 24, 356 + r * 22); g.stroke();
+    }
+    g.fillStyle = 'rgba(143,160,191,.4)';
+    [0, 1, 2].forEach(i => g.fillRect(36 + i * 108, 366, 58, 5));
+    [0, 1, 2].forEach(i => g.fillRect(36 + i * 108, 388, 58, 5));
+  });
+}
+
+function buildSplit(canvas){
+  const { scene, camera, renderer, root } = base(canvas, { fov: 40, z: 6.6 });
+
+  const source = card(sourceTex(), 2.5, 3.0, CYAN, 1);
+  source.position.set(-2.35, 0, 0);
+  source.rotation.y = .18;
+  root.add(source);
+
+  const rendered = card(renderTex(), 2.5, 3.0, GREEN, 1);
+  rendered.position.set(2.35, 0, 0);
+  rendered.rotation.y = -.18;
+  root.add(rendered);
+
+  const arrow = new THREE.Group();
+  root.add(arrow);
+  arrow.add(new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([v(-.95, 0, .1), v(.8, 0, .1)]),
+    new THREE.LineBasicMaterial({ color: GREEN })
+  ));
+  const tip = new THREE.Mesh(
+    new THREE.ConeGeometry(.07, .2, 8),
+    new THREE.MeshBasicMaterial({ color: GREEN })
+  );
+  tip.position.set(.86, 0, .1);
+  tip.rotation.z = -Math.PI / 2;
+  arrow.add(tip);
+
+  const tag = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: makeTex(256, 96, (g, w, h) => {
+      g.clearRect(0, 0, w, h);
+      g.fillStyle = '#82fb9c';
+      g.font = '600 30px "JetBrains Mono", monospace';
+      g.textAlign = 'center';
+      g.fillText('RENDER', w / 2, 58);
+    }),
+    transparent: true,
+    depthWrite: false
+  }));
+  tag.scale.set(1.05, .4, 1);
+  tag.position.set(-.05, .62, .1);
+  root.add(tag);
+
+  // tokens carried from source to rendered output
+  const flow = [
+    ['#', '#82fb9c'], ['</>', '#829dd4'], ['▦', '#7cf8f7'], ['$', '#ffb86b'], ['[]', '#8fa0bf']
+  ].map(([txt, color], i) => {
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(.24, .24),
+      new THREE.MeshBasicMaterial({ map: glyphTex(txt, color), transparent: true, depthWrite: false })
+    );
+    root.add(mesh);
+    return { mesh, offset: i / 5 };
+  });
+
+  const scan = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.3, .015),
+    new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: .35, blending: THREE.AdditiveBlending })
+  );
+  scan.position.z = .04;
+  rendered.add(scan);
+
+  function update(t){
+    root.rotation.y = Math.sin(t * .1) * .03;
+
+    flow.forEach(f => {
+      const p = (t * .3 + f.offset) % 1;
+      f.mesh.position.set(-1.05 + p * 2.0, Math.sin(p * Math.PI) * .16, .14);
+      f.mesh.material.opacity = p < .08 ? p / .08 : p > .86 ? Math.max(0, (1 - p) / .14) : .95;
+      f.mesh.scale.setScalar(.75 + Math.sin(p * Math.PI) * .2);
+    });
+
+    scan.position.y = -1.45 + ((t * .55) % 1) * 2.9;
+    scan.material.opacity = .15 + Math.sin(t * 2.4) * .12;
+    tip.material.opacity = .8;
+
+    camera.position.x = Math.sin(t * .1) * .12;
+    camera.lookAt(0, 0, 0);
+  }
+
+  return { scene, camera, renderer, update };
+}
+
+/* ============================================================
+   GATE — a wall with a scanning pass
+   ============================================================ */
+function buildGate(canvas){
+  const { scene, camera, renderer, root } = base(canvas, { fov: 40, z: 6.1 });
+
+  const wallTex = makeTex(512, 512, (g, w, h) => {
+    g.fillStyle = 'rgba(7,10,16,.85)';
+    g.fillRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(124,248,247,.18)';
+    g.lineWidth = 1;
+    for (let x = 0; x <= w; x += 64){
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+    }
+    for (let y = 0; y <= h; y += 64){
+      g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke();
+    }
+    g.fillStyle = 'rgba(130,251,156,.28)';
+    g.font = '600 30px "JetBrains Mono", monospace';
+    g.textAlign = 'center';
+    g.fillText('SANITIZE', w / 2, h / 2);
+  });
+
+  const wall = card(wallTex, 3.9, 3.3, CYAN, .6);
+  wall.position.set(0, .1, 0);
+  root.add(wall);
+
+  [-2.05, 2.05].forEach(x => {
+    const post = new THREE.Mesh(
+      new THREE.BoxGeometry(.14, 3.7, .14),
+      new THREE.MeshBasicMaterial({ color: 0x2c3a52 })
+    );
+    post.position.set(x, .1, 0);
+    root.add(post);
+  });
+  const lintel = new THREE.Mesh(
+    new THREE.BoxGeometry(4.24, .14, .14),
+    new THREE.MeshBasicMaterial({ color: 0x2c3a52 })
+  );
+  lintel.position.set(0, 1.95, 0);
+  root.add(lintel);
+
+  const scanBand = new THREE.Mesh(
+    new THREE.PlaneGeometry(3.9, .28),
+    new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: .05, blending: THREE.AdditiveBlending, side: THREE.DoubleSide })
+  );
+  scanBand.position.z = .025;
+  root.add(scanBand);
+
+  const scan = new THREE.Mesh(
+    new THREE.PlaneGeometry(3.9, .035),
+    new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: .8, blending: THREE.AdditiveBlending })
+  );
+  scan.position.z = .03;
+  root.add(scan);
+
+  const floor = new THREE.GridHelper(9, 18, 0x1d4a42, 0x162b33);
+  floor.material.transparent = true;
+  floor.material.opacity = .28;
+  floor.position.y = -2.05;
+  root.add(floor);
+
+  const packets = [];
+  for (let i = 0; i < 9; i++){
+    const m = new THREE.Mesh(
+      new THREE.BoxGeometry(.18, .18, .18),
+      new THREE.MeshBasicMaterial({ color: i < 3 ? GREEN : 0x7d94ad, transparent: true, opacity: .9 })
+    );
+    root.add(m);
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(.15, .01, 6, 32),
+      new THREE.MeshBasicMaterial({ color: 0xff6b81, transparent: true, opacity: 0, blending: THREE.AdditiveBlending })
+    );
+    root.add(ring);
+    packets.push({ m, ring, t: i / 9, x: ((i % 3) - 1) * .95, y: (1 - Math.floor(i / 3)) * .8, bad: i >= 3 });
+  }
+
+  let elapsed = 0;
+  function update(t){
+    const dt = Math.min(t - elapsed, .1);
+    elapsed = t;
+
+    root.rotation.y = .18;
+    root.rotation.x = .03;
+
+    wall.userData.mesh.material.opacity = .52 + Math.sin(t * .8) * .06;
+    const sy = Math.sin(t * .7) * 1.4;
+    scan.position.y = sy;
+    scanBand.position.y = sy;
+    scan.material.opacity = .45 + Math.sin(t * 3) * .25;
+
+    packets.forEach((p, i) => {
+      p.t += dt * .42;
+      if (p.t > 1) p.t -= 1;
+
+      // Unsafe content hits the membrane; safe content continues behind it.
+      // Previously every packet, including green ones, became a rejection.
+      const arrival = .58;
+      const hit = p.bad && p.t >= arrival;
+      const k = Math.max(0, (p.t - arrival) / (1 - arrival));
+      const approachZ = 2.2 * (1 - p.t / arrival);
+      const z = hit ? .12 + k * .8 : approachZ;
+      const kick = hit ? k * .35 : 0;
+      p.m.position.set(p.x + (i % 2 ? 1 : -1) * kick, p.y - kick * .45, z);
+      p.m.material.color.setHex(hit ? 0xff6b81 : (p.bad ? 0x7d94ad : 0x82fb9c));
+      p.m.material.opacity = hit ? .9 * (1 - k) : p.t > .9 ? .9 * (1 - p.t) / .1 : .9;
+      p.m.rotation.x = t * .5;
+      p.m.rotation.y = t * .3;
+
+      p.ring.position.set(p.x, p.y, .1);
+      p.ring.scale.setScalar(.5 + k * 2.4);
+      p.ring.material.opacity = hit ? .8 * (1 - k) : 0;
+    });
+
+    camera.position.x = Math.sin(t * .14) * .3;
+    camera.lookAt(0, 0, 0);
+  }
+
+  return { scene, camera, renderer, update };
+}
+
+/* ============================================================
+   EDITOR — one line opened, the rest still rendered
+   ============================================================ */
+function editTex(){
+  return makeTex(512, 340, (g, w, h) => {
+    g.fillStyle = '#0a0f16'; g.fillRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(130,251,156,.28)'; g.lineWidth = 2; g.strokeRect(1, 1, w - 2, h - 2);
+
+    g.fillStyle = '#0b1119'; g.fillRect(0, 0, w, 42);
+    label(g, 'notes.md', 18, 27, 17, '#ddf7ff', '600');
+    label(g, 'EDIT', 440, 27, 15, '#82fb9c', '600');
+    g.fillStyle = 'rgba(130,251,156,.15)'; g.fillRect(0, 42, w, 1);
+
+    label(g, 'Harbour notes', 30, 86, 26, '#ddf7ff', '700');
+
+    // rendered line
+    g.font = '400 21px "JetBrains Mono", monospace';
+    g.fillStyle = '#8fa0bf';
+    g.fillText('The tide turns before the wind.', 30, 136);
+
+    // open source line
+    g.fillStyle = 'rgba(130,251,156,.14)';
+    g.fillRect(18, 156, w - 36, 40);
+    g.fillStyle = '#82fb9c';
+    g.fillRect(18, 156, 3, 40);
+    label(g, 'The tide turns before **the wind**.', 38, 183, 21, '#82fb9c');
+
+    g.fillStyle = '#8fa0bf';
+    g.font = '400 21px "JetBrains Mono", monospace';
+    g.fillText('Everything around it stays rendered.', 30, 236);
+
+    g.fillStyle = 'rgba(143,160,191,.45)';
+    g.fillRect(30, 258, 300, 7);
+    g.fillRect(30, 276, 220, 7);
+
+    label(g, 'line 12 · Ctrl+Enter applies', 30, 314, 15, '#5b6480');
+  });
+}
+
+function buildEditor(canvas){
+  const { scene, camera, renderer, root } = base(canvas, { fov: 40, z: 4.5 });
+
+  const frame = ghost(3.5, 2.35, CYAN, .25);
+  frame.position.z = -.06;
+  root.add(frame);
+
+  const page = card(editTex(), 3.35, 2.2, GREEN, 1);
+  root.add(page);
+
+  const caret = new THREE.Mesh(
+    new THREE.PlaneGeometry(.05, .22),
+    new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: .95, blending: THREE.AdditiveBlending })
+  );
+  caret.position.set(-1.45, .16, .02);
+  page.add(caret);
+
+  function update(t){
+    root.rotation.y = Math.sin(t * .18) * .12;
+    root.rotation.x = .02 + Math.sin(t * .14) * .02;
+    caret.material.opacity = Math.sin(t * 4) > 0 ? .95 : .05;
+    camera.position.x = Math.sin(t * .12) * .15;
+    camera.lookAt(0, 0, 0);
+  }
+
+  return { scene, camera, renderer, update };
+}
+
+/* ============================================================
+   THEMES — seven tiles on a shelf
+   ============================================================ */
+function themeTex(bg, fg, accent, name){
+  return makeTex(320, 440, (g, w, h) => {
+    g.fillStyle = bg; g.fillRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(255,255,255,.10)'; g.lineWidth = 2; g.strokeRect(1, 1, w - 2, h - 2);
+    g.fillStyle = fg; g.globalAlpha = .9;
+    g.fillRect(28, 40, 120, 14);
+    g.globalAlpha = .45;
+    for (let i = 0; i < 4; i++) g.fillRect(28, 84 + i * 30, 160 - i * 12, 8);
+    g.globalAlpha = 1;
+    g.fillStyle = accent; g.fillRect(28, 240, 84, 26);
+    g.globalAlpha = .3; g.fillStyle = fg;
+    for (let i = 0; i < 3; i++) g.fillRect(28, 300 + i * 26, 190 - i * 20, 7);
+    g.globalAlpha = 1;
+    g.fillStyle = fg; g.font = '500 20px "JetBrains Mono", monospace';
+    g.fillText(name, 28, h - 26);
+  });
+}
+
+function buildThemes(canvas){
+  const { scene, camera, renderer, root } = base(canvas, { fov: 40, z: 3.9, y: .12 });
+
+  const data = [
+    ['#fafafa', '#2e3436', '#3584e4', 'Light'],
+    ['#303030', '#eeeeec', '#78aeed', 'Dark'],
+    ['#2e3440', '#e5e9f0', '#88c0d0', 'Nord'],
+    ['#1e1e2e', '#cdd6f4', '#cba6f7', 'Mocha'],
+    ['#191724', '#e0def4', '#eb6f92', 'Rosé'],
+    ['#fdf6e3', '#586e75', '#268bd2', 'Solar'],
+    ['#0b0c16', '#ddf7ff', '#82fb9c', 'Omarchy']
+  ];
+
+  const tiles = data.map((d, i) => {
+    const c = card(themeTex(d[0], d[1], d[2], d[3]), .68, .92, i === 6 ? GREEN : 0x2d3450, 1);
+    const row = i < 4 ? 0 : 1;
+    const col = i < 4 ? i - 1.5 : i - 5;
+    c.position.set(col * .78, .5 - row * .98, 0);
+    root.add(c);
+    return c;
+  });
+
+  [0, -0.98].forEach(y => {
+    const shelf = new THREE.Mesh(
+      new THREE.BoxGeometry(3.4, .06, .9),
+      new THREE.MeshBasicMaterial({ color: 0x0c131c })
+    );
+    shelf.position.set(0, y, 0);
+    root.add(shelf);
+    root.add(new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(3.4, .06, .9)),
+      new THREE.LineBasicMaterial({ color: 0x2f5060, transparent: true, opacity: .7 })
+    ).translateY(y));
+  });
+
+  function update(t){
+    root.rotation.y = Math.sin(t * .18) * .12;
+    tiles.forEach((c, i) => {
+      c.position.y = (i < 4 ? .5 : -.48) + Math.sin(t * .8 + i * .5) * .015;
+      if (i === tiles.length - 1){
+        c.userData.edge.material.opacity = .55 + Math.sin(t * 2) * .35;
+        c.userData.mesh.material.opacity = .96;
+      }
+    });
+    camera.position.x = Math.sin(t * .12) * .22;
+    camera.lookAt(0, 0, 0);
+  }
+
+  return { scene, camera, renderer, update };
+}
+
+/* ============================================================
+   SAVE — temp card, arrow, final card
+   ============================================================ */
+function fileTex(name, sub, accent, temp){
+  return makeTex(360, 480, (g, w, h) => {
+    g.fillStyle = '#070a10'; g.fillRect(0, 0, w, h);
+    g.strokeStyle = temp ? 'rgba(124,248,247,.35)' : 'rgba(130,251,156,.45)';
+    g.lineWidth = 3; g.strokeRect(2, 2, w - 4, h - 4);
+    g.fillStyle = temp ? '#7cf8f7' : '#82fb9c';
+    g.fillRect(0, 0, w, 6);
+
+    g.strokeStyle = temp ? 'rgba(124,248,247,.5)' : 'rgba(130,251,156,.5)';
+    g.lineWidth = 2;
+    g.strokeRect(44, 54, 74, 92);
+    g.beginPath(); g.moveTo(118, 54); g.lineTo(118, 92); g.lineTo(88, 92); g.stroke();
+
+    label(g, name, 32, 214, 27, '#ddf7ff', '700');
+    label(g, sub, 32, 244, 18, '#6a6e95');
+
+    g.globalAlpha = .5;
+    for (let i = 0; i < 4; i++){
+      g.fillStyle = temp ? '#3d6b74' : '#3d6b5c';
+      g.fillRect(32, 290 + i * 24, 180 - i * 22, 7);
+    }
+    g.globalAlpha = 1;
+  });
+}
+
+function buildSave(canvas){
+  const { scene, camera, renderer, root } = base(canvas, { fov: 40, z: 5.0, y: .2 });
+
+  const temp = card(fileTex('notes.md.tmp', 'temporary sibling', CYAN, true), 1.5, 2.0, CYAN, .95);
+  temp.position.set(-1.9, .1, 0);
+  temp.rotation.y = .25;
+  root.add(temp);
+
+  const final = card(fileTex('notes.md', 'renamed, complete', GREEN, false), 1.5, 2.0, GREEN, 1);
+  final.position.set(1.9, .1, 0);
+  final.rotation.y = -.25;
+  root.add(final);
+
+  const arc = new THREE.QuadraticBezierCurve3(v(-1.15, .25, .1), v(0, 1.75, .2), v(1.15, .25, .1));
+  root.add(new THREE.Mesh(
+    new THREE.TubeGeometry(arc, 40, .008, 5, false),
+    new THREE.MeshBasicMaterial({ color: 0x3d6b74, transparent: true, opacity: .8 })
+  ));
+
+  const token = new THREE.Mesh(
+    new THREE.BoxGeometry(.18, .18, .18),
+    new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: .95, blending: THREE.AdditiveBlending })
+  );
+  root.add(token);
+
+  function update(t){
+    root.rotation.y = Math.sin(t * .18) * .18;
+    const p = (t * .2) % 1;
+    token.position.copy(arc.getPoint(p));
+    token.rotation.x = t * 2;
+    token.rotation.y = t * 1.3;
+    const hit = p > .92 ? (p - .92) / .08 : 0;
+    final.scale.setScalar(1 + hit * .05);
+    final.userData.edge.material.opacity = .45 + hit * .5;
+    camera.position.x = Math.sin(t * .12) * .22;
+    camera.lookAt(0, 0, 0);
+  }
+
+  return { scene, camera, renderer, update };
+}
+
+/* ============================================================
+   LAZY — three panels, lit in sequence
+   ============================================================ */
+function panelTex(title, accent, lines){
+  return makeTex(400, 500, (g, w, h) => {
+    g.fillStyle = '#070a10'; g.fillRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(130,251,156,.16)'; g.lineWidth = 2; g.strokeRect(1, 1, w - 2, h - 2);
+    g.fillStyle = '#0b1119'; g.fillRect(0, 0, w, 54);
+    label(g, title, 22, 34, 17, accent, '600');
+    g.fillStyle = 'rgba(130,251,156,.12)'; g.fillRect(0, 54, w, 1);
+
+    lines.forEach(([txt, color], i) => label(g, txt, 24, 102 + i * 32, 14, color || '#8fa0bf'));
+  });
+}
+
+function buildLazy(canvas){
+  const { scene, camera, renderer, root } = base(canvas, { fov: 40, z: 4.2 });
+
+  const specs = [
+    { title: 'document.md', accent: '#7cf8f7', lines: [['# Field notes', '#ddf7ff'], ['- local file', '#8fa0bf'], ['- 366 words', '#8fa0bf']] },
+    { title: 'rust parser', accent: '#82fb9c', lines: [['comrak', '#8fa0bf'], ['syntect', '#8fa0bf'], ['ammonia', '#8fa0bf']] },
+    { title: 'preview', accent: '#829dd4', lines: [['html + css', '#8fa0bf'], ['fonts bundled', '#8fa0bf'], ['no network', '#4fe88f']] }
+  ];
+
+  const panels = specs.map((s, i) => {
+    const c = card(panelTex(s.title, s.accent, s.lines), 1.42, 1.76, i === 2 ? GREEN : 0x3d5570, .9);
+    c.position.set((i - 1) * 1.7, .15, 0);
+    c.rotation.y = (1 - i) * .18;
+    root.add(c);
+    return c;
+  });
+
+  const rail = new THREE.Mesh(
+    new THREE.BoxGeometry(5.4, .06, .18),
+    new THREE.MeshBasicMaterial({ color: 0x1a2536 })
+  );
+  rail.position.y = -1.15;
+  root.add(rail);
+
+  const packet = new THREE.Mesh(
+    new THREE.SphereGeometry(.07, 10, 10),
+    new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: .95, blending: THREE.AdditiveBlending })
+  );
+  root.add(packet);
+
+  const badges = [0, 1].map(i => {
+    const b = card(panelTex(i ? 'mermaid' : 'katex', i ? '#82fb9c' : '#7cf8f7', []), .52, .26, i ? GREEN : CYAN, 0);
+    b.position.set(1.7 + (i ? .24 : -.28), .92 + i * .04, .2);
+    root.add(b);
+    return b;
+  });
+
+  function update(t){
+    const p = (t * .22) % 1;
+    const px = -3.1 + p * 6.2;
+    packet.position.set(px, -1.05, .1);
+
+    panels.forEach((c, i) => {
+      const d = Math.abs(px - (i - 1) * 2.0);
+      const on = Math.max(0, 1 - d / 1.1);
+      c.userData.mesh.material.opacity = .68 + on * .32;
+      c.userData.edge.material.opacity = .25 + on * .5;
+    });
+
+    badges.forEach((b, i) => {
+      const on = Math.max(0, Math.min(1, (px - 1.3 - i * .3) / .7));
+      b.userData.mesh.material.opacity = on * .95;
+      b.userData.edge.material.opacity = on * .5;
+    });
+
+    root.rotation.y = Math.sin(t * .16) * .12;
+    camera.position.x = Math.sin(t * .12) * .18;
+    camera.lookAt(0, 0, 0);
+  }
+
+  return { scene, camera, renderer, update };
+}
+
+/* ============================================================
+   CHECKS — the test board
+   ============================================================ */
+function buildChecks(canvas){
+  const { scene, camera, renderer, root } = base(canvas, { fov: 40, z: 6.0 });
+
+  const boardTex = makeTex(512, 420, (g, w, h) => {
+    g.fillStyle = '#070a10'; g.fillRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(130,251,156,.2)'; g.lineWidth = 2; g.strokeRect(1, 1, w - 2, h - 2);
+    g.fillStyle = '#0b1119'; g.fillRect(0, 0, w, 48);
+    label(g, 'cargo test', 20, 32, 17, '#82fb9c', '600');
+    label(g, '27 passed · 0 failed', 330, 32, 13, '#6a6e95');
+  });
+
+  const board = card(boardTex, 3.6, 2.95, GREEN, 1);
+  root.add(board);
+
+  const cells = [];
+  const cols = 9, rows = 3;
+  for (let r = 0; r < rows; r++){
+    for (let c = 0; c < cols; c++){
+      const m = new THREE.Mesh(
+        new THREE.PlaneGeometry(.24, .24),
+        new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: .4 })
+      );
+      m.position.set(-1.4 + c * .35, .8 - r * .38, .02);
+      board.add(m);
+      cells.push({ m, r, c });
+    }
+  }
+
+  function update(t){
+    root.rotation.y = Math.sin(t * .2) * .22;
+    root.rotation.x = .08;
+    cells.forEach((cell, i) => {
+      const wave = Math.sin(t * 2.4 - i * .22);
+      cell.m.material.opacity = .22 + (wave * .5 + .5) * .72;
+    });
+    camera.position.x = Math.sin(t * .12) * .2;
+    camera.lookAt(0, 0, 0);
+  }
+
+  return { scene, camera, renderer, update };
+}
+
+/* ============================================================
+   PLATFORMS — three status panels
+   ============================================================ */
+function platformTex(name, sub, status, accent){
+  return makeTex(340, 420, (g, w, h) => {
+    g.fillStyle = '#070a10'; g.fillRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(130,251,156,.16)'; g.lineWidth = 2; g.strokeRect(1, 1, w - 2, h - 2);
+    g.fillStyle = accent; g.fillRect(0, 0, w, 5);
+    label(g, name, 26, 62, 30, '#ddf7ff', '700');
+    label(g, sub, 26, 92, 18, '#6a6e95');
+    g.fillStyle = accent; g.beginPath(); g.arc(34, 140, 7, 0, Math.PI * 2); g.fill();
+    label(g, status, 56, 148, 19, accent);
+    g.globalAlpha = .45;
+    for (let i = 0; i < 3; i++){
+      g.fillStyle = '#3d4a63'; g.fillRect(26, 220 + i * 34, 230 - i * 26, 8);
+    }
+    g.globalAlpha = 1;
+  });
+}
+
+function buildPlatforms(canvas){
+  const { scene, camera, renderer, root } = base(canvas, { fov: 40, z: 5.9 });
+
+  const data = [
+    ['Linux', 'WebKitGTK', 'published', '#82fb9c'],
+    ['macOS', 'WKWebView', 'pending', '#ffb86b'],
+    ['Windows', 'WebView2', 'pending', '#5b7288']
+  ];
+  const panels = data.map((d, i) => {
+    const c = card(platformTex(d[0], d[1], d[2], d[3]), 1.55, 1.95, d[3] === '#5b7288' ? 0x3d5570 : (i === 0 ? GREEN : AMBER), i === 0 ? 1 : .8);
+    c.position.set((i - 1) * 1.95, .25, 0);
+    c.rotation.y = (1 - i) * .16;
+    root.add(c);
+    return c;
+  });
+
+  const stand = new THREE.Mesh(
+    new THREE.BoxGeometry(5.6, .1, 1.4),
+    new THREE.MeshBasicMaterial({ color: 0x0c131c })
+  );
+  stand.position.y = -1.12;
+  root.add(stand);
+  root.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(5.6, .1, 1.4)),
+    new THREE.LineBasicMaterial({ color: 0x2f5060, transparent: true, opacity: .7 })
+  ).translateY(-1.12));
+
+  function update(t){
+    root.rotation.y = Math.sin(t * .18) * .12;
+    panels.forEach((c, i) => {
+      c.position.y = .25 + Math.sin(t * .7 + i) * .02;
+      c.userData.edge.material.opacity = i === 0 ? .45 + Math.sin(t * 2) * .3 : .35;
+    });
+    camera.position.x = Math.sin(t * .12) * .2;
+    camera.lookAt(0, 0, 0);
+  }
+
+  return { scene, camera, renderer, update };
+}
+
+/* ============================================================
+   DEVICE — the app on a laptop, with platform tags
+   ============================================================ */
+function appScreenTex(){
+  return makeTex(720, 440, (g, w, h) => {
+    g.fillStyle = '#080c13'; g.fillRect(0, 0, w, h);
+
+    // title bar
+    g.fillStyle = '#0b1119'; g.fillRect(0, 0, w, 44);
+    ['#ff6b81', '#ffb86b', '#82fb9c'].forEach((c, i) => {
+      g.fillStyle = c; g.globalAlpha = .7;
+      g.beginPath(); g.arc(22 + i * 15, 22, 4, 0, Math.PI * 2); g.fill();
+    });
+    g.globalAlpha = 1;
+    g.fillStyle = '#8fa0bf'; g.font = '500 15px "JetBrains Mono", monospace';
+    g.textAlign = 'center';
+    g.fillText('notes.md', w / 2, 27);
+    g.textAlign = 'left';
+
+    // sidebar
+    g.fillStyle = '#070a10'; g.fillRect(0, 44, 172, h - 44);
+    g.strokeStyle = 'rgba(45,52,80,.8)'; g.beginPath(); g.moveTo(172, 44); g.lineTo(172, h); g.stroke();
+    g.fillStyle = '#5b6480'; g.font = '600 11px "JetBrains Mono", monospace';
+    g.fillText('CONTENTS', 18, 74);
+    ['Morning pages', 'Reading list', 'Tasks', 'Code', 'Math and diagrams'].forEach((t, i) => {
+      const y = 102 + i * 30;
+      if (i === 1){
+        g.fillStyle = 'rgba(130,251,156,.10)';
+        g.fillRect(12, y - 16, 150, 24);
+        g.fillStyle = '#82fb9c';
+        g.fillRect(12, y - 16, 2, 24);
+      }
+      g.fillStyle = i === 1 ? '#82fb9c' : '#6a6e95';
+      g.font = '400 12px "JetBrains Mono", monospace';
+      g.fillText(t, 22, y);
+    });
+
+    // content
+    g.fillStyle = '#ddf7ff'; g.font = '700 26px "JetBrains Mono", monospace';
+    g.fillText('Reading list', 204, 106);
+    g.fillStyle = 'rgba(130,251,156,.55)'; g.fillRect(204, 120, 64, 2);
+
+    g.fillStyle = 'rgba(143,160,191,.5)';
+    [0, 1, 2].forEach(i => g.fillRect(204, 142 + i * 20, 440 - i * 44, 7));
+
+    g.fillStyle = 'rgba(130,251,156,.12)'; g.fillRect(198, 210, 460, 34);
+    g.fillStyle = '#82fb9c'; g.fillRect(198, 210, 3, 34);
+    g.fillStyle = '#82fb9c'; g.font = '400 15px "JetBrains Mono", monospace';
+    g.fillText('The quiet part is **the point**.', 212, 232);
+
+    g.fillStyle = '#05070c'; g.fillRect(204, 260, 420, 108);
+    g.strokeStyle = 'rgba(45,52,80,.9)'; g.strokeRect(204, 260, 420, 108);
+    g.fillStyle = '#86a7df'; g.font = '400 13px "JetBrains Mono", monospace';
+    g.fillText('fn main() {', 220, 286);
+    g.fillStyle = '#4fe88f';
+    g.fillText('    let greeting = "Hello";', 220, 308);
+    g.fillStyle = '#86a7df';
+    g.fillText('    println!("{greeting}");', 220, 330);
+    g.fillText('}', 220, 352);
+
+    // status bar
+    g.fillStyle = '#0b1119'; g.fillRect(0, h - 24, w, 24);
+    g.fillStyle = '#5b6480'; g.font = '400 11px "JetBrains Mono", monospace';
+    g.fillText('PREVIEW · 366 words · LF · UTF-8', 204, h - 8);
+    g.fillStyle = '#82fb9c';
+    g.fillText('OFFLINE', w - 80, h - 8);
+  });
+}
+
+function keysTex(){
+  return makeTex(512, 300, (g, w, h) => {
+    g.fillStyle = '#101827'; g.fillRect(0, 0, w, h);
+    for (let r = 0; r < 5; r++){
+      for (let c = 0; c < 14; c++){
+        if (r === 4 && c > 4 && c < 9) continue;
+        g.fillStyle = '#1a2536';
+        g.fillRect(12 + c * 35, 12 + r * 42, 29, 34);
+      }
+    }
+    g.fillStyle = '#1a2536';
+    g.fillRect(140, 222, 150, 30);
+  });
+}
+
+const LOGO_PATHS = {
+  apple: "M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701",
+  linux: "M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139zm.529 3.405h.013c.213 0 .396.062.584.198.19.135.33.332.438.533.105.259.158.459.166.724 0-.02.006-.04.006-.06v.105a.086.086 0 01-.004-.021l-.004-.024a1.807 1.807 0 01-.15.706.953.953 0 01-.213.335.71.71 0 00-.088-.042c-.104-.045-.198-.064-.284-.133a1.312 1.312 0 00-.22-.066c.05-.06.146-.133.183-.198.053-.128.082-.264.088-.402v-.02a1.21 1.21 0 00-.061-.4c-.045-.134-.101-.2-.183-.333-.084-.066-.167-.132-.267-.132h-.016c-.093 0-.176.03-.262.132a.8.8 0 00-.205.334 1.18 1.18 0 00-.09.4v.019c.002.089.008.179.02.267-.193-.067-.438-.135-.607-.202a1.635 1.635 0 01-.018-.2v-.02a1.772 1.772 0 01.15-.768c.082-.22.232-.406.43-.533a.985.985 0 01.594-.2zm-2.962.059h.036c.142 0 .27.048.399.135.146.129.264.288.344.465.09.199.14.4.153.667v.004c.007.134.006.2-.002.266v.08c-.03.007-.056.018-.083.024-.152.055-.274.135-.393.2.012-.09.013-.18.003-.267v-.015c-.012-.133-.04-.2-.082-.333a.613.613 0 00-.166-.267.248.248 0 00-.183-.064h-.021c-.071.006-.13.04-.186.132a.552.552 0 00-.12.27.944.944 0 00-.023.33v.015c.012.135.037.2.08.334.046.134.098.2.166.268.01.009.02.018.034.024-.07.057-.117.07-.176.136a.304.304 0 01-.131.068 2.62 2.62 0 01-.275-.402 1.772 1.772 0 01-.155-.667 1.759 1.759 0 01.08-.668 1.43 1.43 0 01.283-.535c.128-.133.26-.2.418-.2zm1.37 1.706c.332 0 .733.065 1.216.399.293.2.523.269 1.052.468h.003c.255.136.405.266.478.399v-.131a.571.571 0 01.016.47c-.123.31-.516.643-1.063.842v.002c-.268.135-.501.333-.775.465-.276.135-.588.292-1.012.267a1.139 1.139 0 01-.448-.067 3.566 3.566 0 01-.322-.198c-.195-.135-.363-.332-.612-.465v-.005h-.005c-.4-.246-.616-.512-.686-.71-.07-.268-.005-.47.193-.6.224-.135.38-.271.483-.336.104-.074.143-.102.176-.131h.002v-.003c.169-.202.436-.47.839-.601.139-.036.294-.065.466-.065zm2.8 2.142c.358 1.417 1.196 3.475 1.735 4.473.286.534.855 1.659 1.102 3.024.156-.005.33.018.513.064.646-1.671-.546-3.467-1.089-3.966-.22-.2-.232-.335-.123-.335.59.534 1.365 1.572 1.646 2.757.13.535.16 1.104.021 1.67.067.028.135.06.205.067 1.032.534 1.413.938 1.23 1.537v-.043c-.06-.003-.12 0-.18 0h-.016c.151-.467-.182-.825-1.065-1.224-.915-.4-1.646-.336-1.77.465-.008.043-.013.066-.018.135-.068.023-.139.053-.209.064-.43.268-.662.669-.793 1.187-.13.533-.17 1.156-.205 1.869v.003c-.02.334-.17.838-.319 1.35-1.5 1.072-3.58 1.538-5.348.334a2.645 2.645 0 00-.402-.533 1.45 1.45 0 00-.275-.333c.182 0 .338-.03.465-.067a.615.615 0 00.314-.334c.108-.267 0-.697-.345-1.163-.345-.467-.931-.995-1.788-1.521-.63-.4-.986-.87-1.15-1.396-.165-.534-.143-1.085-.015-1.645.245-1.07.873-2.11 1.274-2.763.107-.065.037.135-.408.974-.396.751-1.14 2.497-.122 3.854a8.123 8.123 0 01.647-2.876c.564-1.278 1.743-3.504 1.836-5.268.048.036.217.135.289.202.218.133.38.333.59.465.21.201.477.335.876.335.039.003.075.006.11.006.412 0 .73-.134.997-.268.29-.134.52-.334.74-.4h.005c.467-.135.835-.402 1.044-.7zm2.185 8.958c.037.6.343 1.245.882 1.377.588.134 1.434-.333 1.791-.765l.211-.01c.315-.007.577.01.847.268l.003.003c.208.199.305.53.391.876.085.4.154.78.409 1.066.486.527.645.906.636 1.14l.003-.007v.018l-.003-.012c-.015.262-.185.396-.498.595-.63.401-1.746.712-2.457 1.57-.618.737-1.37 1.14-2.036 1.191-.664.053-1.237-.2-1.574-.898l-.005-.003c-.21-.4-.12-1.025.056-1.69.176-.668.428-1.344.463-1.897.037-.714.076-1.335.195-1.814.12-.465.308-.797.641-.984l.045-.022zm-10.814.049h.01c.053 0 .105.005.157.014.376.055.706.333 1.023.752l.91 1.664.003.003c.243.533.754 1.064 1.189 1.637.434.598.77 1.131.729 1.57v.006c-.057.744-.48 1.148-1.125 1.294-.645.135-1.52.002-2.395-.464-.968-.536-2.118-.469-2.857-.602-.369-.066-.61-.2-.723-.4-.11-.2-.113-.602.123-1.23v-.004l.002-.003c.117-.334.03-.752-.027-1.118-.055-.401-.083-.71.043-.94.16-.334.396-.4.69-.533.294-.135.64-.202.915-.47h.002v-.002c.256-.268.445-.601.668-.838.19-.201.38-.336.663-.336zm7.159-9.074c-.435.201-.945.535-1.488.535-.542 0-.97-.267-1.28-.466-.154-.134-.28-.268-.373-.335-.164-.134-.144-.333-.074-.333.109.016.129.134.199.2.096.066.215.2.36.333.292.2.68.467 1.167.467.485 0 1.053-.267 1.398-.466.195-.135.445-.334.648-.467.156-.136.149-.267.279-.267.128.016.034.134-.147.332a8.097 8.097 0 01-.69.468zm-1.082-1.583V5.64c-.006-.02.013-.042.029-.05.074-.043.18-.027.26.004.063 0 .16.067.15.135-.006.049-.085.066-.135.066-.055 0-.092-.043-.141-.068-.052-.018-.146-.008-.163-.065zm-.551 0c-.02.058-.113.049-.166.066-.047.025-.086.068-.14.068-.05 0-.13-.02-.136-.068-.01-.066.088-.133.15-.133.08-.031.184-.047.259-.005.019.009.036.03.03.05v.02h.003z"
+};
+
+function platformChipTex(name, status, accent){
+  return makeTex(360, 130, (g, w, h) => {
+    g.fillStyle = '#080c13'; g.fillRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(130,251,156,.16)'; g.lineWidth = 2; g.strokeRect(1, 1, w - 2, h - 2);
+    g.fillStyle = accent; g.fillRect(0, 0, 4, h);
+
+    // real marks
+    if (name === 'Windows'){
+      g.fillStyle = '#3fa9f5';
+      [[0, 0], [17, 0], [0, 17], [17, 17]].forEach(([dx, dy]) => {
+        g.fillRect(18 + dx, 22 + dy, 14, 14);
+      });
+    } else {
+      const path = new Path2D(name === 'Linux' ? LOGO_PATHS.linux : LOGO_PATHS.apple);
+      g.save();
+      g.translate(14, 16);
+      g.scale(1.55, 1.55);
+      g.fillStyle = '#ddf7ff';
+      g.fill(path);
+      g.restore();
+    }
+
+    g.fillStyle = '#ddf7ff';
+    g.font = '600 38px "JetBrains Mono", monospace';
+    g.fillText(name, 78, 58);
+
+    g.fillStyle = accent;
+    g.beginPath(); g.arc(84, 92, 5, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#8fa0bf';
+    g.font = '400 20px "JetBrains Mono", monospace';
+    g.fillText(status, 98, 99);
+  });
+}
+
+function buildDevice(canvas){
+  const { scene, camera, renderer, root } = base(canvas, { fov: 40, z: 6.0, y: .45 });
+
+  const laptop = new THREE.Group();
+  root.add(laptop);
+
+  // lid
+  const lid = new THREE.Group();
+  lid.position.set(0, -1.0, -.5);
+  lid.rotation.x = -.14;
+  laptop.add(lid);
+
+  const bezel = new THREE.Mesh(
+    new THREE.BoxGeometry(3.35, 2.16, .1),
+    new THREE.MeshBasicMaterial({ color: 0x161f2e })
+  );
+  bezel.position.y = 1.06;
+  lid.add(bezel);
+
+  const screen = new THREE.Mesh(
+    new THREE.PlaneGeometry(3.1, 1.94),
+    new THREE.MeshBasicMaterial({ map: appScreenTex() })
+  );
+  screen.position.set(0, 1.06, .056);
+  lid.add(screen);
+  lid.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.PlaneGeometry(3.1, 1.94)),
+    new THREE.LineBasicMaterial({ color: 0x3d6b74, transparent: true, opacity: .6 })
+  ).translateY(1.06).translateZ(.06));
+
+  // deck
+  const deck = new THREE.Mesh(
+    new THREE.BoxGeometry(3.4, .1, 2.3),
+    new THREE.MeshBasicMaterial({ color: 0x151f2e })
+  );
+  deck.position.set(0, -1.0, .45);
+  laptop.add(deck);
+  laptop.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(3.4, .1, 2.3)),
+    new THREE.LineBasicMaterial({ color: 0x3d5570, transparent: true, opacity: .7 })
+  ).translateY(-1.0).translateZ(.45));
+
+  const keys = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.9, 1.55),
+    new THREE.MeshBasicMaterial({ map: keysTex() })
+  );
+  keys.rotation.x = -Math.PI / 2;
+  keys.position.set(0, -.94, .55);
+  laptop.add(keys);
+
+  const pad = new THREE.Mesh(
+    new THREE.PlaneGeometry(.85, .5),
+    new THREE.MeshBasicMaterial({ color: 0x1a2536 })
+  );
+  pad.rotation.x = -Math.PI / 2;
+  pad.position.set(0, -.94, 1.25);
+  laptop.add(pad);
+
+  // platform tags, above the lid
+  const chipData = [
+    ['Linux', 'published', '#82fb9c', -1.95],
+    ['macOS', 'pending', '#ffb86b', 0],
+    ['Windows', 'pending', '#7cf8f7', 1.95]
+  ];
+  const flows = [];
+  const chips = chipData.map(([name, status, color, x]) => {
+    const c = card(platformChipTex(name, status, color), 1.9, .69, 0x2d3450, 1);
+    c.position.set(x, 1.52, .3);
+    root.add(c);
+
+    const end = v(x * .5, 1.12, .02);
+    const start = v(x, 1.14, .28);
+    root.add(new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([start, end]),
+      new THREE.LineBasicMaterial({ color: 0x3d6b74, transparent: true, opacity: .35 })
+    ));
+
+    const dot = new THREE.Mesh(
+      new THREE.SphereGeometry(.035, 8, 8),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: .9, blending: THREE.AdditiveBlending })
+    );
+    root.add(dot);
+    flows.push({ dot, start, end, phase: Math.random() });
+
+    return c;
+  });
+
+  const glowTex = makeTex(256, 256, (g, w, h) => {
+    const grad = g.createRadialGradient(w / 2, h / 2, 8, w / 2, h / 2, w / 2);
+    grad.addColorStop(0, 'rgba(130,251,156,.30)');
+    grad.addColorStop(.5, 'rgba(124,248,247,.10)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = grad; g.fillRect(0, 0, w, h);
+  });
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+  }));
+  glow.scale.set(7, 4.4, 1);
+  glow.position.set(0, .1, -1.2);
+  root.add(glow);
+
+  let elapsed = 0;
+  function update(t){
+    const dt = Math.min(t - elapsed, .1);
+    elapsed = t;
+
+    laptop.rotation.y = Math.sin(t * .18) * .18;
+    laptop.position.y = Math.sin(t * .7) * .015;
+    lid.rotation.x = -.14 + Math.sin(t * .45) * .018;
+    glow.material.opacity = .7 + Math.sin(t * .8) * .15;
+
+    chips.forEach((c, i) => {
+      c.position.y = 1.52 + Math.sin(t * .9 + i * .7) * .025;
+      c.position.z = .3 + Math.sin(t * .6 + i) * .04;
+      c.userData.edge.material.opacity = i === 0 ? .45 + Math.sin(t * 2.2) * .3 : .4;
+    });
+
+    flows.forEach((f, i) => {
+      f.phase += dt * .35;
+      if (f.phase > 1) f.phase -= 1;
+      f.dot.position.lerpVectors(f.start, f.end, f.phase);
+      f.dot.material.opacity = .15 + Math.sin(f.phase * Math.PI) * .8;
+    });
+
+    camera.position.x = Math.sin(t * .12) * .25;
+    camera.lookAt(0, .2, 0);
+  }
+
+  return { scene, camera, renderer, update };
+}
+
+/* ============================================================
+   MODULES — six labelled tiles, wired together
+   ============================================================ */
+function moduleTex(name, sub){
+  return makeTex(360, 220, (g, w, h) => {
+    g.fillStyle = '#070a10'; g.fillRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(130,251,156,.22)'; g.lineWidth = 2; g.strokeRect(1, 1, w - 2, h - 2);
+    g.fillStyle = '#0b1119'; g.fillRect(0, 0, w, 8);
+    label(g, name, 26, 108, 38, '#ddf7ff', '700');
+    g.fillStyle = 'rgba(130,251,156,.5)';
+    g.fillRect(26, 132, 70, 3);
+    label(g, sub, 26, 172, 22, '#6a6e95');
+  });
+}
+
+function buildModules(canvas){
+  const { scene, camera, renderer, root } = base(canvas, { fov: 38, z: 4.1 });
+
+  const data = [
+    ['document', 'file + I/O'], ['markdown', 'parse + sanitize'], ['preview', 'katex + mermaid'],
+    ['editor', 'in-place'], ['theme', 'palette'], ['app', 'window + IPC']
+  ];
+  const panels = data.map((d, i) => {
+    const col = i % 3, row = Math.floor(i / 3);
+    const c = card(moduleTex(d[0], d[1]), 1.4, .82, i % 2 ? CYAN : GREEN, 1);
+    c.position.set((col - 1) * 1.62, .58 - row * 1.08, 0);
+    root.add(c);
+    return c;
+  });
+
+  [[0, 1], [1, 2], [3, 4], [4, 5], [0, 3], [1, 4], [2, 5]].forEach(([a, b]) => {
+    const pa = panels[a].position, pb = panels[b].position;
+    root.add(new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([v(pa.x, pa.y, -.02), v(pb.x, pb.y, -.02)]),
+      new THREE.LineBasicMaterial({ color: 0x3d6b74, transparent: true, opacity: .4 })
+    ));
+  });
+
+  function update(t){
+    root.rotation.y = Math.sin(t * .2) * .2;
+    root.rotation.x = .12 + Math.sin(t * .14) * .02;
+    panels.forEach((c, i) => {
+      c.position.z = Math.sin(t * .5 + i) * .02;
+    });
+    camera.position.x = Math.sin(t * .12) * .2;
+    camera.lookAt(0, 0, 0);
+  }
+
+  return { scene, camera, renderer, update };
+}
+
+/* ============================================================
+   LIFECYCLE
+   ============================================================ */
+const builders = {
+  stack: buildStack,
+  balance: buildBalance,
+  filter: buildFilter,
+  layers: buildLayers,
+  pages: buildPages,
+  carousel: buildCarousel,
+  split: buildSplit,
+  gate: buildGate,
+  editor: buildEditor,
+  themes: buildThemes,
+  save: buildSave,
+  lazy: buildLazy,
+  checks: buildChecks,
+  platforms: buildPlatforms,
+  device: buildDevice,
+  modules: buildModules
+};
+
+const registry = {};
+
+function getOrBuild(canvas){
+  const id = canvas.dataset.scene;
+  if (registry[id]) return registry[id];
+  const builder = builders[id];
+  if (!builder) return null;
+
+  const ctx = builder(canvas);
+  ctx.canvas = canvas;
+  ctx.id = id;
+  ctx.active = false;
+  ctx.raf = null;
+  ctx.time = 0;
+  ctx.lastWidth = 0;
+  ctx.lastHeight = 0;
+
+  ctx.resize = function(){
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (!w || !h) return;
+    if (w === ctx.lastWidth && h === ctx.lastHeight) return;
+    ctx.lastWidth = w;
+    ctx.lastHeight = h;
+    ctx.renderer.setSize(w, h, false);
+    const aspect = w / h;
+    ctx.camera.aspect = aspect;
+    const baseZ = ctx.camera.userData.baseZ || 8;
+    // A wide canvas does not increase the vertical field of view. Moving the
+    // camera closer on wide stages was clipping document tops and laptops.
+    ctx.camera.position.z = baseZ;
+    ctx.camera.updateProjectionMatrix();
+    if (ctx.positionLabels) ctx.positionLabels();
+  };
+
+  registry[id] = ctx;
+  return ctx;
+}
+
+function activate(canvas){
+  const ctx = getOrBuild(canvas);
+  if (!ctx || ctx.active) return;
+  ctx.active = true;
+  ctx.resize();
+  ctx.update(ctx.time);
+  ctx.renderer.render(ctx.scene, ctx.camera);
+  if (ctx.positionLabels) ctx.positionLabels();
+  if (prefersReduced) return;
+
+  let lastFrame = performance.now();
+  function tick(now){
+    if (!ctx.active){ ctx.raf = null; return; }
+    ctx.raf = requestAnimationFrame(tick);
+    ctx.resize();
+    ctx.time += Math.min(Math.max(0, (now - lastFrame) * .001), .05);
+    lastFrame = now;
+    ctx.update(ctx.time);
+    ctx.renderer.render(ctx.scene, ctx.camera);
+    if (ctx.positionLabels) ctx.positionLabels();
+  }
+  ctx.raf = requestAnimationFrame(tick);
+}
+
+function deactivate(canvas){
+  const ctx = registry[canvas.dataset.scene];
+  if (!ctx) return;
+  ctx.active = false;
+  if (ctx.raf){ cancelAnimationFrame(ctx.raf); ctx.raf = null; }
+}
+
+function syncScenes(){
+  document.querySelectorAll('canvas[data-scene]').forEach(canvas => {
+    const slide = canvas.closest('.slide');
+    if (!document.hidden && slide && slide.classList.contains('active')) activate(canvas);
+    else deactivate(canvas);
+  });
+}
+
+window.addEventListener('slidechange', syncScenes);
+document.addEventListener('visibilitychange', syncScenes);
+window.addEventListener('resize', () => {
+  document.querySelectorAll('canvas[data-scene]').forEach(canvas => {
+    const ctx = registry[canvas.dataset.scene];
+    if (ctx && ctx.active) ctx.resize();
+  });
+});
+
+syncScenes();
+</script>
+
+<!-- ============================================================
+     NAVIGATION
+     ============================================================ -->
+<script>
+(function () {
+  'use strict';
+
+  const pad = n => (n < 10 ? '0' + n : '' + n);
+  const slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+
+  slides.forEach((s, i) => {
+    const f = s.querySelector('.folio');
+    if (f) f.textContent = pad(i + 1);
+  });
+
+  // word-by-word reveal for [data-words]
+  function wrapWords(root){
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+    const nodes = [];
+    let node;
+    while ((node = walker.nextNode())){
+      if (!node.nodeValue.trim()) continue;
+      if (node.parentElement && node.parentElement.closest('.word')) continue;
+      nodes.push(node);
+    }
+    nodes.forEach(textNode => {
+      const parts = textNode.nodeValue.split(/(\s+)/);
+      const frag = document.createDocumentFragment();
+      parts.forEach(part => {
+        if (!part) return;
+        if (/^\s+$/.test(part)){ frag.appendChild(document.createTextNode(part)); return; }
+        const outer = document.createElement('span');
+        outer.className = 'word';
+        const inner = document.createElement('span');
+        inner.textContent = part;
+        outer.appendChild(inner);
+        frag.appendChild(outer);
+      });
+      textNode.parentNode.replaceChild(frag, textNode);
+    });
+  }
+  document.querySelectorAll('[data-words]').forEach(wrapWords);
+
+  const dotsBox = document.getElementById('dots');
+  const counter = document.getElementById('counter');
+  const bar = document.getElementById('progress');
+  const total = slides.length;
+  let index = 0;
+  if (!total) return;
+
+  const dots = slides.map((_, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'dot';
+    b.setAttribute('aria-label', 'Go to slide ' + (i + 1));
+    b.addEventListener('click', () => go(i));
+    dotsBox.appendChild(b);
+    return b;
+  });
+
+  function dispatch(){
+    try { window.dispatchEvent(new CustomEvent('slidechange', { detail: { index } })); } catch (e) {}
+  }
+
+  function go(n){
+    if (typeof n !== 'number' || isNaN(n)) return;
+    n = Math.max(0, Math.min(total - 1, n));
+    const dir = n > index ? 'next' : (n < index ? 'prev' : 'next');
+    document.body.setAttribute('data-dir', dir);
+    index = n;
+
+    for (let i = 0; i < total; i++){
+      const on = i === n;
+      slides[i].classList.toggle('active', on);
+      slides[i].setAttribute('aria-hidden', on ? 'false' : 'true');
+      slides[i].inert = !on;
+      dots[i].setAttribute('aria-current', on ? 'step' : 'false');
+      dots[i].classList.toggle('on', on);
+      if (on) slides[i].scrollTop = 0;
+    }
+
+    counter.innerHTML = '<b>' + pad(n + 1) + '</b> / ' + pad(total);
+    bar.style.width = (((n + 1) / total) * 100) + '%';
+    try { history.replaceState(null, '', '#' + (n + 1)); } catch (e) {}
+    dispatch();
+  }
+
+  const next = () => go(index + 1);
+  const prev = () => go(index - 1);
+
+  document.addEventListener('keydown', e => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    switch (e.key){
+      case 'ArrowRight': case 'ArrowDown': case 'PageDown': case ' ': case 'Spacebar':
+        e.preventDefault(); next(); break;
+      case 'ArrowLeft': case 'ArrowUp': case 'PageUp':
+        e.preventDefault(); prev(); break;
+      case 'Home': e.preventDefault(); go(0); break;
+      case 'End': e.preventDefault(); go(total - 1); break;
+      default: break;
+    }
+  });
+
+  let startX = null, startY = null;
+  document.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1){ startX = startY = null; return; }
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+  }, { passive: true });
+
+  document.addEventListener('touchend', e => {
+    if (startX === null || !e.changedTouches.length) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - startX, dy = t.clientY - startY;
+    startX = startY = null;
+    if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.5){
+      if (dx < 0) next(); else prev();
+    }
+  }, { passive: true });
+
+  let start = 0;
+  const m = /^#(\d+)$/.exec(window.location.hash || '');
+  if (m){
+    const parsed = parseInt(m[1], 10);
+    if (!isNaN(parsed)) start = Math.max(0, Math.min(total - 1, parsed - 1));
+  }
+  go(start);
+})();
+</script>
+
+</body>
+</html>
