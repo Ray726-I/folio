@@ -181,12 +181,30 @@ impl SyntaxHighlighterAdapter for SourceHighlighter {
 
 const BLOCKED_REMOTE_IMAGE: &str = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iNDgiPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiM4ODg4ODgxOCIgc3Ryb2tlPSIjODg4ODg4NjYiLz48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9InNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMTIiIGZpbGw9IiM4ODg4ODgiPlJlbW90ZSBpbWFnZSBibG9ja2VkPC90ZXh0Pjwvc3ZnPg==";
 
+/// Does this image destination name a remote web host? Browsers normalize
+/// `https:host/x`, `https:/host/x`, `https:\host\x`, protocol-relative
+/// `//host/x`, and URLs with embedded tabs or newlines into the same HTTP(S)
+/// request, so a literal `https://` prefix test would let those forms through
+/// and disclose the document to the host even with remote images blocked.
+fn remote_image_url(destination: &str) -> bool {
+    let cleaned: String = destination
+        .chars()
+        .filter(|character| !matches!(character, '\t' | '\n' | '\r'))
+        .collect();
+    let normalized = cleaned
+        .trim_matches(|character: char| character.is_ascii_control() || character == ' ')
+        .to_ascii_lowercase();
+    normalized.starts_with("//")
+        || normalized.starts_with("http:")
+        || normalized.starts_with("https:")
+}
+
 fn local_image(
     destination: &str,
     base: Option<&Path>,
     allow_remote_images: bool,
 ) -> Option<String> {
-    if destination.starts_with("https://") {
+    if remote_image_url(destination) {
         return Some(if allow_remote_images {
             destination.into()
         } else {
@@ -385,20 +403,19 @@ fn sanitize(html: &str, allow_remote_images: bool) -> String {
         .add_tag_attributes("td", ["style"])
         .url_schemes(HashSet::from(["https", "http", "mailto", "data"]))
         .attribute_filter(move |_, attribute, value| {
-            let value_trimmed = value.trim_start();
             match attribute {
                 // Raw HTML can bypass the Markdown image rewriter; apply the same
                 // remote-image preference to author-supplied `<img src>` values.
-                "src"
-                    if !allow_remote_images
-                        && value_trimmed
-                            .get(..8)
-                            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://")) =>
-                {
-                    Some(Cow::Owned(BLOCKED_REMOTE_IMAGE.to_string()))
+                "src" if remote_image_url(value) => {
+                    if allow_remote_images {
+                        Some(Cow::Borrowed(value))
+                    } else {
+                        Some(Cow::Owned(BLOCKED_REMOTE_IMAGE.to_string()))
+                    }
                 }
                 "href"
-                    if value_trimmed
+                    if value
+                        .trim_start()
                         .get(..5)
                         .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:")) =>
                 {
@@ -536,6 +553,51 @@ mod tests {
         let (raw_allowed, _) =
             render_with_blocks("<img src=\"https://example.com/raw.png\">", None, true);
         assert!(raw_allowed.contains("https://example.com/raw.png"));
+    }
+
+    #[test]
+    fn obfuscated_remote_image_urls_are_blocked_too() {
+        // Every form a browser's URL parser resolves to an HTTP(S) request must
+        // honour the preference, not just the canonical `https://` prefix.
+        let forms = [
+            "https://example.com/a.png",
+            "HTTPS://example.com/b.png",
+            "http://example.com/c.png",
+            "https:example.com/d.png",
+            "https:/example.com/e.png",
+            "https:\\example.com\\f.png",
+            "//example.com/g.png",
+            " ht\ntps://example.com/i.png",
+        ];
+        for form in forms {
+            let raw = format!("<img src=\"{form}\">");
+            let blocked = render(&raw, None);
+            assert!(
+                !blocked.contains("example.com"),
+                "raw HTML {form:?} was not blocked: {blocked}"
+            );
+            assert!(
+                blocked.contains("data:image/svg+xml;base64,"),
+                "raw HTML {form:?} did not show the placeholder: {blocked}"
+            );
+            let allowed = render_with_blocks(&raw, None, true).0;
+            assert!(
+                !allowed.contains("data:image/svg+xml;base64,"),
+                "raw HTML {form:?} stayed blocked when enabled: {allowed}"
+            );
+        }
+        for form in ["HTTPS://example.com/a.png", "https:example.com/b.png"] {
+            let markdown = format!("![x]({form})");
+            let blocked = render(&markdown, None);
+            assert!(
+                !blocked.contains("example.com"),
+                "Markdown {form:?} was not blocked: {blocked}"
+            );
+            assert!(
+                blocked.contains("data:image/svg+xml;base64,"),
+                "Markdown {form:?} did not show the placeholder: {blocked}"
+            );
+        }
     }
 
     #[test]
