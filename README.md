@@ -11,7 +11,7 @@ cargo run --release
 cargo run --release -- /path/to/document.md
 ```
 
-After building, run `./target/release/folio [FILE]` directly on Linux/macOS, or the generated executable on Windows. `./run.sh [FILE]` is a Linux helper that uses the release binary if available, otherwise builds it. All fonts, styles, scripts, and parsers are local; reading and editing work offline. Web links require a connection. Remote images are blocked by default and require a connection only when enabled from the command window.
+After building, run `./target/release/folio [FILE]` directly on Linux/macOS, or the generated executable on Windows. `./run.sh [FILE]` is a Linux helper that uses the release binary if available, otherwise builds it. The UI, reading, and code fonts (Inter, Source Serif 4, and JetBrains Mono) are bundled with the app; reading and editing work offline. Web links require a connection. Remote images are blocked by default and require a connection only when enabled from the command window.
 
 For native prerequisites, follow Tauri's [Linux](https://v2.tauri.app/start/prerequisites/#linux), [macOS](https://v2.tauri.app/start/prerequisites/#macos), or [Windows](https://v2.tauri.app/start/prerequisites/#windows) instructions. Linux builds need GTK 3, WebKitGTK 4.1, libsoup 3, OpenSSL, and librsvg. On Arch/Omarchy, install `webkit2gtk-4.1` from the distribution repositories. No Node runtime is needed to run or build Folio with Cargo.
 
@@ -23,7 +23,7 @@ For native prerequisites, follow Tauri's [Linux](https://v2.tauri.app/start/prer
 | Open a Markdown file or folder | Ctrl+O |
 | Show or hide the file tree | Ctrl+B |
 | New document | Ctrl+N |
-| Switch between Preview and Edit | Header mode buttons |
+| Switch between Preview and Edit | Header eye/pencil buttons |
 | Toggle Preview / Edit | Ctrl+E |
 | Undo / Redo | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y |
 | Save / Save as | Ctrl+S / Ctrl+Shift+S |
@@ -33,10 +33,11 @@ For native prerequisites, follow Tauri's [Linux](https://v2.tauri.app/start/prer
 | Reset document text size | Ctrl+Shift+0 |
 | Find in document | Ctrl+F |
 | Load or block remote images | Command window |
+| Switch serif / sans reading text | Command window |
 | Focus mode | F11; Escape exits |
 | Close | Ctrl+W |
 
-On macOS, use Command in place of Ctrl for the listed shortcuts. The command window supports typing to filter, arrow keys, Enter, and Escape. Search for a theme by name, or select **Change theme…**. There are System, Adwaita Light, Adwaita Dark, Nord, Catppuccin Mocha, Rosé Pine, and Solarized Light themes. Theme, remote-image, and text-size preferences persist locally. Recent files store paths, not document contents; they can be cleared from the command window. **Load remote images** / **Block remote images** toggles whether documents may contact image hosts; blocked images appear as a local placeholder.
+On macOS, use Command in place of Ctrl for the listed shortcuts. The command window supports typing to filter, arrow keys, Enter, and Escape. Search for a theme by name, or select **Change theme…**. There are System, Adwaita Light, Adwaita Dark, Nord, Catppuccin Mocha, Rosé Pine, and Solarized Light themes. Theme, remote-image, reading-font, and text-size preferences persist locally. Recent files store paths, not document contents; they can be cleared from the command window. **Load remote images** / **Block remote images** toggles whether documents may contact image hosts; blocked images appear as a local placeholder. **Use serif reading text** / **Use sans-serif reading text** switches the document face without touching the interface.
 
 ## Omarchy
 
@@ -52,6 +53,8 @@ Only the app's own preferences are written. Desktop theme files are read without
 ## Markdown and files
 
 The preview supports CommonMark, GFM tables, task lists, strikethrough, footnotes (including inline `^[notes]`), GitHub-style note/tip/important/warning/caution callouts, fenced code with syntax highlighting, heading navigation, definition lists, superscript/subscript, `==highlights==`, `++insertions++`, underlines, Obsidian-style `[[wikilinks|labels]]`, emoji `:shortcodes:`, and hidden YAML front matter. Math is rendered locally with KaTeX: inline `$x^2$`, display `$$x^2$$`, and ` ```math ` blocks. Fenced ```` ```mermaid ```` blocks are rendered locally in the preview as diagrams (flowcharts, sequence, class, state, entity-relationship, gantt, pie, timeline, git graph, mindmap, and more). Markdown HTML is sanitized before display; a safe subset only. Remote images in Markdown or raw HTML are blocked by default and replaced with a local placeholder so opening a document cannot silently contact a tracking host. When enabled, images are requested with `referrerpolicy="no-referrer"`. Relative Markdown links within the document's folder or its descendants open files after any unsaved-change prompt; links resolving outside that boundary are rejected. Web links open in the default browser; `data:` links are removed.
+
+Reading text uses Source Serif 4 by default, while the interface uses Inter and code uses JetBrains Mono; all three are bundled in `ui/fonts/` and fall back to system fonts. A command-window toggle switches the document between serif and sans. The outline tracks the section you are reading and supports arrow-key navigation.
 
 LaTeX and Mermaid run from vendored files in `ui/vendor/` — no CDN or rendering service is used — and are loaded on demand the first time a document contains math or a diagram. Diagrams are re-rendered when the theme changes so their colors always match Folio (including the live Omarchy palette). Invalid Mermaid sources show the diagram source with an error note instead of failing silently. KaTeX uses `throwOnError: false` and restrictive trust settings, and Mermaid uses its strict security level.
 
@@ -91,7 +94,7 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 ```
 
-The Rust tests cover external-edit conflicts, metadata-based change detection, atomic save behavior, CRLF/BOM/permission preservation, new-file umask handling, HTML sanitization (including mixed-case `data-sourcepos` spoofing), remote-image privacy, syntax-highlighted Markdown, math and Mermaid source markers, wikilinks, emoji, extension elements, document anchor identifiers, edit-block source mapping, task toggling, tolerant folder scanning, local image boundaries, and theme validation. An optional UI smoke test checks keyboard controls, the command window, conditional/live Omarchy themes, theme isolation, remote-image toggling, unsaved-change prompts, structured save conflicts, close protection, find, on-demand vendored KaTeX/Mermaid loading, the collapsible file tree, and live editing. It mocks the native IPC layer; native filesystem and rendering behavior are covered separately by the Rust tests.
+The Rust tests cover external-edit conflicts, metadata-based change detection, atomic save behavior, CRLF/BOM/permission preservation, new-file umask handling, HTML sanitization (including mixed-case `data-sourcepos` spoofing), remote-image privacy, syntax-highlighted Markdown, math and Mermaid source markers, wikilinks, emoji, extension elements, document anchor identifiers, edit-block source mapping, task toggling, tolerant folder scanning, local image boundaries, and theme validation. An optional UI smoke test checks keyboard controls, the command window, conditional/live Omarchy themes, theme isolation, remote-image toggling, reading-font toggling, icon-only view modes, outline navigation, unsaved-change prompts, structured save conflicts, close protection, find, on-demand vendored KaTeX/Mermaid loading, the collapsible file tree, and live editing. It mocks the native IPC layer; native filesystem and rendering behavior are covered separately by the Rust tests.
 
 ```sh
 npm ci
@@ -112,6 +115,7 @@ For real-webview, CSP, and cross-platform checks that the mocked UI tests cannot
 - `ui/preview.js`: preview rendering, lazy KaTeX/Mermaid loading, diagram lifecycle.
 - `ui/editor.js`: in-place editing, source mapping, undo/redo.
 - `ui/app.js`: documents, folders, command window, event wiring.
+- `ui/fonts/`: bundled Inter, Source Serif 4, and JetBrains Mono variable fonts.
 - `ui/vendor/`: vendored preview dependencies; licenses are listed in `THIRD_PARTY_NOTICES.md`.
 - `tests/` and `docs/manual-verification.md`: automated and manual verification.
 

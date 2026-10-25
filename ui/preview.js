@@ -41,6 +41,54 @@ function loadMermaid() {
   }
   return mermaidLoading;
 }
+let outlineEntries = [], outlineActiveFrame = null, outlineActiveIndex = -1;
+function setActiveOutline(index) {
+  if (!outlineEntries.length) return;
+  const active = Math.max(0, Math.min(index, outlineEntries.length - 1));
+  if (active === outlineActiveIndex) return;
+  outlineActiveIndex = active;
+  outlineEntries.forEach((entry, entryIndex) => {
+    const selected = entryIndex === active;
+    entry.button.classList.toggle('active', selected);
+    entry.button.tabIndex = selected ? 0 : -1;
+    if (selected) entry.button.setAttribute('aria-current', 'location');
+    else entry.button.removeAttribute('aria-current');
+  });
+}
+function updateActiveOutline() {
+  if (!outlineEntries.length) return;
+  const line = $('reader-scroll').getBoundingClientRect().top + 88;
+  let low = 0, high = outlineEntries.length - 1, active = 0;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    if (outlineEntries[middle].element.getBoundingClientRect().top <= line) {
+      active = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  setActiveOutline(active);
+}
+function scheduleOutlineActive() {
+  if (outlineActiveFrame !== null) return;
+  outlineActiveFrame = requestAnimationFrame(() => { outlineActiveFrame = null; updateActiveOutline(); });
+}
+$('reader-scroll').addEventListener('scroll', scheduleOutlineActive, { passive: true });
+window.addEventListener('resize', scheduleOutlineActive);
+
+$('outline-items').addEventListener('keydown', event => {
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+  const buttons = [...$('outline-items').querySelectorAll('.outline-link')];
+  if (!buttons.length) return;
+  const current = buttons.indexOf(document.activeElement);
+  const next = event.key === 'Home' ? 0
+    : event.key === 'End' ? buttons.length - 1
+    : (current + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+  event.preventDefault();
+  buttons[next].focus();
+});
+
 async function renderPreview(restoreScroll) {
   if (previewSnapshot?.content === current.content && previewSnapshot.path === current.path) {
     syncPreviewEditing();
@@ -86,14 +134,42 @@ async function renderPreview(restoreScroll) {
     syncPreviewEditing();
     if (themeRevision !== diagramThemeRevision) await refreshMermaid();
     $('outline-items').replaceChildren();
+    outlineEntries = [];
+    outlineActiveIndex = -1;
     const headings = $('preview').querySelectorAll('h1,h2,h3,h4,h5,h6');
     for (const heading of headings) {
-      const button = document.createElement('button'); button.className = 'outline-link'; button.textContent = heading.textContent;
-      button.style.paddingLeft = `${10 + (Number(heading.tagName[1]) - 1) * 10}px`;
-      button.onclick = async () => { const id = heading.id; if (mode !== 'read') await setMode('read'); document.getElementById(id)?.scrollIntoView({ block: 'start' }); };
+      const level = Number(heading.tagName[1]);
+      const button = document.createElement('button');
+      button.className = 'outline-link';
+      button.textContent = heading.textContent;
+      button.title = heading.textContent;
+      button.dataset.level = String(level);
+      button.style.setProperty('--indent', `${(level - 1) * 12}px`);
+      button.tabIndex = -1;
+      button.onclick = async () => {
+        const id = heading.id;
+        if (mode !== 'read') await setMode('read');
+        document.getElementById(id)?.scrollIntoView({ block: 'start' });
+        setActiveOutline(outlineEntries.findIndex(entry => entry.id === id));
+      };
       $('outline-items').append(button);
+      outlineEntries.push({ id: heading.id, element: heading, button });
     }
-    if (!headings.length) { const text = document.createElement('p'); text.className = 'empty-results'; text.textContent = 'No headings yet'; $('outline-items').append(text); }
+    if (outlineEntries.length) {
+      outlineEntries[0].button.tabIndex = 0;
+      $('outline-count').textContent = `${outlineEntries.length} ${outlineEntries.length === 1 ? 'section' : 'sections'}`;
+    } else {
+      $('outline-count').textContent = 'No headings';
+      const empty = document.createElement('div');
+      empty.className = 'sidebar-empty';
+      const title = document.createElement('strong');
+      title.textContent = 'No headings';
+      const hint = document.createElement('span');
+      hint.textContent = 'Add a heading to build the outline.';
+      empty.append(title, hint);
+      $('outline-items').append(empty);
+    }
+    requestAnimationFrame(updateActiveOutline);
     if (!$('find-bar').hidden) updateFind();
     status('');
   } catch (error) { status('Preview unavailable'); toast(error); }

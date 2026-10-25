@@ -1,2 +1,5 @@
 ui/vendor/** linguist-vendored -whitespace
 * text=auto eol=lf
+
+ui/fonts/** linguist-vendored
+ui/fonts/**/*.woff2 binary

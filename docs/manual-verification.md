@@ -17,18 +17,25 @@ changes to `src/main.rs`, `tauri.conf.json`, the CSP, or the UI modules.
 
 ## Preview and navigation
 
-1. Open a document containing a heading, table, task list, footnote, inline math,
-   display math, a Mermaid diagram, and a local image.
+1. Open a document containing several heading levels, a table, task list, footnote,
+   inline math, display math, a Mermaid diagram, and a local image.
 2. Confirm math, the diagram, syntax highlighting, and the local image render.
-3. Switch themes several times; confirm diagrams re-render with matching colours
+3. Confirm the header shows icon-only eye and pencil controls with "Preview" /
+   "Edit" tooltips, and that the selected mode is clear.
+4. Open the contents sidebar and scroll the document; confirm the active section
+   follows the reading position and arrow keys move between outline entries.
+5. Run **Use sans-serif reading text** and **Use serif reading text** from the
+   command window; confirm the document face changes, the interface does not, and
+   the choice survives a restart.
+6. Switch themes several times; confirm diagrams re-render with matching colours
    and the document does not jump.
-4. Ctrl/Command-click a `#heading` link and confirm it scrolls.
-5. Left-click an `https://` link; confirm it opens in the default browser and the
+7. Ctrl/Command-click a `#heading` link and confirm it scrolls.
+8. Left-click an `https://` link; confirm it opens in the default browser and the
    Folio window stays on the document.
-6. Middle-click the same link and drag it toward the window; confirm Folio does
+9. Middle-click the same link and drag it toward the window; confirm Folio does
    **not** navigate away. This verifies both the `auxclick`/`dragstart` guards and
    the `on_navigation` allowlist in `src/main.rs`.
-7. Try a relative link inside the document folder (opens), a `../` escape (error),
+10. Try a relative link inside the document folder (opens), a `../` escape (error),
    and a `data:text/html...` link (not clickable).
 
 ## Remote-image privacy

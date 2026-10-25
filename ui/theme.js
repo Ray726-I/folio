@@ -98,7 +98,7 @@ function mermaidThemeVariables() {
     ...categorical,
     darkMode: dark,
     background: cssVarColor('--bg'),
-    fontFamily: '"Adwaita Sans","Cantarell",system-ui,sans-serif',
+    fontFamily: '"Inter","Adwaita Sans","Cantarell",system-ui,sans-serif',
     fontSize: '15px',
     primaryColor: node,
     primaryTextColor: text,
@@ -164,7 +164,7 @@ function mermaidThemeVariables() {
 function mermaidConfig() {
   return {
     startOnLoad: false, securityLevel: 'strict', suppressErrorRendering: true, theme: 'base', look: 'classic',
-    themeVariables: mermaidThemeVariables(), fontFamily: '"Adwaita Sans","Cantarell",system-ui,sans-serif',
+    themeVariables: mermaidThemeVariables(), fontFamily: '"Inter","Adwaita Sans","Cantarell",system-ui,sans-serif',
     flowchart: { htmlLabels: true, curve: 'basis', nodeSpacing: 36, rankSpacing: 46, padding: 16, diagramPadding: 8, useMaxWidth: true },
     sequence: { useMaxWidth: true },
     gantt: { fontSize: 14, sectionFontSize: 14, barHeight: 24, barGap: 8 }

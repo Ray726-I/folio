@@ -1,9 +1,21 @@
 <!doctype html>
-<html lang="en" data-theme="system" data-mode="read">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Folio</title><link rel="stylesheet" href="styles.css"><script src="paths.js" defer></script><script src="core.js" defer></script><script src="theme.js" defer></script><script src="preview.js" defer></script><script src="editor.js" defer></script><script src="app.js" defer></script></head>
+<html lang="en" data-theme="system" data-mode="read" data-reading-font="serif">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Folio</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="paths.js" defer></script>
+  <script src="core.js" defer></script>
+  <script src="theme.js" defer></script>
+  <script src="preview.js" defer></script>
+  <script src="editor.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
 <body>
   <svg class="icon-definitions" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"/><path d="M5.5 9.5V21h13V9.5M9.5 21v-6h5v6"/></symbol>
     <symbol id="i-open" viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h5l3 3h6a2 2 0 0 1 2 2v3M3 8h18l-3 12H6L3 8Z"/></symbol>
     <symbol id="i-save" viewBox="0 0 24 24"><path d="M4 3h13l4 4v14H3V4a1 1 0 0 1 1-1Zm3 0v7h10V3M7 21v-7h10v7"/></symbol>
     <symbol id="i-edit" viewBox="0 0 24 24"><path d="m15 4 5 5M4 20l5-1L21 7a2 2 0 0 0-4-4L5 15l-1 5Z"/></symbol>
@@ -19,24 +31,170 @@
     <symbol id="i-focus" viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"/></symbol>
     <symbol id="i-width-expand" viewBox="0 0 24 24"><path d="M4 5v14M20 5v14M5 12h14M8 9l-3 3 3 3M16 9l3 3-3 3"/></symbol>
     <symbol id="i-width-contract" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14M2 12h7m-3-3 3 3-3 3M22 12h-7m3-3-3 3 3 3"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.35 5.65M20 5v6h-6"/></symbol>
+    <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+    <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></symbol>
   </svg>
+
   <header class="headerbar">
-    <div class="header-start"><button id="open" class="button" title="Open a file or folder (Ctrl+O)" aria-label="Open a file or folder (Ctrl+O)"><svg class="icon"><use href="#i-open"/></svg><span>Open</span></button><button id="folder-toggle" class="icon-button" title="Toggle file tree (Ctrl+B)" aria-label="Toggle file tree" aria-pressed="false" hidden><svg class="icon"><use href="#i-open"/></svg></button><button id="outline-toggle" class="icon-button document-control" title="Toggle outline" aria-label="Toggle outline" aria-pressed="false" hidden><svg class="icon"><use href="#i-outline"/></svg></button></div>
-    <div class="window-title"><div><span id="document-name">Folio</span><span id="dirty-dot" class="dirty-dot" aria-label="Unsaved changes" hidden></span></div><div id="document-location" class="subtitle">Markdown, one file at a time</div></div>
-    <div class="header-end"><button id="width-toggle" class="icon-button document-control" title="Use full document width" aria-label="Use full document width" aria-pressed="false" hidden><svg class="icon"><use href="#i-width-expand"/></svg></button><div id="mode-switch" class="segmented document-control" role="group" aria-label="Document mode" hidden><button id="read-mode" aria-pressed="true" title="Preview only">Preview</button><button id="edit-mode" aria-pressed="false" title="Click a line or code block to edit Markdown (Ctrl+E)">Edit</button></div><button id="save" class="icon-button document-control" title="Save (Ctrl+S)" aria-label="Save" hidden><svg class="icon"><use href="#i-save"/></svg></button><button id="palette-open" class="icon-button" title="Commands and themes (Ctrl+Shift+P)" aria-label="Open command window"><svg class="icon"><use href="#i-search"/></svg></button></div>
+    <div class="header-start">
+      <button id="home" class="icon-button" title="Go to welcome screen" aria-label="Go to welcome screen" disabled>
+        <svg class="icon" aria-hidden="true"><use href="#i-home"/></svg>
+      </button>
+      <button id="open" class="button ghost" title="Open a file or folder (Ctrl+O)" aria-label="Open a file or folder (Ctrl+O)">
+        <svg class="icon" aria-hidden="true"><use href="#i-open"/></svg><span>Open</span>
+      </button>
+      <span class="header-divider" aria-hidden="true"></span>
+      <button id="folder-toggle" class="icon-button" title="Toggle file tree (Ctrl+B)" aria-label="Toggle file tree" aria-controls="file-browser" aria-expanded="false" aria-pressed="false" hidden>
+        <svg class="icon" aria-hidden="true"><use href="#i-open"/></svg>
+      </button>
+      <button id="outline-toggle" class="icon-button document-control" title="Toggle contents" aria-label="Toggle contents" aria-controls="outline" aria-expanded="false" aria-pressed="false" hidden>
+        <svg class="icon" aria-hidden="true"><use href="#i-outline"/></svg>
+      </button>
+    </div>
+    <div class="window-title">
+      <div class="window-title-line"><span id="document-name">Folio</span><span id="dirty-dot" class="dirty-dot" aria-label="Unsaved changes" hidden></span></div>
+      <div id="document-location" class="subtitle">Markdown, one file at a time</div>
+    </div>
+    <div class="header-end">
+      <button id="width-toggle" class="icon-button document-control" title="Use full document width" aria-label="Use full document width" aria-pressed="false" hidden>
+        <svg class="icon" aria-hidden="true"><use href="#i-width-expand"/></svg>
+      </button>
+      <div id="mode-switch" class="segmented document-control" role="group" aria-label="Document mode" hidden>
+        <button id="read-mode" aria-pressed="true" aria-label="Preview" title="Preview (Ctrl+E)">
+          <svg class="icon" aria-hidden="true"><use href="#i-read"/></svg>
+        </button>
+        <button id="edit-mode" aria-pressed="false" aria-label="Edit" title="Edit (Ctrl+E)">
+          <svg class="icon" aria-hidden="true"><use href="#i-edit"/></svg>
+        </button>
+      </div>
+      <span class="header-divider" aria-hidden="true"></span>
+      <button id="save" class="icon-button document-control" title="Save (Ctrl+S)" aria-label="Save" hidden>
+        <svg class="icon" aria-hidden="true"><use href="#i-save"/></svg>
+      </button>
+      <button id="palette-open" class="icon-button" title="Commands and themes (Ctrl+Shift+P)" aria-label="Open command window">
+        <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+      </button>
+    </div>
   </header>
+
   <main id="workspace">
-    <section id="welcome" class="welcome"><div class="welcome-inner"><div class="app-mark" aria-hidden="true"><svg viewBox="0 0 80 80"><rect x="18" y="9" width="44" height="62" rx="8"/><path d="M29 29h22M29 40h22M29 51h14"/></svg></div><h1>Open a Markdown file or folder</h1><p>A quiet place to read and edit.</p><button id="welcome-open" class="button suggested"><svg class="icon"><use href="#i-open"/></svg>Open…</button><div class="welcome-actions"><button id="new" class="text-button">New document</button><span>·</span><button id="sample" class="text-button">Try a sample</button></div><div id="recent-section" hidden><h2>Recent files</h2><div id="recent-files" class="recent-files"></div></div><p class="welcome-hint">Drop a file here, or press <kbd>Ctrl</kbd> <kbd>O</kbd></p></div></section>
-    <div id="document-view" class="document-view" hidden><aside id="outline" hidden><h2>Contents</h2><nav id="outline-items" aria-label="Document outline"></nav></aside><div id="outline-divider" class="sidebar-resizer" role="separator" aria-label="Resize contents sidebar" aria-orientation="vertical" tabindex="0" hidden></div><aside id="file-browser" aria-label="File tree" hidden><div class="folder-heading"><div><h2>Explorer</h2><p id="folder-name"></p></div><button id="folder-refresh" class="icon-button tiny" title="Refresh file tree" aria-label="Refresh file tree">↻</button><button id="folder-close" class="icon-button tiny" title="Close file tree" aria-label="Close file tree"><svg class="icon"><use href="#i-close"/></svg></button></div><nav id="folder-items" aria-label="Markdown files in folder"></nav></aside><div id="folder-divider" class="sidebar-resizer" role="separator" aria-label="Resize folder sidebar" aria-orientation="vertical" tabindex="0" hidden></div><div class="document-body">
-      <div id="disk-banner" class="disk-banner" role="status" hidden><span>This file changed on disk.</span><button id="reload" class="button small">Reload</button><button id="dismiss-disk" class="icon-button" aria-label="Dismiss"><svg class="icon"><use href="#i-close"/></svg></button></div>
-      <div id="find-bar" class="find-bar" hidden><svg class="icon"><use href="#i-search"/></svg><input id="find-input" type="search" placeholder="Find in document…" aria-label="Find in document"><span id="find-result" aria-live="polite"></span><button id="find-previous" class="button small" aria-label="Previous match">↑</button><button id="find-next" class="button small" aria-label="Next match">↓</button><button id="find-close" class="icon-button" aria-label="Close search"><svg class="icon"><use href="#i-close"/></svg></button></div>
-      <div id="reader-scroll" class="reader-scroll" tabindex="0" aria-label="Markdown preview"><article id="preview" class="markdown"></article><div id="folder-empty" class="folder-empty" hidden><h1>Folder opened</h1><p>Choose a Markdown file from the folder list.</p></div></div>
-    </div></div>
+    <section id="welcome" class="welcome">
+      <div class="welcome-inner">
+        <div class="app-mark" aria-hidden="true">
+          <svg viewBox="0 0 48 48"><path d="M13 4.5h15L36 12v31.5H13z"/><path d="M28 4.5V12h8M19 21h12M19 27h12M19 33h8"/></svg>
+        </div>
+        <p class="welcome-eyebrow">A quiet Markdown workspace</p>
+        <h1>Open a Markdown file or folder.</h1>
+        <p class="welcome-lede">Read comfortably, edit in place, and keep every file on your own disk.</p>
+        <div class="welcome-primary">
+          <button id="welcome-open" class="button suggested large">
+            <svg class="icon" aria-hidden="true"><use href="#i-open"/></svg>Open file…
+          </button>
+          <button id="new" class="button large">
+            <svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>New document
+          </button>
+        </div>
+        <button id="sample" class="text-button welcome-sample">or try a sample document →</button>
+        <section id="recent-section" class="welcome-recent" hidden>
+          <div class="welcome-section-head"><h2>Recent</h2><span>Local files</span></div>
+          <div id="recent-files" class="recent-files"></div>
+        </section>
+        <p class="welcome-hint">Drop a file anywhere, or press <kbd>Ctrl</kbd><kbd>O</kbd></p>
+      </div>
+    </section>
+
+    <div id="document-view" class="document-view" hidden>
+      <aside id="outline" class="sidebar" hidden aria-label="Document contents">
+        <div class="sidebar-head">
+          <div class="sidebar-heading">
+            <h2>Contents</h2>
+            <p id="outline-count" class="sidebar-meta">No headings</p>
+          </div>
+          <button id="outline-close" class="icon-button tiny" title="Close contents" aria-label="Close contents">
+            <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+          </button>
+        </div>
+        <nav id="outline-items" class="sidebar-scroll" aria-label="Document outline"></nav>
+      </aside>
+      <div id="outline-divider" class="sidebar-resizer" role="separator" aria-label="Resize contents sidebar" aria-orientation="vertical" tabindex="0" hidden></div>
+
+      <aside id="file-browser" class="sidebar" aria-label="File tree" hidden>
+        <div class="sidebar-head">
+          <div class="sidebar-heading">
+            <h2>Explorer</h2>
+            <p id="folder-name" class="sidebar-meta"></p>
+          </div>
+          <div class="sidebar-actions">
+            <button id="folder-refresh" class="icon-button tiny" title="Refresh file tree" aria-label="Refresh file tree">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>
+            </button>
+            <button id="folder-close" class="icon-button tiny" title="Close file tree" aria-label="Close file tree">
+              <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+            </button>
+          </div>
+        </div>
+        <nav id="folder-items" class="sidebar-scroll" aria-label="Markdown files in folder"></nav>
+      </aside>
+      <div id="folder-divider" class="sidebar-resizer" role="separator" aria-label="Resize folder sidebar" aria-orientation="vertical" tabindex="0" hidden></div>
+
+      <div class="document-body">
+        <div id="disk-banner" class="disk-banner" role="status" hidden>
+          <span>This file changed on disk.</span>
+          <button id="reload" class="button small">Reload</button>
+          <button id="dismiss-disk" class="icon-button" aria-label="Dismiss"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
+        </div>
+        <div id="find-bar" class="find-bar" hidden>
+          <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+          <input id="find-input" type="search" placeholder="Find in document…" aria-label="Find in document">
+          <span id="find-result" aria-live="polite"></span>
+          <button id="find-previous" class="icon-button tiny" aria-label="Previous match" title="Previous match"><svg class="icon" aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
+          <button id="find-next" class="icon-button tiny" aria-label="Next match" title="Next match"><svg class="icon" aria-hidden="true"><use href="#i-arrow-down"/></svg></button>
+          <button id="find-close" class="icon-button" aria-label="Close search"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
+        </div>
+        <div id="reader-scroll" class="reader-scroll" tabindex="0" aria-label="Markdown preview">
+          <article id="preview" class="markdown"></article>
+          <div id="folder-empty" class="folder-empty" hidden>
+            <h1>Folder opened</h1>
+            <p>Choose a Markdown file from the folder list.</p>
+          </div>
+        </div>
+      </div>
+    </div>
   </main>
-  <footer id="statusbar" hidden><div class="status-start"><span id="word-count">0 words</span><span class="status-divider">·</span><span id="reading-time">1 min read</span><span id="line-ending" hidden></span></div><div id="app-status" role="status" aria-live="polite"></div><div class="status-end"><span id="theme-label">System</span><span class="status-divider">·</span><button id="zoom-out" class="icon-button tiny" aria-label="Zoom out (Ctrl+-)" title="Zoom out (Ctrl+-)"><svg class="icon"><use href="#i-minus"/></svg></button><button id="zoom-reset" class="text-button" title="Reset window zoom (Ctrl+0)">100%</button><button id="zoom-in" class="icon-button tiny" aria-label="Zoom in (Ctrl+=)" title="Zoom in (Ctrl+=)"><svg class="icon"><use href="#i-plus"/></svg></button></div></footer>
-  <dialog id="open-dialog" class="file-dialog" aria-labelledby="open-dialog-title"><div class="file-dialog-header"><h2 id="open-dialog-title">Open file or folder</h2><button id="open-dialog-close" class="icon-button" aria-label="Close"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="file-dialog-path"><button id="open-parent" class="icon-button" title="Parent folder" aria-label="Parent folder">↑</button><input id="open-path" aria-label="Folder path" spellcheck="false"><button id="open-go" class="button small">Go</button></div><div id="open-items" class="file-dialog-items" role="listbox" aria-label="Files and folders"></div><div class="file-dialog-footer"><span id="open-selection-hint">Select a Markdown file or folder</span><button id="open-cancel" class="button">Cancel</button><button id="open-confirm" class="button suggested">Open</button></div></dialog>
-  <div id="drop-overlay" hidden><div><svg class="icon"><use href="#i-open"/></svg><h2>Drop to open</h2><p>One Markdown file. No setup.</p></div></div>
-  <dialog id="command-dialog" class="command-dialog" aria-label="Command window"><div class="command-input"><svg class="icon"><use href="#i-search"/></svg><input id="command-search" autocomplete="off" placeholder="Search commands or themes…" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="command-results" aria-label="Search commands or themes"><kbd>Esc</kbd></div><div id="command-scope" class="command-scope">Commands</div><div id="command-results" role="listbox" aria-label="Commands"></div><div class="command-footer"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>Enter</kbd> select</span><span id="palette-hint">Themes, files, and controls</span></div></dialog>
+
+  <footer id="statusbar" hidden>
+    <div class="status-start"><span id="word-count">0 words</span><span class="status-divider">·</span><span id="reading-time">1 min read</span><span id="line-ending" hidden></span></div>
+    <div id="app-status" role="status" aria-live="polite"></div>
+    <div class="status-end">
+      <span id="theme-label">System</span><span class="status-divider">·</span>
+      <button id="zoom-out" class="icon-button tiny" aria-label="Zoom out (Ctrl+-)" title="Zoom out (Ctrl+-)"><svg class="icon" aria-hidden="true"><use href="#i-minus"/></svg></button>
+      <button id="zoom-reset" class="text-button" title="Reset window zoom (Ctrl+0)">100%</button>
+      <button id="zoom-in" class="icon-button tiny" aria-label="Zoom in (Ctrl+=)" title="Zoom in (Ctrl+=)"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg></button>
+    </div>
+  </footer>
+
+  <dialog id="open-dialog" class="file-dialog" aria-labelledby="open-dialog-title">
+    <div class="file-dialog-header"><h2 id="open-dialog-title">Open file or folder</h2><button id="open-dialog-close" class="icon-button" aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div>
+    <div class="file-dialog-path">
+      <button id="open-parent" class="icon-button" title="Parent folder" aria-label="Parent folder"><svg class="icon" aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
+      <input id="open-path" aria-label="Folder path" spellcheck="false">
+      <button id="open-go" class="button small">Go</button>
+    </div>
+    <div id="open-items" class="file-dialog-items" role="listbox" aria-label="Files and folders"></div>
+    <div class="file-dialog-footer"><span id="open-selection-hint">Select a Markdown file or folder</span><button id="open-cancel" class="button">Cancel</button><button id="open-confirm" class="button suggested">Open</button></div>
+  </dialog>
+
+  <div id="drop-overlay" hidden><div><svg class="icon" aria-hidden="true"><use href="#i-open"/></svg><h2>Drop to open</h2><p>One Markdown file. No setup.</p></div></div>
+
+  <dialog id="command-dialog" class="command-dialog" aria-label="Command window">
+    <div class="command-input"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><input id="command-search" autocomplete="off" placeholder="Search commands or themes…" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="command-results" aria-label="Search commands or themes"><kbd>Esc</kbd></div>
+    <div id="command-scope" class="command-scope">Commands</div>
+    <div id="command-results" role="listbox" aria-label="Commands"></div>
+    <div class="command-footer"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>Enter</kbd> select</span><span id="palette-hint">Themes, files, and controls</span></div>
+  </dialog>
+
   <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title"><h2 id="confirm-title"></h2><p id="confirm-message"></p><div id="confirm-actions"></div></dialog>
   <div id="toast" role="status" aria-live="polite" hidden></div>
-</body></html>
+</body>
+</html>

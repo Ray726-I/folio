@@ -409,11 +409,12 @@ fn document_changed(state: tauri::State<'_, Arc<AppState>>) -> bool {
 
 #[tauri::command]
 fn set_title(name: String, dirty: bool, window: tauri::WebviewWindow) {
-    let _ = window.set_title(&format!(
-        "{}{} — Folio",
-        if dirty { "● " } else { "" },
-        name
-    ));
+    let title = if name.is_empty() {
+        "Folio".to_string()
+    } else {
+        format!("{}{} — Folio", if dirty { "● " } else { "" }, name)
+    };
+    let _ = window.set_title(&title);
 }
 
 #[tauri::command]
@@ -517,6 +518,11 @@ mod navigation_tests {
         assert!(!is_app_navigation(&url("https://example.com/")));
         assert!(!is_app_navigation(&url("data:text/html,boom")));
         assert!(!is_app_navigation(&url("file:///tmp/note.md")));
+        if cfg!(dev) {
+            assert!(is_app_navigation(&url("http://127.0.0.1:1430/index.html")));
+            assert!(is_app_navigation(&url("http://localhost:1430/index.html")));
+            assert!(!is_app_navigation(&url("http://127.0.0.2:1430/index.html")));
+        }
     }
 }
 
@@ -572,13 +578,22 @@ fn queue_paths(app: &tauri::AppHandle, paths: Vec<String>) {
 /// Only the app's own origin may become a top-level page. External links go
 /// through the opener plugin, and middle-click/drag on a preview link must not
 /// replace the UI with a remote document.
+fn is_loopback_host(url: &tauri::Url) -> bool {
+    matches!(
+        url.host_str(),
+        Some("localhost") | Some("127.0.0.1") | Some("[::1]") | Some("::1")
+    )
+}
+
 fn is_app_navigation(url: &tauri::Url) -> bool {
     match url.scheme() {
         "tauri" | "ipc" => url.host_str() == Some("localhost"),
         "about" => url.path() == "blank",
         "http" | "https" => {
+            // The dev server can bind to 127.0.0.1 (Tauri's default) or localhost.
+            // Production pages only ever load from the app's own origin.
             (url.host_str() == Some("tauri.localhost") && url.port().is_none())
-                || (cfg!(dev) && url.host_str() == Some("localhost"))
+                || (cfg!(dev) && is_loopback_host(url))
         }
         _ => false,
     }

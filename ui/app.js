@@ -2,10 +2,13 @@
 let current = { path: null, name: 'Untitled.md', content: '', saved: '', active: false };
 let mode = 'read', busy = false, queue = Promise.resolve();
 let activeFolder = null, folderEntries = [], folderVisible = true, expandedFolders = new Set();
-let fontSize = Math.min(40, Math.max(12, Number(preferences.get('fontSize', 18)) || 18));
+let fontSize = Math.min(40, Math.max(12, Number(preferences.get('fontSize', 19)) || 19));
 let windowZoom = Math.min(2, Math.max(.6, Number(preferences.get('windowZoom', 1)) || 1));
 let remoteImages = preferences.get('remoteImages', false) === true;
-let outlineVisible = preferences.get('outline', false), toastTimer;
+let readingFont = preferences.get('readingFont', 'serif') === 'sans' ? 'sans' : 'serif';
+const legacyOutline = preferences.get('outline', null);
+if (preferences.get('outlineWidth', null) === null && typeof legacyOutline === 'number') preferences.set('outlineWidth', legacyOutline);
+let outlineVisible = preferences.get('outlineVisible', typeof legacyOutline === 'boolean' ? legacyOutline : false), toastTimer;
 let wideLayout = preferences.get('wideLayout', false);
 const dirty = () => current.content !== current.saved;
 function commandError(error) {
@@ -14,15 +17,17 @@ function commandError(error) {
   return { code: message.startsWith('FILE_CHANGED:') ? 'file_changed' : 'error', message: message.replace(/^FILE_CHANGED:\s*/, '') };
 }
 function errorMessage(error) { return commandError(error).message; }
-function icon(name) { const node = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); node.classList.add('icon'); const use = document.createElementNS('http://www.w3.org/2000/svg', 'use'); use.setAttribute('href', `#i-${name}`); node.append(use); return node; }
+function icon(name) { const node = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); node.classList.add('icon'); node.setAttribute('aria-hidden', 'true'); const use = document.createElementNS('http://www.w3.org/2000/svg', 'use'); use.setAttribute('href', `#i-${name}`); node.append(use); return node; }
 function toast(message) { $('toast').textContent = errorMessage(message); $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 4500); }
 function status(message) { $('app-status').textContent = message; }
 function updateTitle() {
-  $('document-name').textContent = current.active ? current.name : activeFolder?.name || 'Folio';
+  const name = current.active ? current.name : activeFolder?.name || '';
+  $('document-name').textContent = name || 'Folio';
   $('document-location').textContent = current.path ? dirname(current.path) : activeFolder?.path || (current.active ? 'Unsaved document' : 'Markdown files and folders');
   $('document-location').title = current.path || activeFolder?.path || '';
   $('dirty-dot').hidden = !dirty();
-  invoke('set_title', { name: current.active ? current.name : activeFolder?.name || 'Folio', dirty: dirty() }).catch(() => {});
+  $('save').classList.toggle('is-dirty', dirty());
+  invoke('set_title', { name, dirty: dirty() }).catch(() => {});
 }
 function updateStats() {
   const words = current.content.trim().split(/\s+/).filter(Boolean).length;
@@ -37,10 +42,36 @@ function setLineEnding(lineEnding) {
 }
 function showDocument() {
   $('welcome').hidden = true; $('document-view').hidden = false; $('statusbar').hidden = false;
+  $('home').disabled = false;
   document.querySelectorAll('.document-control').forEach(control => { control.hidden = !current.active; });
   resetHistory(); $('disk-banner').hidden = true; updateTitle(); updateStats(); setOutline(outlineVisible);
   $('folder-empty').hidden = current.active || !activeFolder;
   renderFolderEntries();
+}
+function showWelcome() {
+  $('welcome').hidden = false; $('document-view').hidden = true; $('statusbar').hidden = true;
+  $('home').disabled = true;
+  $('preview').replaceChildren(); $('folder-empty').hidden = true;
+  $('disk-banner').hidden = true; $('find-bar').hidden = true;
+  $('outline').hidden = true; $('outline-divider').hidden = true;
+  $('file-browser').hidden = true; $('folder-divider').hidden = true; $('folder-toggle').hidden = true;
+  document.body.classList.remove('focus-mode');
+  document.querySelectorAll('.document-control').forEach(control => { control.hidden = true; });
+  updateTitle(); updateStats();
+}
+function goHome() {
+  return enqueue(async () => {
+    if ($('document-view').hidden) return;
+    if (!(await allowDiscard())) return;
+    await invoke('new_document');
+    ++renderGeneration;
+    previewSnapshot = null; previewBlocks = [];
+    current = { path: null, name: 'Untitled.md', content: '', saved: '', active: false };
+    activeFolder = null; folderEntries = []; expandedFolders.clear(); folderVisible = true;
+    setLineEnding(null);
+    mode = 'read'; root.dataset.mode = mode;
+    showWelcome(); status('');
+  });
 }
 const narrowDrawers = () => window.matchMedia('(max-width:960px)').matches;
 function setOutline(visible, persist = true) {
@@ -49,15 +80,16 @@ function setOutline(visible, persist = true) {
   $('outline').hidden = !visible || !current.active;
   $('outline-divider').hidden = $('outline').hidden;
   $('outline-toggle').setAttribute('aria-pressed', String(visible));
-  if (persist) preferences.set('outline', visible);
+  $('outline-toggle').setAttribute('aria-expanded', String(visible && current.active));
+  if (persist) preferences.set('outlineVisible', visible);
 }
-function setupSidebarResize(sidebarId, dividerId, key, defaultWidth) {
+function setupSidebarResize(sidebarId, dividerId, key, defaultWidth, styleName = key) {
   const sidebar = $(sidebarId), divider = $(dividerId);
-  const property = `--${key}-sidebar-width`;
+  const property = `--${styleName}-sidebar-width`;
   function setWidth(value) {
     const other = sidebarId === 'file-browser' ? $('outline') : $('file-browser');
     const available = window.innerWidth - (other.hidden ? 0 : other.getBoundingClientRect().width) - 320;
-    const width = Math.max(160, Math.min(Math.max(160, Math.min(560, available)), value));
+    const width = Math.max(200, Math.min(Math.max(200, Math.min(520, available)), value));
     document.body.style.setProperty(property, `${width}px`);
     preferences.set(key, width);
   }
@@ -67,8 +99,8 @@ function setupSidebarResize(sidebarId, dividerId, key, defaultWidth) {
   divider.addEventListener('pointerup', event => { if (divider.hasPointerCapture(event.pointerId)) divider.releasePointerCapture(event.pointerId); divider.classList.remove('dragging'); });
   divider.addEventListener('keydown', event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); setWidth(sidebar.getBoundingClientRect().width + (event.key === 'ArrowRight' ? 20 : -20)); } });
 }
-setupSidebarResize('file-browser', 'folder-divider', 'folder', 235);
-setupSidebarResize('outline', 'outline-divider', 'outline', 215);
+setupSidebarResize('file-browser', 'folder-divider', 'folder', 250);
+setupSidebarResize('outline', 'outline-divider', 'outlineWidth', 248, 'outline');
 async function setMode(next) {
   if (!current.active) return;
   await commitInlineEdit();
@@ -82,8 +114,15 @@ async function setMode(next) {
   if (!$('find-bar').hidden) updateFind();
 }
 function requestMode(next) { return enqueue(() => setMode(next)); }
-function zoomText(delta, reset = false) { fontSize = reset ? 18 : Math.min(40, Math.max(12, fontSize + delta)); root.style.setProperty('--text-size', `${fontSize}px`); preferences.set('fontSize', fontSize); status(`Document text: ${fontSize} px`); }
+function zoomText(delta, reset = false) { fontSize = reset ? 19 : Math.min(40, Math.max(12, fontSize + delta)); root.style.setProperty('--text-size', `${fontSize}px`); preferences.set('fontSize', fontSize); status(`Document text: ${fontSize} px`); }
 function zoomWindow(delta, reset = false) { windowZoom = reset ? 1 : Math.min(2, Math.max(.6, Math.round((windowZoom + delta) * 10) / 10)); $('zoom-reset').textContent = `${Math.round(windowZoom * 100)}%`; preferences.set('windowZoom', windowZoom); invoke('set_window_zoom', { scale: windowZoom }).catch(toast); }
+function applyReadingFont(font = readingFont, persist = true) {
+  readingFont = font === 'sans' ? 'sans' : 'serif';
+  root.dataset.readingFont = readingFont;
+  if (persist) preferences.set('readingFont', readingFont);
+  if ($('command-dialog').open) renderCommands();
+}
+function toggleReadingFont() { applyReadingFont(readingFont === 'serif' ? 'sans' : 'serif'); }
 function toggleRemoteImages() {
   remoteImages = !remoteImages;
   preferences.set('remoteImages', remoteImages);
@@ -96,7 +135,7 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () 
 });
 // The outline steps aside for the file tree on narrow screens; give it back when there is room.
 window.matchMedia('(max-width:960px)').addEventListener('change', event => {
-  if (!event.matches && preferences.get('outline', false) && $('outline').hidden) setOutline(true);
+  if (!event.matches && outlineVisible && $('outline').hidden) setOutline(true);
 });
 function ask(title, message, choices) {
   return new Promise(resolve => {
@@ -184,6 +223,7 @@ function setFolderVisible(visible) {
   $('folder-divider').hidden = !shown;
   $('folder-toggle').hidden = !activeFolder;
   $('folder-toggle').setAttribute('aria-pressed', String(shown));
+  $('folder-toggle').setAttribute('aria-expanded', String(shown));
 }
 function expandParentsOf(path) {
   for (const entry of folderEntries) {
@@ -204,7 +244,7 @@ function entryIsVisible(entry) {
 function renderFolderEntries() {
   setFolderVisible(folderVisible);
   const list = $('folder-items');
-  const scrollTop = $('file-browser').scrollTop;
+  const scrollTop = $('folder-items').scrollTop;
   list.replaceChildren();
   if (!activeFolder) return;
   $('folder-name').textContent = activeFolder.name || activeFolder.path;
@@ -213,7 +253,7 @@ function renderFolderEntries() {
     if (!entryIsVisible(entry)) continue;
     const button = document.createElement('button');
     button.className = `folder-entry${entry.directory ? ' directory' : ''}${samePath(current.path, entry.path) ? ' selected' : ''}`;
-    button.style.paddingLeft = `${7 + entry.depth * 16}px`;
+    button.style.setProperty('--depth', entry.depth);
     button.title = entry.path;
     if (entry.directory) {
       const expanded = expandedFolders.has(pathKey(entry.path));
@@ -230,8 +270,13 @@ function renderFolderEntries() {
     const label = document.createElement('span'); label.textContent = entry.name; button.append(label);
     list.append(button);
   }
-  if (!folderEntries.length) { const empty = document.createElement('p'); empty.className = 'empty-results'; empty.textContent = 'No Markdown files or folders'; list.append(empty); }
-  $('file-browser').scrollTop = scrollTop;
+  if (!folderEntries.length) {
+    const empty = document.createElement('div'); empty.className = 'sidebar-empty';
+    const title = document.createElement('strong'); title.textContent = 'No Markdown files';
+    const hint = document.createElement('span'); hint.textContent = 'Open another folder to browse it.';
+    empty.append(title, hint); list.append(empty);
+  }
+  $('folder-items').scrollTop = scrollTop;
 }
 async function openFolderPath(path, confirmed = false) {
   if (!confirmed && !(await allowDiscard())) return false;
@@ -327,6 +372,7 @@ function allCommands() {
     { label: 'Redo', icon: 'edit', shortcut: 'Ctrl+Shift+Z / Ctrl+Y', action: () => enqueue(() => undoRedo(true)) },
     { label: 'Find in document', icon: 'search', shortcut: 'Ctrl+F', action: openFind },
     { label: remoteImages ? 'Block remote images' : 'Load remote images', icon: 'read', action: toggleRemoteImages },
+    { label: readingFont === 'serif' ? 'Use sans-serif reading text' : 'Use serif reading text', icon: 'read', action: toggleReadingFont },
     { label: 'Toggle outline', icon: 'outline', action: () => setOutline(!outlineVisible) },
     { label: 'Toggle focus mode', icon: 'focus', shortcut: 'F11', action: toggleFocus },
     { label: wideLayout ? 'Use centered document width' : 'Use full document width', icon: wideLayout ? 'width-contract' : 'width-expand', action: toggleDocumentWidth },
@@ -432,6 +478,7 @@ $('preview').addEventListener('change', event => {
     await renderPreview();
   });
 });
+$('home').onclick = goHome;
 $('open').onclick = $('welcome-open').onclick = openChooser;
 $('open-parent').onclick = () => pickerListing?.parent && browseTo(pickerListing.parent).catch(toast);
 $('open-go').onclick = () => browseTo($('open-path').value.trim()).catch(toast);
@@ -444,7 +491,7 @@ $('folder-toggle').onclick = () => setFolderVisible(!folderVisible);
 $('folder-refresh').onclick = () => activeFolder && enqueue(async () => { const listing = await invoke('open_folder', { path: activeFolder.path }); activeFolder = { path: listing.path, name: listing.name }; folderEntries = listing.entries; renderFolderEntries(); });
 $('new').onclick = () => newDocument(); $('sample').onclick = () => newDocument(true);
 $('read-mode').onclick = () => requestMode('read'); $('edit-mode').onclick = () => requestMode('edit'); $('save').onclick = () => requestSave();
-$('palette-open').onclick = () => openCommands(); $('outline-toggle').onclick = () => setOutline(!outlineVisible);
+$('palette-open').onclick = () => openCommands(); $('outline-toggle').onclick = () => setOutline(!outlineVisible); $('outline-close').onclick = () => setOutline(false);
 $('width-toggle').onclick = toggleDocumentWidth;
 $('zoom-in').onclick = () => zoomWindow(.1); $('zoom-out').onclick = () => zoomWindow(-.1); $('zoom-reset').onclick = () => zoomWindow(0, true);
 $('reload').onclick = () => requestOpen(current.path); $('dismiss-disk').onclick = () => { $('disk-banner').hidden = true; };
@@ -573,6 +620,7 @@ async function start() {
   await listen('request-close', requestClose);
   await listen('open-files', event => { for (const path of event.payload) requestOpenLocation(path); });
   await listen('system-theme', event => { omarchy = event.payload; if (selectedTheme === 'omarchy') applyTheme('omarchy', false); else if ($('command-dialog').open) renderCommands(); });
+  applyReadingFont(readingFont, false);
   const state = await invoke('bootstrap'); setPlatform(state.platform); omarchy = state.theme;
   if (preferences.get('theme', null) === null && omarchy) selectedTheme = 'omarchy';
   applyTheme(selectedTheme, false);
