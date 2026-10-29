@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mermaid-render-cancel"
+description = "Enables the mermaid_render_cancel command without any pre-configured scope."
+commands.allow = ["mermaid_render_cancel"]
+
+[[permission]]
+identifier = "deny-mermaid-render-cancel"
+description = "Denies the mermaid_render_cancel command without any pre-configured scope."
+commands.deny = ["mermaid_render_cancel"]

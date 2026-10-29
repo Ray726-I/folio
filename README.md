@@ -41,6 +41,16 @@ For native prerequisites, follow Tauri's [Linux](https://v2.tauri.app/start/prer
 
 On macOS, use Command in place of Ctrl for the listed shortcuts. The command window supports typing to filter, arrow keys, Enter, and Escape. Search for a theme by name, or select **Change theme…**. There are System, Adwaita Light, Adwaita Dark, Nord, Catppuccin Mocha, Rosé Pine, and Solarized Light themes. Theme, remote-image, reading-font, and text-size preferences persist locally. Recent files store paths, not document contents; they can be cleared from the command window. **Load remote images** / **Block remote images** toggles whether documents may contact image hosts; blocked images appear as a local placeholder. **Use serif reading text** / **Use sans-serif reading text** switches the document face without touching the interface.
 
+### Choose a file picker
+
+Folio uses its built-in file/folder picker by default. In the command window,
+choose **Use system file picker** to use your operating system's dialogs, or
+**Use Folio file picker** to switch back. This choice persists locally.
+With the system picker selected, Open opens a Markdown file; use **Open folder…**
+in the command window for a folder. Save and Save As always use the system dialog.
+Cancelling a picker leaves the current document untouched. After selecting a
+destination, any unsaved changes still require Save, Discard, or Cancel.
+
 ## Omarchy
 
 On Linux, Folio adds a theme named **Omarchy** when it finds a valid current palette. When selected, it reads the active palette's background, foreground, accent, selection, and syntax colors. It checks for changes every two seconds and reapplies them while the app is open. Other selected themes are left alone. If the palette disappears, Omarchy selection falls back to the system appearance until a palette returns. Omarchy palette detection is not available on Windows or macOS.
@@ -58,9 +68,20 @@ The preview supports CommonMark, GFM tables, task lists, strikethrough, footnote
 
 Reading text uses Source Serif 4 by default, while the interface uses Inter and code uses JetBrains Mono; all three are bundled in `ui/fonts/` and fall back to system fonts. A command-window toggle switches the document between serif and sans. The outline tracks the section you are reading and supports arrow-key navigation.
 
-LaTeX and Mermaid run from vendored files in `ui/vendor/` — no CDN or rendering service is used — and are loaded on demand the first time a document contains math or a diagram. Diagrams are re-rendered when the theme changes so their colors always match Folio (including the live Omarchy palette). Invalid Mermaid sources show the diagram source with an error note instead of failing silently. KaTeX uses `throwOnError: false` and restrictive trust settings, and Mermaid uses its strict security level.
+LaTeX and Mermaid use vendored files in `ui/vendor/` — no CDN or rendering service is used — and load on demand. Mermaid runs in a separate offline renderer with restricted native permissions; its SVG output is sanitized before display. Diagrams are re-rendered when the theme changes so their colors match Folio (including the live Omarchy palette). Mermaid diagrams that require external images are unsupported, even when remote document images are enabled; a source fallback explains the failure. Invalid Mermaid sources also show their source with an error note. KaTeX uses `throwOnError: false` and restrictive trust settings, and Mermaid uses its strict security level.
 
 Relative Markdown images in the document's directory or its descendants are loaded locally (including PNG, JPEG, GIF, WebP, and SVG). Images outside that directory are not embedded automatically. Local images are limited to 10 MB each. Documents must be UTF-8 and are currently limited to 20 MB. Uniform CRLF endings and a UTF-8 BOM are preserved on save. Existing files keep their permissions; newly created files follow the process umask rather than being forced to owner-only.
+
+Preview work is bounded independently of file size: 200,000 lines and AST nodes,
+128 levels of blockquote nesting, 64 MiB of generated HTML, 200 image occurrences,
+and 32 MiB of embedded image data URLs, counting repeated references. Local image
+reads are bounded and cached per render. If preview limits are exceeded, Folio
+shows a diagnostic instead of truncating the document. Edit provides the full
+source so it can still be changed and saved. Structural checks are conservative
+for unusual indentation. Mermaid has a separate 256 KiB source and 8 MiB SVG limit.
+Folder and built-in picker listings may be incomplete when enumeration limits
+are reached; a notice identifies limited results rather than implying all
+matching files were found. These limits do not control the OS-native picker.
 
 Saves write a temporary sibling file and rename it atomically. Content fingerprints detect external changes before saving; the app presents Reload, Overwrite, and Cancel choices. It also shows a disk-change banner while the document is open. Folio opens one document at a time. Opening a folder shows a collapsible file tree; unreadable entries are skipped and reported, and very large trees are capped at 5,000 entries and 12 levels. Click a folder to expand it, select a Markdown file to open it, and use the close button or Ctrl+B to hide or show the tree without closing the document. Drag the tree's edge to resize it. In **Edit**, click a rendered text line to reveal its Markdown in place. Other lines stay rendered, including other lines in the same wrapped paragraph. Code, Mermaid, math blocks, and tables reveal their whole source block. Changes apply in memory when you leave the line or press Ctrl+Enter; Ctrl+S saves to disk. Task boxes can be ticked directly. Undo and redo cover text, blocks, and task boxes across mode changes. **Preview** is read-only. Obsidian plugins, PlantUML, and other diagram languages besides Mermaid are not implemented.
 
@@ -102,6 +123,18 @@ The Rust tests cover external-edit conflicts, metadata-based change detection, a
 npm ci
 npx playwright install chromium
 npm run test:ui
+```
+
+`test:ui` includes picker-choice and preview-limit recovery regressions. Run
+`npm run test:picker` or `npm run test:limits` for those checks individually.
+`npm run test:renderer` checks the offline renderer and main-page bridge with
+intercepted network requests and mocked transport where needed. These browser
+checks do not substitute for real Tauri IPC validation.
+For reproducible release-build parser scaling measurements:
+
+```sh
+cargo build --release --example editor-fixture
+node scripts/benchmark-render.cjs
 ```
 
 For real-webview, CSP, and cross-platform checks that the mocked UI tests cannot cover, follow [docs/manual-verification.md](docs/manual-verification.md).

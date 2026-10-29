@@ -2799,3 +2799,70 @@ dialog {
     transition:none
   }
 }
+
+/* ── Preview limits: source stays intact, preview steps aside ─────────────── */
+.markdown .preview-limit {
+  border:1px solid var(--line);
+  border-left:3px solid var(--yellow);
+  background:var(--hover);
+  border-radius:0 8px 8px 0;
+  padding:15px 18px;
+  margin:1.4em 0
+}
+
+.markdown .preview-limit-title {
+  font-weight:700;
+  margin:0 0 6px;
+  color:var(--fg)
+}
+
+.markdown .preview-limit-message {
+  margin:0 0 6px;
+  color:var(--muted);
+  font-size:.9em
+}
+
+.markdown .preview-limit-source-note {
+  margin:0;
+  color:var(--muted);
+  font-size:.82em
+}
+
+.source-fallback {
+  max-width:var(--reading-width);
+  margin:0 auto;
+  padding:0 var(--gutter) clamp(72px,14vh,150px);
+  display:flex;
+  flex-direction:column;
+  gap:8px
+}
+
+.source-fallback label {
+  font-weight:600;
+  font-size:12px;
+  color:var(--muted)
+}
+
+.source-fallback-hint {
+  margin:0;
+  font-size:11.5px;
+  color:var(--muted)
+}
+
+.source-fallback textarea {
+  display:block;
+  width:100%;
+  min-height:40vh;
+  resize:vertical;
+  box-sizing:border-box;
+  border:1px solid var(--line);
+  border-left:2px solid var(--accent);
+  border-radius:0 8px 8px 0;
+  padding:12px;
+  background:color-mix(in srgb,var(--accent) 5%,var(--bg));
+  color:var(--fg);
+  font:calc(var(--text-size)*.85)/1.65 "JetBrains Mono","DejaVu Sans Mono",monospace;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  tab-size:4
+}

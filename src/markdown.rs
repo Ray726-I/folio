@@ -1,7 +1,6 @@
-use base64::{engine::general_purpose::STANDARD, Engine};
 use comrak::{
     adapters::SyntaxHighlighterAdapter,
-    nodes::{AstNode, LineColumn, NodeValue},
+    nodes::{AstNode, NodeValue},
     options::{Plugins, RenderPlugins},
     parse_document,
     plugins::syntect::SyntectAdapter,
@@ -10,12 +9,23 @@ use comrak::{
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
-    fs,
+    fmt,
     path::Path,
-    sync::{Arc, LazyLock},
+    sync::{Arc, LazyLock, Mutex},
 };
 
-#[derive(serde::Serialize)]
+#[path = "markdown/author_html.rs"]
+mod author_html;
+#[path = "markdown/images.rs"]
+mod images;
+#[path = "markdown/limits.rs"]
+mod limits;
+
+use images::ImageCache;
+use limits::{preflight, LineIndex};
+pub use limits::{PreviewLimitError, PreviewLimitKind, RenderLimits, DEFAULT_RENDER_LIMITS};
+
+#[derive(Debug, serde::Serialize)]
 pub struct EditBlock {
     pub start: usize,
     pub end: usize,
@@ -28,7 +38,7 @@ pub struct EditBlock {
     pub nodes: Vec<EditNode>,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Debug, serde::Serialize)]
 pub struct EditNode {
     pub start: usize,
     pub end: usize,
@@ -61,36 +71,64 @@ fn markdown_options() -> Options<'static> {
     extension.header_id_prefix = Some("doc-".into());
     options
 }
-fn byte_offset(source: &str, position: LineColumn) -> Option<usize> {
-    let mut offset = 0usize;
-    for (index, line) in source.split('\n').enumerate() {
-        let line_number = index + 1;
-        if line_number == position.line {
-            return Some(offset + position.column.checked_sub(1)?);
-        }
-        offset += line.len() + 1;
-    }
-    None
-}
-fn node_range(source: &str, node: &comrak::nodes::AstNode) -> Option<(usize, usize)> {
+fn node_range(
+    line_starts: &LineIndex,
+    source: &str,
+    node: &comrak::nodes::AstNode,
+) -> Option<(usize, usize)> {
     let position = node.data().sourcepos;
-    let start = byte_offset(source, position.start)?;
-    let end = byte_offset(source, position.end)? + 1;
+    let start = line_starts.offset(source, position.start)?;
+    let end = line_starts.end_offset(source, position.end)?;
+    if end < start {
+        return None;
+    }
     Some((start, end))
 }
+
+fn check_node_budget<'a>(
+    root: &'a AstNode<'a>,
+    limits: &RenderLimits,
+) -> Result<usize, PreviewLimitError> {
+    let count = root.descendants().count();
+    if count > limits.max_ast_nodes {
+        return Err(PreviewLimitError::new(
+            PreviewLimitKind::AstNodes,
+            format!(
+                "This document has more than the {} preview syntax nodes allowed.",
+                limits.max_ast_nodes
+            ),
+        ));
+    }
+    Ok(count)
+}
+
 #[allow(dead_code)] // used by unit tests and the editor fixture
 pub fn edit_blocks(source: &str) -> Vec<EditBlock> {
+    edit_blocks_checked(source, &DEFAULT_RENDER_LIMITS).unwrap_or_default()
+}
+
+pub fn edit_blocks_checked(
+    source: &str,
+    limits: &RenderLimits,
+) -> Result<Vec<EditBlock>, PreviewLimitError> {
+    preflight(source, limits)?;
     let options = markdown_options();
     let arena = Arena::new();
     let root = parse_document(&arena, source, &options);
-    blocks_from_root(root, source)
+    check_node_budget(root, limits)?;
+    let line_starts = LineIndex::new(source);
+    Ok(blocks_from_root(root, source, &line_starts))
 }
 
-fn blocks_from_root<'a>(root: &'a AstNode<'a>, source: &str) -> Vec<EditBlock> {
+fn blocks_from_root<'a>(
+    root: &'a AstNode<'a>,
+    source: &str,
+    line_starts: &LineIndex,
+) -> Vec<EditBlock> {
     let mut blocks = Vec::new();
     let mut child = root.first_child();
     while let Some(node) = child {
-        if let Some((start, end)) = node_range(source, node) {
+        if let Some((start, end)) = node_range(line_starts, source, node) {
             if let Some(text) = source.get(start..end) {
                 blocks.push(EditBlock {
                     start,
@@ -100,7 +138,7 @@ fn blocks_from_root<'a>(root: &'a AstNode<'a>, source: &str) -> Vec<EditBlock> {
                     nodes: node
                         .descendants()
                         .filter_map(|descendant| {
-                            let (start, end) = node_range(source, descendant)?;
+                            let (start, end) = node_range(line_starts, source, descendant)?;
                             source.get(start..end)?;
                             let data = descendant.data();
                             let (kind, text) = match &data.value {
@@ -130,15 +168,38 @@ fn blocks_from_root<'a>(root: &'a AstNode<'a>, source: &str) -> Vec<EditBlock> {
     }
     blocks
 }
+
 pub fn set_task_checked(source: &str, task_index: usize, checked: bool) -> String {
+    set_task_checked_with_limits(source, task_index, checked, &DEFAULT_RENDER_LIMITS)
+}
+
+/// Toggle a parser-discovered task. Structural limits apply here too: an
+/// over-budget document is returned byte-for-byte unchanged rather than being
+/// partially parsed or truncated.
+pub fn set_task_checked_with_limits(
+    source: &str,
+    task_index: usize,
+    checked: bool,
+    limits: &RenderLimits,
+) -> String {
+    if preflight(source, limits).is_err() {
+        return source.to_owned();
+    }
     let options = markdown_options();
     let arena = Arena::new();
     let root = parse_document(&arena, source, &options);
+    if check_node_budget(root, limits).is_err() {
+        return source.to_owned();
+    }
+    let line_starts = LineIndex::new(source);
     let mut index = 0usize;
     for node in root.descendants() {
         if let NodeValue::TaskItem(item) = &node.data().value {
             if index == task_index {
-                if let Some(offset) = byte_offset(source, item.symbol_sourcepos.start) {
+                if let Some(offset) = line_starts.offset(source, item.symbol_sourcepos.start) {
+                    if source.get(offset..offset + 1).is_none() {
+                        return source.to_owned();
+                    }
                     let mut updated = source.to_owned();
                     updated.replace_range(offset..offset + 1, if checked { "x" } else { " " });
                     return updated;
@@ -180,6 +241,7 @@ impl SyntaxHighlighterAdapter for SourceHighlighter {
 }
 
 const BLOCKED_REMOTE_IMAGE: &str = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iNDgiPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiM4ODg4ODgxOCIgc3Ryb2tlPSIjODg4ODg4NjYiLz48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9InNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMTIiIGZpbGw9IiM4ODg4ODgiPlJlbW90ZSBpbWFnZSBibG9ja2VkPC90ZXh0Pjwvc3ZnPg==";
+const LOCAL_IMAGE_PLACEHOLDER: &str = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iNDgiIHJvbGU9ImltZyIgYXJpYS1sYWJlbD0iSW1hZ2UgdW5hdmFpbGFibGUiPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiM4ODg4ODgxOCIgc3Ryb2tlPSIjODg4ODg4NjYiLz48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9InNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMTIiIGZpbGw9IiM4ODg4ODgiPkltYWdlIHVuYXZhaWxhYmxlPC90ZXh0Pjwvc3ZnPg==";
 
 /// Does this image destination name a remote web host? Browsers normalize
 /// `https:host/x`, `https:/host/x`, `https:\host\x`, protocol-relative
@@ -191,108 +253,41 @@ fn remote_image_url(destination: &str) -> bool {
         .chars()
         .filter(|character| !matches!(character, '\t' | '\n' | '\r'))
         .collect();
-    let normalized = cleaned
-        .trim_matches(|character: char| character.is_ascii_control() || character == ' ')
-        .to_ascii_lowercase();
-    normalized.starts_with("//")
-        || normalized.starts_with("http:")
-        || normalized.starts_with("https:")
+    let normalized =
+        cleaned.trim_matches(|character: char| character.is_ascii_control() || character == ' ');
+    // Windows browsers normalize backslashes in special-scheme URLs. `\host`
+    // and `/\host` and `\/host` can all become an HTTP(S) authority, so the
+    // authority check must be made after that normalization too.
+    let slashed = normalized.replace('\\', "/");
+    let lower = slashed.to_ascii_lowercase();
+    lower.starts_with("//")
+        || lower.starts_with("http:")
+        || lower.starts_with("https:")
+        || normalized.starts_with('\\')
 }
 
+/// URL parsing ignores ASCII tab/newline/carriage-return characters inside a
+/// scheme. Attribute values can acquire those through entities such as
+/// `data&#10;:`, so scheme checks normalize them before inspecting the prefix.
+pub(crate) fn is_data_url(value: &str) -> bool {
+    let cleaned: String = value
+        .chars()
+        .filter(|character| !matches!(character, '\t' | '\n' | '\r'))
+        .collect();
+    let normalized = cleaned
+        .trim_start_matches(|character: char| character.is_ascii_control() || character == ' ');
+    normalized
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:"))
+}
+
+#[allow(dead_code)]
 fn local_image(
     destination: &str,
     base: Option<&Path>,
     allow_remote_images: bool,
 ) -> Option<String> {
-    if remote_image_url(destination) {
-        return Some(if allow_remote_images {
-            destination.into()
-        } else {
-            BLOCKED_REMOTE_IMAGE.into()
-        });
-    }
-    if destination.contains(':') || destination.starts_with('/') {
-        return None;
-    }
-    let base = base?.canonicalize().ok()?;
-    let decoded = percent_encoding::percent_decode_str(destination)
-        .decode_utf8()
-        .ok()?;
-    let path = base.join(decoded.as_ref()).canonicalize().ok()?;
-    if !path.starts_with(&base) {
-        return None;
-    }
-    let mime = match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "svg" => "image/svg+xml",
-        _ => return None,
-    };
-    if fs::metadata(&path).ok()?.len() > 10 * 1024 * 1024 {
-        return None;
-    }
-    Some(format!(
-        "data:{mime};base64,{}",
-        STANDARD.encode(fs::read(path).ok()?)
-    ))
-}
-/// Author HTML is emitted verbatim, so it could imitate the `data-sourcepos`
-/// marker Comrak writes for generated task items. Remove that attribute from
-/// raw HTML before rendering; generated markup keeps it.
-fn strip_raw_source_positions<'a>(root: &'a AstNode<'a>) {
-    for node in root.descendants() {
-        let mut data = node.data_mut();
-        match &mut data.value {
-            NodeValue::HtmlBlock(block) => strip_sourcepos_attribute(&mut block.literal),
-            NodeValue::HtmlInline(html) => strip_sourcepos_attribute(html),
-            _ => {}
-        }
-    }
-}
-
-fn strip_sourcepos_attribute(literal: &mut String) {
-    const ATTRIBUTE: &str = "data-sourcepos";
-    let mut search = 0;
-    // HTML attribute names are ASCII case-insensitive. Search a lowercased copy
-    // so `<li DATA-SOURCEPOS="...">` cannot smuggle a marker past sanitization;
-    // ASCII case folding preserves byte offsets, so removal still targets the
-    // original string.
-    let mut lower = literal.to_ascii_lowercase();
-    while let Some(offset) = lower[search..].find(ATTRIBUTE) {
-        let start = search + offset;
-        search = start + ATTRIBUTE.len();
-        if !literal[..start]
-            .chars()
-            .next_back()
-            .is_some_and(|character| character.is_whitespace())
-        {
-            continue;
-        }
-        let rest = literal[search..].trim_start();
-        let Some(value) = rest.strip_prefix('=') else {
-            continue;
-        };
-        let value = value.trim_start();
-        let end = match value.chars().next() {
-            Some(quote @ ('"' | '\'')) => {
-                let Some(length) = value[1..].find(quote) else {
-                    continue;
-                };
-                literal.len() - value.len() + length + 2
-            }
-            _ => {
-                let length = value
-                    .find(|character: char| character.is_whitespace() || character == '>')
-                    .unwrap_or(value.len());
-                literal.len() - value.len() + length
-            }
-        };
-        literal.replace_range(start..end, "");
-        lower.replace_range(start..end, "");
-        search = start;
-    }
+    images::local_image(destination, base, allow_remote_images)
 }
 
 fn patch_task_items(html: &str, task_indices: &HashMap<String, usize>) -> String {
@@ -338,17 +333,43 @@ pub fn render(source: &str, base: Option<&Path>) -> String {
 /// Render Markdown and build the edit map from a single parse. `allow_remote_images`
 /// is the user's persisted preference; blocking returns a local placeholder instead
 /// of making a network request.
+///
+/// The return shape is unchanged for the current native/UI consumers. A budget
+/// failure returns a diagnostic HTML block with no edit blocks instead of
+/// truncating or mutating the source. Callers that need structured failures can
+/// use [`render_with_blocks_checked`].
 pub fn render_with_blocks(
     source: &str,
     base: Option<&Path>,
     allow_remote_images: bool,
 ) -> (String, Vec<EditBlock>) {
+    match render_with_blocks_checked(source, base, allow_remote_images, &DEFAULT_RENDER_LIMITS) {
+        Ok(rendered) => rendered,
+        Err(error) => (preview_limit_html(&error), Vec::new()),
+    }
+}
+
+pub fn render_with_blocks_checked(
+    source: &str,
+    base: Option<&Path>,
+    allow_remote_images: bool,
+    limits: &RenderLimits,
+) -> Result<(String, Vec<EditBlock>), PreviewLimitError> {
+    preflight(source, limits)?;
     let mut options = markdown_options();
     options.render.r#unsafe = true;
     options.render.sourcepos = true;
-    let base = base.map(Path::to_path_buf);
+    let base = base.and_then(|path| path.canonicalize().ok());
+    let image_cache = Arc::new(Mutex::new(ImageCache::new()));
+    let rewriter_cache = Arc::clone(&image_cache);
+    let rewriter_limits = *limits;
     options.extension.image_url_rewriter = Some(Arc::new(move |url: &str| {
-        local_image(url, base.as_deref(), allow_remote_images).unwrap_or_default()
+        rewriter_cache
+            .lock()
+            .map(|mut cache| {
+                cache.resolve(url, base.as_deref(), allow_remote_images, &rewriter_limits)
+            })
+            .unwrap_or_default()
     }));
     let plugins = Plugins {
         render: RenderPlugins {
@@ -358,8 +379,10 @@ pub fn render_with_blocks(
     };
     let arena = Arena::new();
     let root = parse_document(&arena, source, &options);
-    strip_raw_source_positions(root);
-    let blocks = blocks_from_root(root, source);
+    check_node_budget(root, limits)?;
+    author_html::strip_author_markers(root);
+    let line_starts = LineIndex::new(source);
+    let blocks = blocks_from_root(root, source, &line_starts);
     let task_indices: HashMap<_, _> = root
         .descendants()
         .filter(|node| matches!(node.data().value, NodeValue::TaskItem(_)))
@@ -367,14 +390,83 @@ pub fn render_with_blocks(
         .enumerate()
         .map(|(index, sourcepos)| (sourcepos, index))
         .collect();
-    let mut html = String::new();
-    comrak::format_html_with_plugins(root, &options, &mut html, &plugins)
-        .expect("writing Markdown HTML to a string cannot fail");
-    let html = patch_task_items(
-        &harden_images(&sanitize(&html, allow_remote_images)),
-        &task_indices,
-    );
-    (html, blocks)
+    let mut writer = BoundedWriter::new(limits.max_html_bytes);
+    if comrak::format_html_with_plugins(root, &options, &mut writer, &plugins).is_err()
+        || writer.exceeded
+    {
+        return Err(html_limit_error(limits));
+    }
+    let sanitized = sanitize(&writer.output, allow_remote_images);
+    images::account_images(&sanitized, limits)?;
+    let html = patch_task_items(&harden_images(&sanitized), &task_indices);
+    if html.len() > limits.max_html_bytes {
+        return Err(html_limit_error(limits));
+    }
+    Ok((html, blocks))
+}
+
+fn html_limit_error(limits: &RenderLimits) -> PreviewLimitError {
+    PreviewLimitError::new(
+        PreviewLimitKind::HtmlBytes,
+        format!(
+            "This document's preview HTML exceeds the {} MiB limit.",
+            limits.max_html_bytes / limits::MIB
+        ),
+    )
+}
+
+/// Diagnostic markup for a preview budget failure. The source itself is never
+/// altered; this only replaces the stale preview with an explicit state.
+pub fn preview_limit_html(error: &PreviewLimitError) -> String {
+    format!(
+        "<div class=\"preview-limit\" data-preview-limit=\"{}\" role=\"status\"><p class=\"preview-limit-title\">Preview unavailable</p><p class=\"preview-limit-message\">{}</p><p class=\"preview-limit-source-note\">The document source is unchanged and can still be edited and saved.</p></div>",
+        error.kind.as_str(),
+        escape_html(&error.message)
+    )
+}
+
+fn escape_html(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            _ => escaped.push(character),
+        }
+    }
+    escaped
+}
+
+/// Enforce the generated-HTML budget while Comrak is writing, rather than only
+/// measuring an already-allocated multi-megabyte string afterwards.
+struct BoundedWriter {
+    output: String,
+    limit: usize,
+    exceeded: bool,
+}
+
+impl BoundedWriter {
+    fn new(limit: usize) -> Self {
+        Self {
+            output: String::with_capacity(limit.min(64 * 1024)),
+            limit,
+            exceeded: false,
+        }
+    }
+}
+
+impl fmt::Write for BoundedWriter {
+    fn write_str(&mut self, value: &str) -> fmt::Result {
+        if self.output.len().saturating_add(value.len()) > self.limit {
+            self.exceeded = true;
+            return Err(fmt::Error);
+        }
+        self.output.push_str(value);
+        Ok(())
+    }
 }
 
 /// Images inside a document must not disclose the app origin or the user's
@@ -384,6 +476,12 @@ fn harden_images(html: &str) -> String {
 }
 
 fn sanitize(html: &str, allow_remote_images: bool) -> String {
+    sanitizer_builder(allow_remote_images)
+        .clean(html)
+        .to_string()
+}
+
+fn sanitizer_builder(allow_remote_images: bool) -> ammonia::Builder<'static> {
     let mut sanitizer = ammonia::Builder::default();
     sanitizer
         .add_generic_attributes([
@@ -413,14 +511,7 @@ fn sanitize(html: &str, allow_remote_images: bool) -> String {
                         Some(Cow::Owned(BLOCKED_REMOTE_IMAGE.to_string()))
                     }
                 }
-                "href"
-                    if value
-                        .trim_start()
-                        .get(..5)
-                        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:")) =>
-                {
-                    None
-                }
+                "href" if is_data_url(value) => None,
                 "id" if !value.starts_with("doc-") => Some(Cow::Owned(format!("doc-{value}"))),
                 "id" => Some(Cow::Borrowed(value)),
                 "href" if value.starts_with('#') => {
@@ -440,12 +531,13 @@ fn sanitize(html: &str, allow_remote_images: bool) -> String {
             }
         })
         .link_rel(Some("noopener noreferrer"));
-    sanitizer.clean(html).to_string()
+    sanitizer
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn editable_blocks_keep_list_text_in_one_source_span() {
@@ -492,6 +584,78 @@ mod tests {
         assert_eq!(task_indices, ["0", "1"], "{rendered}");
         assert!(rendered.contains("<input type=\"checkbox\"> Custom"));
         assert!(rendered.contains("<input type=\"checkbox\" disabled=\"\"> Custom disabled"));
+    }
+
+    #[test]
+    fn slash_and_case_forged_source_positions_cannot_steal_a_real_task_index() {
+        // The real task lives on line 6, so a forged marker can name the exact
+        // same source position. Without normalization, the raw checkbox wins
+        // the task-index lookup and the real task loses its toggle.
+        let variants = [
+            "<ul>\n<li/data-sourcepos=\"FORGED\"><input type=\"checkbox\" disabled></li>\n</ul>\n\n\n- [x] Real task\n",
+            "<ul>\n<LI/DATA-SOURCEPOS=\"FORGED\"><input type=\"checkbox\" disabled></LI>\n</ul>\n\n\n- [x] Real task\n",
+            "<ul>\n<li\nDaTa-SoUrCePoS=\"FORGED\"><input type=\"checkbox\" disabled></li>\n</ul>\n\n\n- [x] Real task\n",
+        ];
+        for template in variants {
+            let options = markdown_options();
+            let arena = Arena::new();
+            let root = parse_document(&arena, template, &options);
+            let sourcepos = root
+                .descendants()
+                .find(|node| matches!(node.data().value, NodeValue::TaskItem(_)))
+                .unwrap()
+                .data()
+                .sourcepos
+                .to_string();
+            let source = template.replace("FORGED", &sourcepos);
+            let rendered = render(&source, None);
+            assert_eq!(
+                rendered.matches("data-task-index=").count(),
+                1,
+                "{template:?} produced forged task indices: {rendered}"
+            );
+            assert!(
+                rendered.contains("<li><input type=\"checkbox\" disabled=\"\"></li>"),
+                "raw HTML must lose its generated-looking marker: {rendered}"
+            );
+            assert!(
+                rendered.contains(&format!(
+                    "<li data-sourcepos=\"{sourcepos}\"><input type=\"checkbox\" data-task-index=\"0\""
+                )),
+                "the real task must keep index zero: {rendered}"
+            );
+            assert_eq!(
+                set_task_checked(&source, 0, false),
+                source.replace("- [x] Real task", "- [ ] Real task"),
+                "toggling index zero must change only the real Markdown task"
+            );
+        }
+
+        let forged_div = render("<div DATA-SOURCEPOS=\"9:1-9:9\">forged</div>", None);
+        assert!(
+            !forged_div.to_ascii_lowercase().contains("data-sourcepos"),
+            "forged div markers must be removed too: {forged_div}"
+        );
+    }
+
+    #[test]
+    fn author_html_keeps_only_checkbox_inputs() {
+        let rendered = render(
+            "<input type=\"text\" value=\"typed\">\n\n<input type=\"radio\">\n\n<input>\n\n<input type=\"CheckBox\" checked>\n\n- [x] Real task\n",
+            None,
+        );
+        assert!(!rendered.contains("type=\"text\""), "{rendered}");
+        assert!(!rendered.contains("value=\"typed\""), "{rendered}");
+        assert!(!rendered.contains("type=\"radio\""), "{rendered}");
+        assert!(
+            rendered.contains("<input type=\"checkbox\" checked=\"\">"),
+            "the author checkbox must survive without a forged task index: {rendered}"
+        );
+        assert_eq!(
+            rendered.matches("data-task-index=").count(),
+            1,
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -624,6 +788,22 @@ mod tests {
         assert!(rendered.contains("id=\"doc-title-1\""));
         assert!(rendered.contains("id=\"doc-command-search\""));
         assert!(!rendered.contains("id=\"command-search\""));
+        assert!(
+            !rendered.contains("#doc-doc-"),
+            "author HTML and generated markup must not double-prefix ids: {rendered}"
+        );
+    }
+
+    #[test]
+    fn raw_html_fragment_links_are_prefixed_exactly_once() {
+        let rendered = render(
+            "# Title\n\n<a href=\"#title\">raw jump</a>\n\n<div id=\"section\">Text</div>\n",
+            None,
+        );
+        assert!(rendered.contains("href=\"#doc-title\""), "{rendered}");
+        assert!(rendered.contains("id=\"doc-section\""), "{rendered}");
+        assert!(!rendered.contains("#doc-doc-"), "{rendered}");
+        assert!(!rendered.contains("id=\"doc-doc-section\""), "{rendered}");
     }
 
     #[test]
@@ -755,6 +935,449 @@ mod tests {
         assert_eq!(
             local_image("https://example.com/pixel.png", Some(&base), true),
             Some("https://example.com/pixel.png".to_string())
+        );
+    }
+
+    #[test]
+    fn source_map_handles_empty_last_line_unicode_crlf_and_nested_lists() {
+        assert!(edit_blocks("").is_empty());
+
+        let no_newline = "last line without a newline";
+        let blocks = edit_blocks(no_newline);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].start, 0);
+        assert_eq!(blocks[0].end, no_newline.len());
+        assert_eq!(blocks[0].source, no_newline);
+
+        let source = "# Café \u{1f600}\n\nA **bold café** end\n";
+        let blocks = edit_blocks(source);
+        let nodes: Vec<_> = blocks.iter().flat_map(|block| &block.nodes).collect();
+        let bold = nodes
+            .iter()
+            .find(|node| node.text.as_deref() == Some("bold café"))
+            .expect("multibyte inline text must map to a source range");
+        assert_eq!(&source[bold.start..bold.end], "bold café");
+        let heading = nodes
+            .iter()
+            .find(|node| node.kind == "heading")
+            .expect("heading with an emoji must map to a source range");
+        assert_eq!(&source[heading.start..heading.end], "# Café \u{1f600}");
+
+        let crlf_normalized = "first\r\n\r\n- [ ] task\r\n".replace("\r\n", "\n");
+        let blocks = edit_blocks(&crlf_normalized);
+        assert_eq!(blocks[0].source, "first");
+        assert!(blocks[1].source.contains("- [ ] task"));
+        assert!(blocks
+            .iter()
+            .flat_map(|block| &block.nodes)
+            .all(|node| crlf_normalized.is_char_boundary(node.start)
+                && crlf_normalized.is_char_boundary(node.end)));
+
+        let nested = "- outer\n  - inner\n\nAfter\n";
+        let blocks = edit_blocks(nested);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].source, "- outer\n  - inner");
+        assert_eq!(blocks[1].source, "After");
+        assert!(blocks[0].nodes.iter().any(|node| node.kind == "item"));
+        assert!(blocks[0]
+            .nodes
+            .iter()
+            .all(|node| nested.is_char_boundary(node.start) && nested.is_char_boundary(node.end)));
+    }
+
+    #[test]
+    fn structural_budgets_fail_before_expensive_parsing() {
+        let line_limits = RenderLimits {
+            max_lines: 2,
+            ..DEFAULT_RENDER_LIMITS
+        };
+        assert_eq!(
+            render_with_blocks_checked("a\nb\nc", None, false, &line_limits)
+                .unwrap_err()
+                .kind,
+            PreviewLimitKind::Lines
+        );
+
+        for source in [
+            "> > > deep",
+            "- > > > deep",
+            "1. > > > deep",
+            "- item\n    > > > list-indented deep",
+        ] {
+            let depth_limits = RenderLimits {
+                max_blockquote_depth: 2,
+                ..DEFAULT_RENDER_LIMITS
+            };
+            assert_eq!(
+                render_with_blocks_checked(source, None, false, &depth_limits)
+                    .unwrap_err()
+                    .kind,
+                PreviewLimitKind::BlockquoteDepth,
+                "{source:?} must fail the cheap depth check"
+            );
+        }
+
+        let budget = RenderLimits {
+            max_ast_nodes: 1,
+            ..DEFAULT_RENDER_LIMITS
+        };
+        assert_eq!(
+            render_with_blocks_checked("a", None, false, &budget)
+                .unwrap_err()
+                .kind,
+            PreviewLimitKind::AstNodes
+        );
+
+        let html_budget = RenderLimits {
+            max_html_bytes: 16,
+            ..DEFAULT_RENDER_LIMITS
+        };
+        assert_eq!(
+            render_with_blocks_checked("# heading\n\nbody", None, false, &html_budget)
+                .unwrap_err()
+                .kind,
+            PreviewLimitKind::HtmlBytes
+        );
+
+        let source_bytes = RenderLimits {
+            max_source_bytes: 4,
+            ..DEFAULT_RENDER_LIMITS
+        };
+        assert_eq!(
+            render_with_blocks_checked("too long", None, false, &source_bytes)
+                .unwrap_err()
+                .kind,
+            PreviewLimitKind::SourceBytes
+        );
+    }
+
+    #[test]
+    fn preview_limit_failures_keep_source_and_expose_a_clear_diagnostic() {
+        let source = "a\nb\nc";
+        let original = source.to_owned();
+        let limits = RenderLimits {
+            max_lines: 2,
+            ..DEFAULT_RENDER_LIMITS
+        };
+        let error = render_with_blocks_checked(source, None, false, &limits).unwrap_err();
+        assert_eq!(source, original, "the source must never be rewritten");
+        let html = preview_limit_html(&error);
+        assert!(html.contains("data-preview-limit=\"lines\""), "{html}");
+        assert!(html.contains("Preview unavailable"), "{html}");
+        assert!(html.contains("source is unchanged"), "{html}");
+
+        let task_source = "> > > deep\n\n- [ ] task";
+        let depth_limits = RenderLimits {
+            max_blockquote_depth: 2,
+            ..DEFAULT_RENDER_LIMITS
+        };
+        assert_eq!(
+            set_task_checked_with_limits(task_source, 0, true, &depth_limits),
+            task_source,
+            "task parsing must apply the same structural preflight"
+        );
+
+        let node_limits = RenderLimits {
+            max_ast_nodes: 1,
+            ..DEFAULT_RENDER_LIMITS
+        };
+        assert_eq!(
+            set_task_checked_with_limits("- [ ] task", 0, true, &node_limits),
+            "- [ ] task"
+        );
+    }
+
+    #[test]
+    fn inline_and_container_html_keep_their_start_and_end_boundaries() {
+        let inline = render("a <kbd>Ctrl</kbd> b", None);
+        assert!(
+            inline.contains("a <kbd>Ctrl</kbd> b"),
+            "an inline start tag must not be auto-closed: {inline}"
+        );
+
+        let container = render(
+            "<details>\n<summary>More</summary>\n\nInside\n\n</details>",
+            None,
+        );
+        assert!(container.contains("<details>"), "{container}");
+        assert!(
+            container.contains("<summary>More</summary>"),
+            "summary content must stay inside its element: {container}"
+        );
+        assert!(
+            !container.contains("<details></details>"),
+            "opening details must not be auto-closed: {container}"
+        );
+        assert!(container.contains("</details>"), "{container}");
+    }
+
+    #[test]
+    fn backslash_remote_image_authorities_are_blocked() {
+        for form in ["\\\\host\\x.png", "/\\\\host/x.png", "\\\\/host/x.png"] {
+            let raw = format!("<img src=\"{form}\">");
+            let blocked = render(&raw, None);
+            assert!(
+                !blocked.contains("host"),
+                "raw HTML {form:?} leaked a host: {blocked}"
+            );
+            assert!(
+                blocked.contains(BLOCKED_REMOTE_IMAGE),
+                "raw HTML {form:?} must use the blocked placeholder: {blocked}"
+            );
+        }
+    }
+
+    #[test]
+    fn encoded_data_scheme_hrefs_are_removed() {
+        for form in [
+            "data&#10;:text/html,boom",
+            "data&#9;:text/html,boom",
+            "data&#13;:text/html,boom",
+        ] {
+            let raw = format!("<a href=\"{form}\">click</a>");
+            let rendered = render(&raw, None);
+            assert!(
+                !rendered.contains("text/html") && !rendered.contains("boom"),
+                "raw href {form:?} kept a data: URL: {rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn raw_html_images_share_the_markdown_image_budget() {
+        let limits = RenderLimits {
+            max_image_occurrences: 200,
+            ..DEFAULT_RENDER_LIMITS
+        };
+        let image = "data:image/png;base64,AAAA";
+        let source = (0..201)
+            .map(|index| format!("<img src=\"{image}\" alt=\"{index}\">"))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        assert_eq!(
+            render_with_blocks_checked(&source, None, false, &limits)
+                .unwrap_err()
+                .kind,
+            PreviewLimitKind::ImageOccurrences,
+            "raw HTML images must count toward the same occurrence budget"
+        );
+
+        let bytes_limits = RenderLimits {
+            max_encoded_image_bytes: image.len() * 2,
+            ..DEFAULT_RENDER_LIMITS
+        };
+        let over_bytes =
+            format!("<img src=\"{image}\">\n\n<img src=\"{image}\">\n\n<img src=\"{image}\">");
+        assert_eq!(
+            render_with_blocks_checked(&over_bytes, None, false, &bytes_limits)
+                .unwrap_err()
+                .kind,
+            PreviewLimitKind::ImageBytes,
+            "raw HTML data images must count toward the encoded byte budget"
+        );
+    }
+
+    #[test]
+    fn contained_fences_stop_when_their_container_ends() {
+        let deep = "> ".repeat(DEFAULT_RENDER_LIMITS.max_blockquote_depth + 1);
+        for source in [
+            format!("> ```\noutside\n\n{deep}\n"),
+            format!("- ```\noutside\n\n{deep}\n"),
+        ] {
+            let rendered = render(&source, None);
+            assert!(
+                rendered.contains("data-preview-limit=\"blockquote_depth\""),
+                "a contained fence must not swallow later real blockquotes: {rendered}"
+            );
+        }
+
+        let ten_thousand = "> ".repeat(10_000);
+        for source in [
+            format!("> ```\noutside\n\n{ten_thousand}\n"),
+            format!("- ```\noutside\n\n{ten_thousand}\n"),
+        ] {
+            assert_eq!(
+                preflight(&source, &DEFAULT_RENDER_LIMITS).unwrap_err().kind,
+                PreviewLimitKind::BlockquoteDepth,
+                "deep blockquotes after an ended contained fence must be rejected cheaply"
+            );
+        }
+    }
+
+    #[test]
+    fn list_fences_honor_list_content_indentation() {
+        let content = "> ".repeat(DEFAULT_RENDER_LIMITS.max_blockquote_depth + 1);
+        for source in [
+            format!("- item\n\n    ```text\n    {content}\n    ```\n"),
+            format!("- outer\n  - inner\n\n    ```text\n    {content}\n    ```\n"),
+        ] {
+            let rendered = render(&source, None);
+            assert!(
+                !rendered.contains("data-preview-limit=\"blockquote_depth\""),
+                "a correctly indented list fence is valid code: {rendered}"
+            );
+            assert!(rendered.contains("<pre"), "{rendered}");
+        }
+    }
+
+    #[test]
+    fn top_level_unclosed_fence_keeps_running_to_eof() {
+        let content = "> ".repeat(DEFAULT_RENDER_LIMITS.max_blockquote_depth + 1);
+        let rendered = render(&format!("```\n{content}\n"), None);
+        assert!(
+            !rendered.contains("data-preview-limit=\"blockquote_depth\""),
+            "an unclosed top-level fence is literal code through EOF: {rendered}"
+        );
+    }
+
+    #[test]
+    fn fenced_code_is_not_mistaken_for_deep_blockquotes() {
+        let content = "> ".repeat(DEFAULT_RENDER_LIMITS.max_blockquote_depth + 1);
+        for source in [
+            format!("```\n{content}\n```\n"),
+            format!("> ```\n> {content}\n> ```\n"),
+            format!("- ```\n  {content}\n  ```\n"),
+        ] {
+            let rendered = render(&source, None);
+            assert!(
+                !rendered.contains("data-preview-limit=\"blockquote_depth\""),
+                "valid fenced code was rejected as nested blockquotes: {rendered}"
+            );
+        }
+
+        let true_quote = format!(
+            "{}deep\n",
+            "> ".repeat(DEFAULT_RENDER_LIMITS.max_blockquote_depth + 1)
+        );
+        let rendered = render(&true_quote, None);
+        assert!(
+            rendered.contains("data-preview-limit=\"blockquote_depth\""),
+            "a real over-budget blockquote must still be rejected: {rendered}"
+        );
+    }
+
+    #[test]
+    fn input_type_classification_uses_the_real_type_attribute() {
+        let rejected = render("<input title='type=checkbox ' type=text>", None);
+        assert!(
+            !rejected.contains("<input"),
+            "title text must not turn a text input into a checkbox: {rejected}"
+        );
+
+        let kept = render("<input title='type=text' type=checkbox>", None);
+        assert!(
+            kept.contains("<input title=\"type=text\" type=\"checkbox\">"),
+            "the real type attribute must keep a checkbox: {kept}"
+        );
+
+        let newline_spoof = render("<input\n  title=\"type=checkbox\"\n  type=\"text\">", None);
+        assert!(
+            !newline_spoof.contains("<input"),
+            "newline-separated attributes must be parsed structurally: {newline_spoof}"
+        );
+    }
+
+    #[test]
+    fn default_line_budget_reaches_the_diagnostic_render_path() {
+        let source = "line\n".repeat(DEFAULT_RENDER_LIMITS.max_lines + 1);
+        let original = source.clone();
+        let rendered = render(&source, None);
+        assert!(
+            rendered.contains("data-preview-limit=\"lines\""),
+            "the compatibility render API must surface the limit diagnostic: {rendered}"
+        );
+        assert_eq!(source, original, "the source must never be rewritten");
+    }
+
+    #[test]
+    fn image_budgets_use_small_limits_and_count_every_occurrence() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("pixel.png"), b"0123456789").unwrap();
+        let source = "![a](pixel.png)\n\n![b](./pixel.png)";
+
+        let occurrence_limits = RenderLimits {
+            max_image_occurrences: 1,
+            ..DEFAULT_RENDER_LIMITS
+        };
+        assert_eq!(
+            render_with_blocks_checked(source, Some(directory.path()), false, &occurrence_limits)
+                .unwrap_err()
+                .kind,
+            PreviewLimitKind::ImageOccurrences
+        );
+
+        // One encoded image fits, but the second reference (a canonical cache
+        // hit) must still be charged.
+        let single = render("![a](pixel.png)", Some(directory.path()));
+        let url = single
+            .split("src=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .to_owned();
+        assert!(url.starts_with("data:image/png;base64,"));
+        let repeat_limits = RenderLimits {
+            max_encoded_image_bytes: url.len() + 16,
+            ..DEFAULT_RENDER_LIMITS
+        };
+        assert_eq!(
+            render_with_blocks_checked(source, Some(directory.path()), false, &repeat_limits)
+                .unwrap_err()
+                .kind,
+            PreviewLimitKind::ImageBytes
+        );
+    }
+
+    #[test]
+    fn image_paths_are_cached_by_canonical_path_and_reads_are_bounded() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("pixel.png"), b"0123456789").unwrap();
+        let rendered = render(
+            "![a](pixel.png)\n\n![b](./pixel.png)",
+            Some(directory.path()),
+        );
+        let sources: Vec<_> = rendered
+            .split("src=\"")
+            .skip(1)
+            .map(|part| part.split('"').next().unwrap())
+            .collect();
+        assert_eq!(sources.len(), 2);
+        assert_eq!(
+            sources[0], sources[1],
+            "canonical spellings share a cache entry"
+        );
+        assert_eq!(
+            sources[0].matches("data:image/png;base64,").count(),
+            1,
+            "the cache must not concatenate encoded images"
+        );
+
+        let path = directory.path().join("pixel.png");
+        assert!(
+            images::read_bounded(&path, 4).is_none(),
+            "the bounded read must enforce the budget even if metadata looked small"
+        );
+        assert!(images::read_bounded(&path, 10).is_some());
+
+        let rendered = render("![a](pixel.png)", Some(directory.path()));
+        assert!(rendered.contains("data:image/png;base64,"));
+        let tiny_file_limit = RenderLimits {
+            max_image_file_bytes: 4,
+            ..DEFAULT_RENDER_LIMITS
+        };
+        let (html, _) = render_with_blocks_checked(
+            "![a](pixel.png)",
+            Some(directory.path()),
+            false,
+            &tiny_file_limit,
+        )
+        .unwrap();
+        assert!(!html.contains("data:image/png;base64,"), "{html}");
+        assert!(
+            html.contains(LOCAL_IMAGE_PLACEHOLDER),
+            "over-budget local files must use the safe placeholder: {html}"
         );
     }
 }

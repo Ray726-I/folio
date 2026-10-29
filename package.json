@@ -5,7 +5,10 @@
     "check:bundles": "node scripts/check-bundles.cjs",
     "test:paths": "node --test tests/paths.test.cjs",
     "test:lazy": "node tests/lazy-assets.cjs",
-    "test:ui": "node tests/lazy-assets.cjs && node tests/ui-smoke.cjs"
+    "test:picker": "node tests/picker.cjs",
+    "test:limits": "node tests/preview-limits.cjs",
+    "test:renderer": "node tests/mermaid-security.cjs && node tests/mermaid-bridge.cjs",
+    "test:ui": "node tests/lazy-assets.cjs && node tests/ui-smoke.cjs && node tests/picker.cjs && node tests/preview-limits.cjs && node tests/mermaid-security.cjs && node tests/mermaid-bridge.cjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.12.4",

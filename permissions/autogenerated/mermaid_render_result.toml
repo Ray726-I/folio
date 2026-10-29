@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mermaid-render-result"
+description = "Enables the mermaid_render_result command without any pre-configured scope."
+commands.allow = ["mermaid_render_result"]
+
+[[permission]]
+identifier = "deny-mermaid-render-result"
+description = "Denies the mermaid_render_result command without any pre-configured scope."
+commands.deny = ["mermaid_render_result"]

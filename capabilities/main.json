@@ -1,7 +1,40 @@
-{
-  "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "main",
-  "description": "The local Folio window",
-  "windows": ["main"],
-  "permissions": ["core:default"]
-}
+[
+  {
+    "$schema": "../gen/schemas/desktop-schema.json",
+    "identifier": "main",
+    "description": "The main Folio webview. Application commands are granted one by one; the renderer webview receives none of them.",
+    "webviews": ["main"],
+    "permissions": [
+      "core:default",
+      "allow-bootstrap",
+      "allow-open-document",
+      "allow-open-folder",
+      "allow-browse-directory",
+      "allow-path-is-directory",
+      "allow-set-task-checked",
+      "allow-new-document",
+      "allow-save-document",
+      "allow-render-markdown",
+      "allow-set-window-zoom",
+      "allow-document-changed",
+      "allow-set-title",
+      "allow-close-window",
+      "allow-open-link",
+      "allow-resolve-document-link",
+      "allow-pick-open-target",
+      "allow-mermaid-render-request",
+      "allow-mermaid-render-cancel"
+    ]
+  },
+  {
+    "$schema": "../gen/schemas/desktop-schema.json",
+    "identifier": "mermaid-renderer",
+    "description": "The hidden offline Mermaid renderer. It may listen for render jobs and return one bounded result, and has no file, document, dialog, opener, or window commands.",
+    "webviews": ["mermaid-renderer"],
+    "permissions": [
+      "core:event:allow-listen",
+      "allow-mermaid-render-result",
+      "allow-mermaid-renderer-ready"
+    ]
+  }
+]

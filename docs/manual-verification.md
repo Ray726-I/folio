@@ -105,4 +105,68 @@ changes to `src/main.rs`, `tauri.conf.json`, the CSP, or the UI modules.
 3. Tab through the header, tree, command window, and open dialog; confirm focus
    remains visible and Escape closes modal surfaces.
 4. Confirm the status bar shows word count, reading time, and LF/CRLF for the open
-   document.
+    document.
+
+## Foundations: picker choice and preview limits
+
+Run on Linux, Windows, and macOS using the actual native webview, not only the
+Chromium tests. Record OS/version, app commit, package type, result, and failures;
+an unchecked item is not evidence of platform support.
+
+1. From a fresh profile, verify Open uses Folio's picker. Switch to **Use system
+   file picker**, restart, and check toolbar, welcome, keyboard, and palette Open.
+2. Use **Open folder…** with each preference. The system picker must be a folder
+   dialog; Folio's picker retains its combined file/folder behavior. Check all
+   declared Markdown extensions, spaces, Unicode, and a missing initial folder.
+3. Cancel either picker while dirty: no save prompt or content/recents mutation.
+   Select a destination while dirty, then Cancel the unsaved prompt: retain the
+   original document. Cancel/error then retry must work; duplicate shortcuts must
+   not open multiple native modals. Save/Save As must remain system dialogs.
+4. In Folio's picker, click then type a different path; confirm the typed path
+   opens. Type then click a row; confirm the row opens instead. Limited listings
+   must explain that some entries are omitted, without claiming a complete sort.
+5. Open a document that exceeds the line/nesting/image preview budget. Verify a
+   diagnostic replaces the previous document's preview. Edit must expose the
+   complete source with working pointer/keyboard selection, undo/redo, and save.
+   Reduce complexity and switch to Preview: normal rendering must recover.
+
+## Foundations: offline Mermaid and native isolation
+
+1. Open ordinary Mermaid diagrams and math offline. Plain documents must not
+   start the diagram renderer. Change theme and edit/reopen diagrams; check cache,
+   cancellation, error fallback, and that no renderer window becomes visible.
+2. Use a network interceptor that aborts external requests and records attempts.
+   Test Mermaid image-node metadata, HTML image labels, CSS URLs, and theme
+   refresh, with document remote images both enabled and disabled. Mermaid must
+   make no external requests, including during rendering. Ordinary Markdown
+   remote images must still follow their separate preference.
+3. Attempt document/file/dialog/opener commands from the labelled renderer's
+   actual native IPC bridge, including the Windows native-message fallback.
+   Confirm no protected Rust command body executes and no filesystem/document
+   mutation occurs. A missing JS object, rejected promise, unit caller-label
+   test, or mocked browser IPC alone is insufficient evidence.
+4. Verify normal main-window native commands still work, and renderer results
+   accept only outstanding request IDs and bounded payloads. A stale result
+   must not replace the current document or a newer theme's diagram.
+5. Keep renderer transport failures and native platform validation failures in
+   the release checklist. Linux results do not establish Windows/macOS behavior.
+
+For automated Linux native evidence on an isolated X display, install Xvfb and
+D-Bus tooling, then run:
+
+```sh
+cargo build --locked
+timeout 180s dbus-run-session -- xvfb-run -a env \
+  GDK_BACKEND=x11 WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+  FOLIO_NATIVE_PROBE=1 ./target/debug/folio
+```
+
+The debug-only probe creates temporary fixtures and exits. Require exit status
+zero and `FOLIO_NATIVE_PROBE_PASS`, including unchanged fixture files, native
+command denials, sanitized round trips, and cancellation/restart recovery.
+The probe is excluded from release builds; it is not a production diagnostic
+endpoint. A passing X11/Xvfb run does not establish Wayland or other OS behavior.
+
+Known separate backlog: macOS application-level Quit, stale pending-path replay,
+and Unix read-only/extended-metadata save behavior need their own validation and
+fixes; the foundations changes do not claim to resolve them.

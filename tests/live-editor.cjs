@@ -23,6 +23,7 @@ const { execFileSync } = require('node:child_process');
     });
     await page.addInitScript(({ source, livePath, platform }) => {
       window.calls = [];
+      window.__bridge = { requests: [], cancels: [], listeners: {} };
       window.__TAURI__ = { core: { invoke: async (command, args = {}) => {
         window.calls.push(command);
         if (command === 'bootstrap') return { paths: [livePath], theme: null, platform };
@@ -30,8 +31,18 @@ const { execFileSync } = require('node:child_process');
         if (command === 'render_markdown') return window.nativeRender(args.content);
         if (command === 'save_document') { window.savedContent = args.content; return { path: livePath, name: 'live.md' }; }
         if (command === 'set_task_checked') return args.content.replace('- [ ] A task', '- [x] A task');
+        if (command === 'mermaid_render_request') {
+          const request = args.request;
+          window.__bridge.requests.push({ id: request.id, source: request.source });
+          setTimeout(() => {
+            const payload = { id: request.id, ok: true, svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100"><text>live-diagram</text></svg>', sanitized: true };
+            for (const callback of window.__bridge.listeners['mermaid-render-result'] || []) callback({ payload });
+          }, 0);
+          return null;
+        }
+        if (command === 'mermaid_render_cancel') { window.__bridge.cancels.push(args.id); return null; }
         return null;
-      } }, event: { listen: async () => () => {} }, webview: { getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) } };
+      } }, event: { listen: async (name, callback) => { (window.__bridge.listeners[name] ??= []).push(callback); return () => {}; } }, webview: { getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) } };
     }, { source, livePath, platform });
     await page.goto(pathToFileURL(path.resolve('ui/index.html')).href);
     await page.waitForFunction(() => !busy && document.querySelector('.mermaid-host svg'));

@@ -161,15 +161,6 @@ function mermaidThemeVariables() {
     todayLineColor: colors[4]
   };
 }
-function mermaidConfig() {
-  return {
-    startOnLoad: false, securityLevel: 'strict', suppressErrorRendering: true, theme: 'base', look: 'classic',
-    themeVariables: mermaidThemeVariables(), fontFamily: '"Inter","Adwaita Sans","Cantarell",system-ui,sans-serif',
-    flowchart: { htmlLabels: true, curve: 'basis', nodeSpacing: 36, rankSpacing: 46, padding: 16, diagramPadding: 8, useMaxWidth: true },
-    sequence: { useMaxWidth: true },
-    gantt: { fontSize: 14, sectionFontSize: 14, barHeight: 24, barGap: 8 }
-  };
-}
 function availableThemes() { return omarchy ? [...themes, { id: 'omarchy', label: 'Omarchy', detail: `Current: ${omarchy.name}`, swatch: omarchy.colors.accent || '#7d82d9' }] : themes; }
 function applyTheme(id, persist = true) {
   selectedTheme = id;

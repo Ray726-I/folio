@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- This duplicate of src/renderer.rs RENDERER_CSP is intentionally first:
+       it protects development transports where Tauri's response-header hook is
+       not used, before any Mermaid code executes. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'none'; font-src 'none'; connect-src ipc: http://ipc.localhost; media-src 'none'; object-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>Folio diagram renderer</title>
+  <style>
+    html, body { margin: 0; padding: 0; background: transparent; color-scheme: light dark; }
+  </style>
+</head>
+<body>
+  <script src="vendor/mermaid/mermaid.min.js"></script>
+  <script src="mermaid-renderer.js"></script>
+</body>
+</html>

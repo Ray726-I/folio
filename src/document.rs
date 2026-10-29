@@ -175,7 +175,9 @@ pub fn save(
     }
     let parent = path.parent().ok_or("Invalid save path.")?;
     let existing = fs::metadata(&path).ok();
-    let mut builder = tempfile::Builder::new();
+    let builder = tempfile::Builder::new();
+    #[cfg(unix)]
+    let mut builder = builder;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

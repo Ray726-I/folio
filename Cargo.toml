@@ -16,6 +16,9 @@ tauri-plugin-single-instance = "2"
 comrak = { version = "0.56", default-features = false, features = ["syntect-fancy", "shortcodes"] }
 ammonia = "4"
 base64 = "0.22"
+cssparser = { version = "=0.38.0", default-features = false }
+html5ever = "=0.40.1"
+roxmltree = "=0.20.0"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 tempfile = "3"

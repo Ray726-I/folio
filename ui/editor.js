@@ -27,6 +27,11 @@ async function undoRedo(redo = false) {
     resizeLiveEditor(edit.textarea);
     edit.textarea.focus();
     edit.textarea.setSelectionRange(edit.textarea.value.length, edit.textarea.value.length);
+  } else if (sourceEdit && sourceEdit.textarea.isConnected) {
+    sourceEdit.textarea.value = content;
+    resizeLiveEditor(sourceEdit.textarea);
+    sourceEdit.textarea.focus();
+    try { sourceEdit.textarea.setSelectionRange(content.length, content.length); } catch {}
   } else {
     cancelInlineEdit(); await renderPreview();
   }
@@ -51,6 +56,63 @@ function syncPreviewEditing() {
 function cancelInlineEdit() {
   if (!inlineEdit) return;
   inlineEdit.original.hidden = false; inlineEdit.wrapper.remove(); inlineEdit = null;
+}
+// Full-source fallback shown only when the preview reports a complexity limit
+// (previewLimitedKind). The parser keeps current.content exact; this editor
+// writes the whole source through the normal changeContent history so
+// undo/redo, dirty tracking, stats, and save all behave as usual.
+let sourceEdit = null;
+function ensureSourceFallback() {
+  let box = $('source-fallback');
+  if (box) return box;
+  box = document.createElement('div');
+  box.id = 'source-fallback';
+  box.className = 'source-fallback';
+  box.hidden = true;
+  const label = document.createElement('label');
+  label.setAttribute('for', 'source-textarea');
+  label.textContent = 'Document source';
+  const hint = document.createElement('p');
+  hint.className = 'source-fallback-hint';
+  hint.textContent = 'Preview is unavailable for this document. Edit the full source here; nothing is truncated.';
+  const textarea = document.createElement('textarea');
+  textarea.id = 'source-textarea';
+  textarea.spellcheck = false;
+  textarea.setAttribute('aria-label', 'Document source');
+  textarea.addEventListener('input', () => {
+    if (!sourceEdit || sourceEdit.textarea !== textarea) return;
+    changeContent(textarea.value, sourceEdit.group);
+    resizeLiveEditor(textarea);
+  });
+  textarea.addEventListener('keydown', event => {
+    if (event.key === 'Tab' && !event.shiftKey) { event.preventDefault(); textarea.setRangeText('  ', textarea.selectionStart, textarea.selectionEnd, 'end'); textarea.dispatchEvent(new Event('input')); }
+  });
+  box.append(label, hint, textarea);
+  $('preview').after(box);
+  return box;
+}
+function syncSourceFallback() {
+  const show = Boolean(current.active && mode === 'edit' && previewLimitedKind !== null);
+  if (!show) {
+    const box = $('source-fallback');
+    if (box) box.hidden = true;
+    sourceEdit = null;
+    return;
+  }
+  const box = ensureSourceFallback();
+  box.hidden = false;
+  const textarea = box.querySelector('textarea');
+  if (textarea !== document.activeElement && textarea.value !== current.content) {
+    textarea.value = current.content;
+    resizeLiveEditor(textarea);
+  }
+  if (!sourceEdit || sourceEdit.textarea !== textarea) sourceEdit = { textarea, group: {} };
+}
+function focusSourceFallback() {
+  const textarea = sourceEdit?.textarea;
+  if (!textarea || !textarea.isConnected) return;
+  textarea.focus();
+  try { textarea.setSelectionRange(textarea.value.length, textarea.value.length); } catch {}
 }
 function resizeLiveEditor(textarea) {
   textarea.style.height = '0px'; textarea.style.height = `${Math.max(32, textarea.scrollHeight)}px`;
@@ -185,6 +247,7 @@ function beginInlineEdit(edit) {
   textarea.focus(); resizeLiveEditor(textarea); textarea.setSelectionRange(textarea.value.length, textarea.value.length);
 }
 async function commitInlineEdit() {
-  if (!inlineEdit) return true;
+  if (!inlineEdit && !sourceEdit) return true;
+  if (sourceEdit && !inlineEdit) { sourceEdit = null; historyGroup = null; await renderPreview(); return true; }
   cancelInlineEdit(); historyGroup = null; await renderPreview(); return true;
 }

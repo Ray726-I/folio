@@ -10,6 +10,14 @@ const legacyOutline = preferences.get('outline', null);
 if (preferences.get('outlineWidth', null) === null && typeof legacyOutline === 'number') preferences.set('outlineWidth', legacyOutline);
 let outlineVisible = preferences.get('outlineVisible', typeof legacyOutline === 'boolean' ? legacyOutline : false), toastTimer;
 let wideLayout = preferences.get('wideLayout', false);
+function filePicker() { const value = preferences.get('filePicker', 'folio'); return value === 'native' ? 'native' : 'folio'; }
+function setFilePicker(next) {
+  const value = next === 'native' ? 'native' : 'folio';
+  preferences.set('filePicker', value);
+  status(value === 'native' ? 'System file picker enabled' : 'Folio file picker enabled');
+}
+function toggleFilePicker() { setFilePicker(filePicker() === 'native' ? 'folio' : 'native'); }
+let nativePickActive = false;
 const dirty = () => current.content !== current.saved;
 function commandError(error) {
   if (error && typeof error === 'object') return { code: error.code || 'error', message: error.message || String(error) };
@@ -47,6 +55,7 @@ function showDocument() {
   resetHistory(); $('disk-banner').hidden = true; updateTitle(); updateStats(); setOutline(outlineVisible);
   $('folder-empty').hidden = current.active || !activeFolder;
   renderFolderEntries();
+  previewLimitedKind = null; syncSourceFallback();
 }
 function showWelcome() {
   $('welcome').hidden = false; $('document-view').hidden = true; $('statusbar').hidden = true;
@@ -58,6 +67,7 @@ function showWelcome() {
   document.body.classList.remove('focus-mode');
   document.querySelectorAll('.document-control').forEach(control => { control.hidden = true; });
   updateTitle(); updateStats();
+  previewLimitedKind = null; syncSourceFallback();
 }
 function goHome() {
   return enqueue(async () => {
@@ -110,6 +120,7 @@ async function setMode(next) {
   $('read-mode').setAttribute('aria-pressed', String(mode === 'read'));
   $('edit-mode').setAttribute('aria-pressed', String(mode === 'edit'));
   await renderPreview(scroll);
+  if (mode === 'edit' && previewLimitedKind !== null) focusSourceFallback();
   if (mode === 'edit' && !current.content) beginInlineEdit(editTarget($('preview').firstElementChild, 0));
   if (!$('find-bar').hidden) updateFind();
 }
@@ -181,11 +192,15 @@ async function openPath(path, confirmed = false) {
 }
 function requestOpen(path) { return enqueue(() => openPath(path)); }
 let pickerListing = null, pickerSelection = null;
+function pickerHint(base) {
+  const suffix = pickerListing?.truncated ? ' · Folder listing was limited; some entries are not shown' : '';
+  $('open-selection-hint').textContent = base + suffix;
+}
 async function browseTo(path) {
   pickerListing = await invoke('browse_directory', { path }); pickerSelection = null;
   $('open-path').value = pickerListing.path;
   $('open-parent').disabled = !pickerListing.parent;
-  $('open-selection-hint').textContent = 'Select a Markdown file or folder';
+  pickerHint('Select a Markdown file or folder');
   $('open-items').replaceChildren();
   for (const entry of pickerListing.entries) {
     const row = document.createElement('button'); row.className = 'file-dialog-item'; row.setAttribute('role', 'option'); row.setAttribute('aria-selected', 'false');
@@ -194,7 +209,7 @@ async function browseTo(path) {
     row.onclick = () => {
       pickerSelection = entry;
       $('open-items').querySelectorAll('.file-dialog-item').forEach(item => item.setAttribute('aria-selected', String(item === row)));
-      $('open-selection-hint').textContent = entry.directory ? 'Open selected folder' : 'Open selected Markdown file';
+      pickerHint(entry.directory ? 'Open selected folder' : 'Open selected Markdown file');
     };
     row.ondblclick = () => entry.directory ? browseTo(entry.path).catch(toast) : confirmOpenPicker();
     $('open-items').append(row);
@@ -214,6 +229,35 @@ function confirmOpenPicker() {
   const path = pickerSelection?.path || typed || pickerListing?.path;
   $('open-dialog').close();
   if (path) requestOpenLocation(path);
+}
+function openEntry() {
+  if (filePicker() === 'native') return openNative('file');
+  return openChooser();
+}
+function openFolderEntry() {
+  if (filePicker() === 'native') return openNative('folder');
+  return openChooser();
+}
+async function openNative(kind) {
+  if (nativePickActive) return false;
+  nativePickActive = true;
+  return enqueue(async () => {
+    try {
+      const start = activeFolder?.path || (current.path ? dirname(current.path) : null);
+      let picked = null;
+      try {
+        picked = await invoke('pick_open_target', { kind, start });
+      } catch (error) { status(''); toast(error); return false; }
+      if (picked === null || picked === undefined) { status(''); return false; }
+      if (typeof picked !== 'object' || Array.isArray(picked) || typeof picked.path !== 'string' || !picked.path || (picked.kind !== 'file' && picked.kind !== 'folder')) {
+        status('');
+        toast('The system picker returned an unexpected result.');
+        return false;
+      }
+      if (picked.kind === 'folder') return openFolderPath(picked.path);
+      return openPath(picked.path);
+    } finally { nativePickActive = false; }
+  });
 }
 function setFolderVisible(visible) {
   folderVisible = visible;
@@ -357,9 +401,11 @@ function renderRecent() {
 let commandScope = 'commands', filteredCommands = [], selectedCommand = 0;
 function allCommands() {
   const commands = [
-    { label: 'Open file…', icon: 'open', shortcut: 'Ctrl+O', action: openChooser },
+    { label: 'Open file…', icon: 'open', shortcut: 'Ctrl+O', action: openEntry },
+    { label: 'Open folder…', icon: 'open', detail: 'Open a folder with the selected picker', action: openFolderEntry },
     { label: 'New document', icon: 'plus', shortcut: 'Ctrl+N', action: () => newDocument() },
     { label: 'Change theme…', icon: 'theme', action: () => openCommands('themes') },
+    { label: filePicker() === 'native' ? 'Use Folio file picker' : 'Use system file picker', icon: 'open', detail: filePicker() === 'native' ? 'Folio dialog with folders and typed paths' : 'System dialog for files and folders', action: toggleFilePicker },
     { label: 'Try a sample document', icon: 'file', action: () => newDocument(true) },
     { label: 'Clear recent files', icon: 'close', action: () => { preferences.set('recent', []); renderRecent(); toast('Recent files cleared'); } }
   ];
@@ -479,10 +525,15 @@ $('preview').addEventListener('change', event => {
   });
 });
 $('home').onclick = goHome;
-$('open').onclick = $('welcome-open').onclick = openChooser;
+$('open').onclick = $('welcome-open').onclick = openEntry;
 $('open-parent').onclick = () => pickerListing?.parent && browseTo(pickerListing.parent).catch(toast);
 $('open-go').onclick = () => browseTo($('open-path').value.trim()).catch(toast);
 $('open-path').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); browseTo($('open-path').value.trim()).catch(toast); } };
+$('open-path').addEventListener('input', () => {
+  pickerSelection = null;
+  $('open-items').querySelectorAll('.file-dialog-item').forEach(item => item.setAttribute('aria-selected', 'false'));
+  pickerHint('Select a Markdown file or folder');
+});
 $('open-dialog').addEventListener('keydown', event => { if (event.altKey && event.key === 'ArrowLeft' && pickerListing?.parent) { event.preventDefault(); browseTo(pickerListing.parent).catch(toast); } });
 $('open-confirm').onclick = confirmOpenPicker;
 $('open-cancel').onclick = $('open-dialog-close').onclick = () => $('open-dialog').close();
@@ -525,7 +576,7 @@ $('preview').addEventListener('auxclick', event => {
 });
 $('preview').addEventListener('dragstart', event => { if (event.target.closest('a')) event.preventDefault(); });
 document.addEventListener('pointerdown', event => {
-  if (!inlineEdit || event.target === inlineEdit.textarea || event.target.closest('dialog,#find-bar')) return;
+  if (!inlineEdit || event.target === inlineEdit.textarea || event.target.closest('dialog,#find-bar,#source-fallback')) return;
   const checkbox = event.target.closest('input[type="checkbox"][data-task-index]');
   if (checkbox) {
     event.preventDefault();
@@ -563,7 +614,7 @@ document.addEventListener('keydown', event => {
   else if (event.code === 'Equal' || key === '+' || key === '=') { event.preventDefault(); event.shiftKey ? zoomText(1) : zoomWindow(.1); }
   else if (event.code === 'Minus' || key === '-' || key === '_') { event.preventDefault(); event.shiftKey ? zoomText(-1) : zoomWindow(-.1); }
   else if (key === '0') { event.preventDefault(); event.shiftKey ? zoomText(0, true) : zoomWindow(0, true); }
-  else if (key === 'o') { event.preventDefault(); openChooser(); }
+  else if (key === 'o') { event.preventDefault(); openEntry(); }
   else if (key === 'b' && activeFolder) { event.preventDefault(); setFolderVisible(!folderVisible); }
   else if (key === 'n') { event.preventDefault(); newDocument(); }
   else if (key === 's') { event.preventDefault(); requestSave(event.shiftKey); }

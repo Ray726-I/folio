@@ -1,6 +1,6 @@
 'use strict';
 // Preview rendering, lazy math/diagram assets, and diagram lifecycle.
-let renderGeneration = 0, previewSnapshot = null, diagramThemeRevision = 0;
+let renderGeneration = 0, previewSnapshot = null, diagramThemeRevision = 0, previewLimitedKind = null;
 const assetLoads = new Map();
 function loadAsset(url, style = false) {
   if (assetLoads.has(url)) return assetLoads.get(url);
@@ -15,7 +15,7 @@ function loadAsset(url, style = false) {
   assetLoads.set(url, promise);
   return promise;
 }
-let katexLoading = null, mermaidLoading = null;
+let katexLoading = null;
 function loadKatex() {
   if (window.katex) return Promise.resolve(window.katex);
   if (!katexLoading) {
@@ -28,18 +28,6 @@ function loadKatex() {
       .catch(error => { katexLoading = null; throw error; });
   }
   return katexLoading;
-}
-function loadMermaid() {
-  if (window.mermaid) return Promise.resolve(window.mermaid);
-  if (!mermaidLoading) {
-    mermaidLoading = loadAsset('vendor/mermaid/mermaid.min.js')
-      .then(() => {
-        if (!window.mermaid) throw new Error('Mermaid did not initialize');
-        return window.mermaid;
-      })
-      .catch(error => { mermaidLoading = null; throw error; });
-  }
-  return mermaidLoading;
 }
 let outlineEntries = [], outlineActiveFrame = null, outlineActiveIndex = -1;
 function setActiveOutline(index) {
@@ -92,6 +80,7 @@ $('outline-items').addEventListener('keydown', event => {
 async function renderPreview(restoreScroll) {
   if (previewSnapshot?.content === current.content && previewSnapshot.path === current.path) {
     syncPreviewEditing();
+    syncSourceFallback();
     if (previewSnapshot.themeRevision !== diagramThemeRevision) await refreshMermaid();
     if (restoreScroll !== undefined) $('reader-scroll').scrollTop = restoreScroll;
     status('');
@@ -112,6 +101,8 @@ async function renderPreview(restoreScroll) {
     if (generation !== renderGeneration) return;
     $('preview').innerHTML = typeof result === 'string' ? result : result.html;
     previewBlocks = Array.isArray(result.blocks) ? result.blocks : [];
+    const limitNode = $('preview').querySelector('[data-preview-limit]');
+    previewLimitedKind = limitNode ? (limitNode.dataset.previewLimit || 'limit') : null;
     const sourceIndexes = new Map(previewBlocks.map((block, index) => [block.sourcepos, index]).filter(([position]) => position));
     const elements = [...$('preview').querySelectorAll(':scope > [data-sourcepos]:not(.footnotes), :scope > .footnotes > ol > li[data-sourcepos]')];
     for (const element of elements) {
@@ -125,13 +116,15 @@ async function renderPreview(restoreScroll) {
     setupCodeLanguages();
     setupTables();
     await renderMath(generation);
+    if (generation !== renderGeneration) return;
     syncPreviewEditing();
     await renderDiagrams(generation, reusableDiagrams);
     if (generation !== renderGeneration) return;
     if (scrollTo !== undefined) { const container = $('reader-scroll'); container.scrollTop = Math.max(0, Math.min(scrollTo, container.scrollHeight - container.clientHeight)); }
     $('folder-empty').hidden = true;
-    previewSnapshot = { content, path, themeRevision };
+    previewSnapshot = { content, path, themeRevision, limited: previewLimitedKind };
     syncPreviewEditing();
+    syncSourceFallback();
     if (themeRevision !== diagramThemeRevision) await refreshMermaid();
     $('outline-items').replaceChildren();
     outlineEntries = [];
@@ -216,25 +209,97 @@ async function renderMath(generation = renderGeneration) {
     } catch {}
   }
 }
-let mermaidRenderId = 0;
-function showDiagramSvg(host, markup) {
-  host.innerHTML = markup;
-  const drawing = host.querySelector('svg');
-  const width = drawing?.viewBox.baseVal.width;
-  if (width > 0) {
-
-    drawing.style.width = `clamp(clamp(${Math.ceil(width * .5)}px, calc(${Math.ceil(width)}px - 100%), ${Math.ceil(width * .75)}px), 100%, ${Math.ceil(width)}px)`;
-    drawing.style.maxWidth = 'none';
+// Mermaid diagrams render in the offline renderer webview over a native
+// bridge; the main page never loads or executes Mermaid itself. Results are
+// routed by request id. Only payloads that are ok AND backend-sanitized are
+// inserted; everything else becomes text plus the diagram source.
+let mermaidBridgeId = 0;
+const mermaidPending = new Map();
+let mermaidBridgeListener = null;
+function onMermaidRenderResult(event) {
+  const payload = event && typeof event === 'object' && 'payload' in event ? event.payload : event;
+  const pending = payload && typeof payload.id === 'string' ? mermaidPending.get(payload.id) : undefined;
+  if (!pending) return;
+  mermaidPending.delete(payload.id);
+  pending.resolve(payload ?? null);
+}
+function ensureMermaidBridge() {
+  if (!mermaidBridgeListener) {
+    mermaidBridgeListener = listen('mermaid-render-result', onMermaidRenderResult).catch(error => {
+      mermaidBridgeListener = null;
+      throw error;
+    });
+  }
+  return mermaidBridgeListener;
+}
+function cancelMermaidPending() {
+  if (!mermaidPending.size) return;
+  for (const [id, pending] of mermaidPending) {
+    mermaidPending.delete(id);
+    pending.resolve(null);
+    invoke('mermaid_render_cancel', { id }).catch(() => {});
   }
 }
+const MAX_MERMAID_SOURCE_BYTES = 256 * 1024;
+function mermaidSourceTooLarge(source) {
+  try {
+    return new TextEncoder().encode(source).length > MAX_MERMAID_SOURCE_BYTES;
+  } catch {
+    return (source || '').length > MAX_MERMAID_SOURCE_BYTES;
+  }
+}
+async function requestMermaidRender(source) {
+  const id = `m${++mermaidBridgeId}`;
+  await ensureMermaidBridge();
+  let resolveResult;
+  const result = new Promise(resolve => { resolveResult = resolve; });
+  mermaidPending.set(id, { resolve: resolveResult });
+  try {
+    await invoke('mermaid_render_request', { request: { id, source, theme: { variables: mermaidThemeVariables() } } });
+  } catch (error) {
+    mermaidPending.delete(id);
+    throw error;
+  }
+  return { id, result: await result };
+}
+function showMermaidFallback(host, source, offline) {
+  const message = document.createElement('p');
+  message.className = 'mermaid-error';
+  message.textContent = offline
+    ? 'This diagram needs external images, which are blocked while rendering offline.'
+    : 'Mermaid diagram could not be rendered.';
+  const fallback = document.createElement('pre');
+  fallback.className = 'mermaid-source';
+  fallback.textContent = source;
+  host.append(message, fallback);
+}
+async function renderMermaidHost(host, source, generation, pre) {
+  if (!mermaidSourceTooLarge(source)) {
+    let outcome;
+    try {
+      ({ result: outcome } = await requestMermaidRender(source));
+    } catch {
+      outcome = { ok: false };
+    }
+    if (outcome === null || outcome === undefined) return false;
+    if (generation !== renderGeneration || !pre.isConnected) return false;
+    if (outcome.ok === true && outcome.sanitized === true && typeof outcome.svg === 'string' && outcome.svg) {
+      showDiagramSvg(host, outcome.svg);
+      return true;
+    }
+    showMermaidFallback(host, source, outcome?.error?.code === 'unsupported_external_images');
+    return true;
+  }
+  showMermaidFallback(host, source, false);
+  return true;
+}
 async function renderDiagrams(generation = renderGeneration, reusableDiagrams = new Map()) {
-  if (!$('preview').querySelector('pre > code.language-mermaid')) return;
-  try { await loadMermaid(); } catch { return; }
   if (generation !== renderGeneration) return;
+  cancelMermaidPending();
+  if (!$('preview').querySelector('pre > code.language-mermaid')) return;
   const blocks = [...$('preview').querySelectorAll('pre > code.language-mermaid')].map(code => code.closest('pre'));
   if (!blocks.length) return;
   const themeRevision = diagramThemeRevision;
-  try { window.mermaid.initialize(mermaidConfig()); } catch { try { window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', suppressErrorRendering: true }); } catch { return; } }
   for (const pre of blocks) {
     if (generation !== renderGeneration || !pre.isConnected) return;
     const source = pre.querySelector('code.language-mermaid')?.textContent ?? '';
@@ -248,34 +313,38 @@ async function renderDiagrams(generation = renderGeneration, reusableDiagrams = 
     host.dataset.mermaidSource = source;
     host.dataset.themeRevision = String(themeRevision);
     if (reused) { pre.replaceWith(host); continue; }
-    const id = `mermaid-${++mermaidRenderId}`;
-    try {
-      const { svg } = await window.mermaid.render(id, source);
-      showDiagramSvg(host, svg);
-    } catch (error) {
-      const message = document.createElement('p'); message.className = 'mermaid-error'; message.textContent = 'Mermaid diagram could not be rendered.';
-      const fallback = document.createElement('pre'); fallback.className = 'mermaid-source'; fallback.textContent = source;
-      host.append(message, fallback);
-    }
+    if (!await renderMermaidHost(host, source, generation, pre)) return;
     if (generation !== renderGeneration || !pre.isConnected) return;
     pre.replaceWith(host);
   }
 }
 async function refreshMermaid() {
-  if (!window.mermaid || !current.active || !$('preview').querySelector('.mermaid-host')) return;
+  if (!current.active || !$('preview').querySelector('.mermaid-host')) return;
   const generation = renderGeneration, themeRevision = diagramThemeRevision;
-  try { window.mermaid.initialize(mermaidConfig()); } catch { try { window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', suppressErrorRendering: true }); } catch { return; } }
   for (const host of $('preview').querySelectorAll('.mermaid-host[data-mermaid-source]')) {
     if (generation !== renderGeneration || themeRevision !== diagramThemeRevision) return;
     if (Number(host.dataset.themeRevision) === themeRevision) continue;
     const source = host.dataset.mermaidSource;
-    const id = `mermaid-${++mermaidRenderId}`;
+    if (mermaidSourceTooLarge(source)) continue;
+    let outcome;
     try {
-      const { svg } = await window.mermaid.render(id, source);
-      if (!host.isConnected || generation !== renderGeneration || themeRevision !== diagramThemeRevision) return;
-      showDiagramSvg(host, svg);
+      ({ result: outcome } = await requestMermaidRender(source));
+    } catch { continue; }
+    if (outcome === null || outcome === undefined) return;
+    if (!host.isConnected || generation !== renderGeneration || themeRevision !== diagramThemeRevision) return;
+    if (outcome.ok === true && outcome.sanitized === true && typeof outcome.svg === 'string' && outcome.svg) {
+      showDiagramSvg(host, outcome.svg);
       host.dataset.themeRevision = String(themeRevision);
-    } catch {}
+    }
   }
   if (previewSnapshot) previewSnapshot.themeRevision = themeRevision;
+}
+function showDiagramSvg(host, markup) {
+  host.innerHTML = markup;
+  const drawing = host.querySelector('svg');
+  const width = drawing?.viewBox?.baseVal?.width;
+  if (width > 0) {
+    drawing.style.width = `clamp(clamp(${Math.ceil(width * .5)}px, calc(${Math.ceil(width)}px - 100%), ${Math.ceil(width * .75)}px), 100%, ${Math.ceil(width)}px)`;
+    drawing.style.maxWidth = 'none';
+  }
 }
