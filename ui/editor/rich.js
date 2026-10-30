@@ -12,6 +12,7 @@ import { tryTextEdits } from './source-edits.js';
 
 const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
 const NAVIGATION_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']);
+const MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'AltGraph', 'Meta', 'CapsLock', 'OS', 'Super', 'Hyper']);
 
 // Explicit source-grapheme policy for collapsed Delete/Backspace. A bookmark
 // may be non-collapsed in source even when its projected ProseMirror selection
@@ -408,236 +409,128 @@ export function createRichEditor(parent, options) {
     render(); refreshers.add(render);
     return { dom, contentDOM: code, update(next) { if (next.type !== node.type) return false; node = next; render(); return true; }, ignoreMutation: mutation => mutation.type === 'attributes' || !pre.contains(mutation.target), destroy() { generation++; clearTimeout(highlightTimer); highlightGeneration++; abortController?.abort(); refreshers.delete(render); } };
   }
+  // Reading selections may start, cross and end inside a rendered projection.
+  // ProseMirror maps any DOM position inside an atom to the atom boundary and
+  // rewrites the DOM range, which truncates cross-block drags to the editable
+  // side. While a drag is active the editor's selection observer is paused so
+  // the native range is left alone; it is re-synced on release (or on the
+  // next edit/pointer gesture if a reading range is still standing). The
+  // guarded range always covers rendered text, never the literal source.
+  let selectionGuarded = false;
+  function previewIntersectsSelection() {
+    try {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return false;
+      const previews = view?.dom.querySelectorAll('.extension-preview');
+      if (!previews || !previews.length) return false;
+      for (let i = 0; i < selection.rangeCount; i++) {
+        const range = selection.getRangeAt(i);
+        for (const preview of previews) if (range.intersectsNode(preview)) return true;
+      }
+    } catch {}
+    return false;
+  }
+  function setSelectionGuarded(on) {
+    if (Boolean(on) === selectionGuarded) return;
+    selectionGuarded = Boolean(on);
+    try {
+      if (!view) return;
+      // Pausing disconnects both mutation and selection observation; the
+      // projection blocks input (see rawView), so no document change can slip
+      // through while the observer is paused.
+      if (selectionGuarded) view.domObserver.stop();
+      else view.domObserver.start();
+    } catch {}
+  }
+  function releaseSelectionGuard() {
+    if (!selectionGuarded) return;
+    // A standing reading range keeps its guard; anything else hands selection
+    // back to the editor so typing and caret movement stay predictable.
+    if (previewIntersectsSelection()) return;
+    setSelectionGuarded(false);
+    try { view?.domObserver.flush(); } catch {}
+  }
+  function resyncGuardedSelection() {
+    if (!selectionGuarded) return;
+    setSelectionGuarded(false);
+    try { view?.domObserver.flush(); } catch {}
+  }
+  function copyGuardedSelection(event) {
+    const data = event.clipboardData;
+    if (!data || !previewIntersectsSelection()) return false;
+    const text = window.getSelection()?.toString() ?? '';
+    if (!text) return false;
+    event.preventDefault();
+    try { data.setData('text/plain', text); } catch {}
+    return true;
+  }
   function rawView(node, editor, getPos) {
     const dom = document.createElement('section'); dom.className = 'extension-block';
+    // Assert editability up front: ProseMirror marks atom DOM non-editable when
+    // the attribute is absent, which would make the projection an atomic
+    // island that reading selections cannot cross. The projection stays part
+    // of the editable surface so selections can natively span rendered text
+    // across block boundaries; input is blocked below because the DOM is a
+    // sanitized rendering, not the document. Under Lock the whole editor
+    // (including this block) is uniformly non-editable, so selections span
+    // the same way; the guard below keeps working in both modes.
+    const syncEditability = () => {
+      try { dom.contentEditable = String(!options.isUserLocked()); } catch {}
+    };
+    syncEditability();
     const projection = document.createElement('div'); projection.className = 'extension-preview';
-    // The native renderer's projection is a view of the raw block, not
-    // editable document content. Keep the browser from creating a DOM-only
-    // selection inside it; pointer drags are mapped to the real text below.
-    projection.contentEditable = 'false'; projection.style.userSelect = 'none'; projection.style.webkitUserSelect = 'none';
-    const details = document.createElement('details'), summary = document.createElement('summary'), pre = document.createElement('pre');
-    summary.textContent = /^---\n/.test(node.textContent) ? 'Front matter' : 'Markdown source'; pre.className = 'source-block';
-    details.append(summary, pre); dom.append(projection, details); let generation = 0;
+    // The projection is part of the editable surface so reading selections
+    // can natively span rendered text across block boundaries. Input is
+    // blocked here: the DOM is a sanitized rendering, not the document, and
+    // the literal Markdown lives solely in the explicit source presentation.
+    const guardMutation = event => { event.preventDefault(); };
+    projection.addEventListener('beforeinput', guardMutation);
+    projection.addEventListener('drop', guardMutation);
+    projection.addEventListener('dragstart', guardMutation);
+    // A drag entering from outside the editor never saw a mousedown, so arm
+    // the guard here as a backstop; in-editor drags are guarded centrally.
+    projection.addEventListener('mousemove', event => { if (event.buttons & 1) setSelectionGuarded(true); });
+    const actions = document.createElement('div'); actions.className = 'extension-actions';
+    const edit = button(/^---\n/.test(node.textContent) ? 'Edit front matter' : 'Edit source', () => {
+      if (options.isLocked()) return;
+      let pos = null;
+      try { pos = getPos(); } catch { pos = null; }
+      if (pos != null) {
+        const owner = model.ledger?.owners?.find(entry => entry.pmFrom === pos && entry.type === 'raw_block');
+        if (owner && Number.isInteger(owner.sourceFrom) && Number.isInteger(owner.sourceTo)) {
+          options.revealSource?.(owner.sourceFrom, owner.sourceTo);
+          return;
+        }
+        try {
+          const mapped = richMapping(model, pos + 1, { bias: 'right' });
+          const fallback = mapped?.owner;
+          if (fallback && Number.isInteger(fallback.sourceFrom) && Number.isInteger(fallback.sourceTo)) {
+            options.revealSource?.(fallback.sourceFrom, fallback.sourceTo);
+            return;
+          }
+        } catch {}
+      }
+      revealCurrentSelection();
+    });
+    edit.classList.add('extension-edit');
+    edit.setAttribute('aria-label', /^---\n/.test(node.textContent) ? 'Edit front matter source' : 'Edit Markdown source');
+    edit.title = 'Edit source in Markdown view';
+    actions.append(edit);
+    dom.append(projection, actions);
+    let generation = 0;
     const render = async () => {
       const current = ++generation;
       try { const html = await options.renderExtension(node.textContent); if (generation === current && dom.isConnected) projection.innerHTML = html; }
-      catch { if (current === generation) { projection.textContent = 'Rendered view unavailable. The complete source is available below.'; details.open = true; } }
+      catch { if (current === generation) projection.textContent = 'Rendered view unavailable. Use Edit source to inspect the exact Markdown.'; }
     };
     Promise.resolve().then(render);
-
-    // Map a point in the non-editable projection back to an offset in the raw
-    // block's literal text. The projection carries the renderer's
-    // data-sourcepos ranges; matching each text node inside its annotated
-    // range preserves exact character offsets even when Markdown syntax or
-    // inline HTML is not rendered.
-    function textPoint(node, offset) {
-      if (node.nodeType === 3) return { node, offset };
-      const children = node.childNodes;
-      if (offset > 0) {
-        const previous = children[offset - 1];
-        const text = previous && (previous.nodeType === 3 ? previous : previous.lastChild);
-        if (text?.nodeType === 3) return { node: text, offset: text.nodeValue.length };
-      }
-      const next = children[offset];
-      const text = next && (next.nodeType === 3 ? next : next.firstChild);
-      return text?.nodeType === 3 ? { node: text, offset: 0 } : null;
-    }
-    function textSibling(textNode, forward) {
-      const walker = document.createTreeWalker(projection, NodeFilter.SHOW_TEXT);
-      let previous = null, text;
-      while ((text = walker.nextNode())) {
-        if (text === textNode) return forward ? walker.nextNode() : previous;
-        previous = text;
-      }
-      return null;
-    }
-    function charRectAt(textNode, index) {
-      const value = textNode.nodeValue || '';
-      if (index < 0 || index >= value.length) return null;
-      const range = document.createRange(); range.setStart(textNode, index); range.setEnd(textNode, index + 1);
-      const rects = range.getClientRects();
-      return rects.length ? rects[rects.length - 1] : null;
-    }
-    function adjacentText(textNode, forward) {
-      const sibling = textSibling(textNode, forward);
-      if (!sibling) return null;
-      const value = textNode.nodeValue || '', otherValue = sibling.nodeValue || '';
-      const edge = charRectAt(textNode, forward ? value.length - 1 : 0);
-      const other = charRectAt(sibling, forward ? 0 : otherValue.length - 1);
-      if (!edge || !other) return null;
-      const sameRow = edge.top < other.bottom && other.top < edge.bottom;
-      const touching = forward ? Math.abs(edge.right - other.left) <= 1 : Math.abs(edge.left - other.right) <= 1;
-      return sameRow && touching ? sibling : null;
-    }
-    function caretPoint(x, y, afterBoundary = false) {
-      let node = null, offset = 0;
-      if (document.caretPositionFromPoint) {
-        const point = document.caretPositionFromPoint(x, y);
-        if (point) { node = point.offsetNode; offset = point.offset; }
-      } else if (document.caretRangeFromPoint) {
-        const range = document.caretRangeFromPoint(x, y);
-        if (range) { node = range.startContainer; offset = range.startOffset; }
-      }
-      if (!node || !projection.contains(node)) return null;
-      let point = textPoint(node, offset);
-      if (!point) return null;
-      // At an exact text-node boundary the browser picks the next node. Bias
-      // the endpoint toward the character actually under the pointer so the
-      // end of a word does not jump into a following footnote marker.
-      if (afterBoundary && point.offset === 0) {
-        const previous = adjacentText(point.node, false);
-        if (previous) point = { node: previous, offset: previous.nodeValue.length };
-      } else if (!afterBoundary && point.offset === point.node.nodeValue.length) {
-        const next = adjacentText(point.node, true);
-        if (next) point = { node: next, offset: 0 };
-      }
-      return point;
-    }
-    function sourceposRange(element, rootLine, lineStarts, length) {
-      const value = element?.dataset.sourcepos || '';
-      const match = /^(\d+):(\d+)-(\d+):(\d+)$/.exec(value);
-      if (!match) return null;
-      const startLine = +match[1] - rootLine, endLine = +match[3] - rootLine;
-      const from = (lineStarts[startLine] ?? 0) + (+match[2] - 1);
-      const to = (lineStarts[endLine] ?? length) + (+match[4]);
-      return { from: Math.max(0, Math.min(from, length)), to: Math.max(0, Math.min(to, length)) };
-    }
-    function projectionOffset(textNode, offset) {
-      const source = node.textContent;
-      const root = projection.querySelector('[data-sourcepos]');
-      const rootMatch = /^(\d+):/.exec(root?.dataset.sourcepos || '');
-      const rootLine = rootMatch ? +rootMatch[1] : 1;
-      const lineStarts = [0];
-      for (let i = 0; i < source.length; i++) if (source[i] === '\n') lineStarts.push(i + 1);
-      const walker = document.createTreeWalker(projection, NodeFilter.SHOW_TEXT);
-      let cursor = 0, text;
-      while ((text = walker.nextNode())) {
-        const value = text.nodeValue || '';
-        const range = sourceposRange(text.parentElement?.closest('[data-sourcepos]'), rootLine, lineStarts, source.length);
-        const lower = range?.from ?? 0, upper = range?.to ?? source.length;
-        let index = source.indexOf(value, Math.max(cursor, lower));
-        if (index < 0 || index + value.length > upper) index = source.indexOf(value, lower);
-        if (index < 0 || index + value.length > upper) index = Math.max(lower, Math.min(cursor, source.length));
-        if (index < cursor) index = cursor;
-        cursor = index + value.length;
-        if (text === textNode) return Math.min(source.length, index + Math.min(offset, value.length));
-      }
-      return null;
-    }
-    function positionFromDOM(node, offset) {
-      if (projection.contains(node)) {
-        if (node.nodeType === 3) {
-          const local = projectionOffset(node, offset);
-          return local == null ? null : getPos() + 1 + local;
-        }
-        return getPos() + 1;
-      }
-      try { return editor.posAtDOM(node, offset, 1); } catch { return null; }
-    }
-    function positionAtPoint(x, y, afterBoundary = false) {
-      const point = caretPoint(x, y, afterBoundary);
-      if (point) {
-        const local = projectionOffset(point.node, point.offset);
-        if (local != null) return getPos() + 1 + local;
-      }
-      const coords = editor.posAtCoords({ left: x, top: y });
-      return coords ? coords.pos : null;
-    }
-    let drag = null, nativeDrag = null;
-    function select(anchor, head) {
-      if (anchor == null || head == null) return;
-      try {
-        const selection = TextSelection.between(editor.state.doc.resolve(anchor), editor.state.doc.resolve(head));
-        if (!editor.state.selection.eq(selection)) editor.dispatch(editor.state.tr.setSelection(selection));
-      } catch {}
-    }
-    function stopDrag() {
-      document.removeEventListener('mousemove', moveDrag, true);
-      document.removeEventListener('mouseup', endDrag, true);
-      document.removeEventListener('mouseup', clearNativeDrag);
-      drag = nativeDrag = null;
-    }
-    function clearNativeDrag() {
-      nativeDrag = null;
-      document.removeEventListener('mouseup', clearNativeDrag);
-    }
-    function moveDrag(event) {
-      if (!drag) return;
-      if (event.buttons === 0) { stopDrag(); return; }
-      const head = positionAtPoint(event.clientX, event.clientY, event.clientX >= drag.anchorX);
-      if (head == null) return;
-      drag.head = head;
-      select(drag.anchor, drag.head);
-      event.preventDefault(); event.stopPropagation();
-    }
-    function endDrag(event) {
-      if (!drag) return;
-      const head = positionAtPoint(event.clientX, event.clientY, event.clientX >= drag.anchorX);
-      if (head != null) drag.head = head;
-      // A selection wholly inside the raw block must target the real text in
-      // contentDOM. Its source box is collapsed by default, so reveal it
-      // before restoring focus and the exact range.
-      const start = getPos() + 1, end = start + node.textContent.length;
-      if (drag.anchor >= start && drag.anchor <= end && drag.head >= start && drag.head <= end && !details.open) details.open = true;
-      select(drag.anchor, drag.head);
-      stopDrag();
-      // The range is already in state; focus only re-syncs DOM selection to
-      // the now-visible contentDOM. A detached/closing view may refuse it.
-      try { editor.focus(); } catch {}
-      event.preventDefault(); event.stopPropagation();
-    }
-    function startDrag(event) {
-      if (event.button !== 0) return;
-      const anchor = positionAtPoint(event.clientX, event.clientY);
-      if (anchor == null) return;
-      releaseBookmark(); tabSelection = null;
-      if (event.shiftKey) {
-        drag = { anchor: editor.state.selection.anchor, head: anchor, anchorX: event.clientX };
-      } else {
-        drag = { anchor, head: anchor, anchorX: event.clientX };
-      }
-      editor.focus();
-      select(drag.anchor, drag.head);
-      document.addEventListener('mousemove', moveDrag, true);
-      document.addEventListener('mouseup', endDrag, true);
-      event.preventDefault(); event.stopImmediatePropagation();
-    }
-    // A drag may also start in ordinary text and finish inside the projection.
-    // Native selection cannot map the projection endpoint, so track that drag
-    // here and replace the block-start fallback with the exact raw offset.
-    function enterProjection(event) {
-      if (drag || event.buttons !== 1) return;
-      if (!nativeDrag) {
-        const dom = window.getSelection();
-        const anchor = dom?.anchorNode ? positionFromDOM(dom.anchorNode, dom.anchorOffset) : null;
-        nativeDrag = { anchor: anchor ?? editor.state.selection.anchor, head: null, anchorX: event.clientX };
-        document.addEventListener('mouseup', clearNativeDrag);
-      }
-      const head = positionAtPoint(event.clientX, event.clientY, event.clientX >= nativeDrag.anchorX);
-      if (head == null) return;
-      nativeDrag.head = head;
-      select(nativeDrag.anchor, nativeDrag.head);
-      event.preventDefault(); event.stopPropagation();
-    }
-    function finishNativeDrag(event) {
-      if (!nativeDrag) return;
-      const head = positionAtPoint(event.clientX, event.clientY, event.clientX >= nativeDrag.anchorX);
-      if (head != null) nativeDrag.head = head;
-      select(nativeDrag.anchor, nativeDrag.head);
-      document.removeEventListener('mouseup', clearNativeDrag);
-      nativeDrag = null;
-      event.preventDefault(); event.stopPropagation();
-    }
-    projection.addEventListener('mousedown', startDrag, true);
-    projection.addEventListener('mousemove', enterProjection, true);
-    projection.addEventListener('mouseup', finishNativeDrag, true);
-    const removeListeners = () => {
-      projection.removeEventListener('mousedown', startDrag, true);
-      projection.removeEventListener('mousemove', enterProjection, true);
-      projection.removeEventListener('mouseup', finishNativeDrag, true);
-      stopDrag();
-    };
-    return { dom, contentDOM: pre, update(next) { if (next.type !== node.type) return false; node = next; Promise.resolve().then(render); return true; }, ignoreMutation: mutation => !pre.contains(mutation.target), destroy() { generation++; removeListeners(); } };
+    const refresh = () => { edit.disabled = options.isLocked(); syncEditability(); };
+    refreshers.add(refresh); refresh();
+    const removeListeners = () => { refreshers.delete(refresh); };
+    // Atom view: the literal source is not mounted in the reading DOM, so no
+    // duplicate selectable text exists here. All source edits go through the
+    // explicit source presentation via the edit action above.
+    return { dom, update(next) { if (next.type !== node.type) return false; node = next; Promise.resolve().then(render); return true; }, ignoreMutation: () => true, stopEvent: event => event.target.closest('button') != null, destroy() { generation++; removeListeners(); } };
   }
   const safeDestination = value => {
     const destination = String(value || '');
@@ -956,12 +849,45 @@ export function createRichEditor(parent, options) {
     },
     handleDOMEvents: {
       mousedown(editor, event) {
-        // An explicit user caret/range placement releases the logical source
-        // bookmark even when it projects to the same rich position.
-        if (event.button === 0) { releaseBookmark(); tabSelection = null; }
+        // Every left-button gesture starts guarded: while the pointer is down
+        // the native range is left alone so reading selections can cross
+        // rendered projections, and the guard settles on pointer-up. A plain
+        // new caret still syncs on release via the pointer-up flush below.
+        if (event.button === 0) { setSelectionGuarded(true); releaseBookmark(); tabSelection = null; }
         return false;
       },
+      keydown(editor, event) {
+        if (selectionGuarded) {
+          // A standing reading range must survive the chord long enough for
+          // the native clipboard event to serve its rendered text. Returning
+          // true skips ProseMirror's selection normalization without
+          // preventDefault, so browser copy/cut still runs and our copy/cut
+          // handlers can serve the rendered range. Modifier-only presses must
+          // not truncate the range either.
+          const key = event.key.toLowerCase();
+          const clipboardShortcut = (event.ctrlKey || event.metaKey) && !event.altKey && (key === 'c' || key === 'x');
+          if (MODIFIER_KEYS.has(event.key) || clipboardShortcut) return true;
+        }
+        // Typing or moving from a guarded reading range first adopts it into
+        // editor state so the gesture lands predictably; the rewrite covers
+        // the mapped block range, never hidden source.
+        if (selectionGuarded) resyncGuardedSelection();
+        return false;
+      },
+      beforeinput(editor, event) {
+        if (selectionGuarded) resyncGuardedSelection();
+        return false;
+      },
+      copy(editor, event) {
+        // A reading range touching a projection copies the rendered text under
+        // the highlight. The editor's serializer would emit literal source
+        // for the atom, so the native range is served here instead.
+        return copyGuardedSelection(event);
+      },
       cut(editor, event) {
+        // Cutting a reading range must never mutate the document: serve the
+        // rendered text as a copy and keep the Markdown intact.
+        if (copyGuardedSelection(event)) return true;
         const range = logicalRange(editor.state);
         if (!range || range.collapsed || !event.clipboardData) return false;
         const text = model.source.slice(range.from, range.to);
@@ -998,6 +924,10 @@ export function createRichEditor(parent, options) {
       return true;
     }, auxclick(editor, event) { const anchor = event.target.closest('a'); if (!anchor || event.button !== 1) return false; event.preventDefault(); options.openLink(anchor.getAttribute('href') || ''); return true; } }
   });
+  // A drag ending outside the editor (or cancelled) still settles the guard.
+  window.addEventListener('pointerup', releaseSelectionGuard);
+  window.addEventListener('pointercancel', releaseSelectionGuard);
+  window.addEventListener('blur', releaseSelectionGuard);
   return {
     view,
     captureSelection() {
@@ -1050,6 +980,11 @@ export function createRichEditor(parent, options) {
       } else commands[name]?.(view.state, view.dispatch, view);
       view.focus();
     },
-    destroy() { view.destroy(); }
+    destroy() {
+      window.removeEventListener('pointerup', releaseSelectionGuard);
+      window.removeEventListener('pointercancel', releaseSelectionGuard);
+      window.removeEventListener('blur', releaseSelectionGuard);
+      view.destroy();
+    }
   };
 }

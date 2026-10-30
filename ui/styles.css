@@ -110,8 +110,23 @@
 .code-container pre { white-space:pre-wrap; }
 .code-container details>summary { cursor:pointer; font:12px var(--font-ui); color:var(--muted); margin-top:8px; }
 .source-block { font-size:.75em; white-space:pre-wrap; }
-.extension-block>details>summary { color:var(--muted); cursor:pointer; font:11px var(--font-ui); padding:6px 0; }
+/* Reading view shows only the rendered projection. The literal source lives
+   solely in the explicit Markdown presentation; the edit affordance floats
+   over the block corner and appears on hover or keyboard focus, reserving no
+   layout of its own, so the page reads calmly. */
+.extension-block { position:relative; margin:0 0 1.15em; }
+.extension-preview { line-height:inherit; overflow-wrap:break-word; white-space:normal; }
 .extension-preview:empty { display:none; }
+.extension-preview>:first-child { margin-top:0; }
+.extension-preview>:last-child { margin-bottom:0; }
+.extension-actions { position:absolute; top:2px; right:0; margin:0; opacity:0; pointer-events:none; transition:opacity .15s ease; }
+.extension-block:hover .extension-actions,.extension-actions:focus-within { opacity:1; pointer-events:auto; }
+@media (hover:none) {
+  .extension-actions { opacity:.75; pointer-events:auto; }
+}
+.extension-edit { user-select:none; -webkit-user-select:none; font:11px var(--font-ui); line-height:1; padding:4px 8px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--muted); box-shadow:0 2px 8px #0002; cursor:pointer; }
+.extension-edit:hover,.extension-edit:focus-visible { color:var(--fg); background:var(--hover); }
+.extension-edit:disabled { opacity:.35; cursor:default; }
 .source-dialog { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:12px; width:min(820px,92vw); padding:20px; }
 .source-dialog::backdrop { background:#0007; }
 .source-dialog-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
@@ -1754,17 +1769,17 @@ body.focus-mode #file-browser,body.focus-mode .sidebar-resizer {
 }
 
 .markdown h1 {
-  color:var(--read-yellow,var(--yellow));
+  color:var(--read-strong,var(--fg));
   margin-bottom:.85em
 }
 
 .markdown h2 {
-  color:var(--read-blue,var(--blue));
+  color:var(--read-strong,var(--fg));
   margin-top:1.55em
 }
 
 .markdown h3 {
-  color:var(--read-purple,var(--purple));
+  color:var(--read-strong,var(--fg));
   margin-top:1.3em
 }
 
@@ -1773,7 +1788,7 @@ body.focus-mode #file-browser,body.focus-mode .sidebar-resizer {
 }
 
 .markdown em {
-  color:var(--read-purple,var(--purple))
+  color:var(--read-body,var(--fg))
 }
 
 .markdown a {
