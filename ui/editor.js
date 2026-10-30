@@ -2,6 +2,14 @@
 // Shell adapter. The engines live in the locally bundled editor/ modules.
 let editor = null, editorDocument = null, editorPath = null, outlineTimer, fallbackCheckedContent = null;
 let previewBlocks = [];
+// Temporary protection while a queued open replaces the active document. This
+// is separate from the user's persistent Lock; it starts before native
+// open_document and ends after the replacement editor has mounted (or failed).
+let transitionLocked = false;
+function setTransitionLocked(next) {
+  transitionLocked = Boolean(next);
+  editor?.setTransitionLocked(transitionLocked);
+}
 function resetHistory() {} // History belongs to the active document controller.
 function changeContent(content) { if (editor) editor.replaceContent(content); else { current.content = content; updateTitle(); scheduleStats(); } }
 function undoRedo(redo = false) { return editor?.undo(redo) || false; }
@@ -28,18 +36,18 @@ function editorPresentation(show, locked, fallback) {
   $('editor-notice').hidden = !fallback;
   $('format-tools').querySelectorAll('button,select').forEach(control => { control.disabled = locked; });
 }
-function openEditorAction(title, value, apply, open) {
+function revealSourceForEdit(from, to) {
   if (!editor || editor.isLocked()) return;
-  const documentAtOpen = current;
-  $('editor-action-title').textContent = title; $('editor-action-value').value = value;
-  $('editor-action-open').hidden = !open;
-  $('editor-action-open').onclick = () => { $('editor-action-dialog').close(); open?.(); };
-  $('editor-action-form').onsubmit = event => {
-    event.preventDefault();
-    if (current === documentAtOpen && !editor.isLocked()) apply($('editor-action-value').value);
-    $('editor-action-dialog').close(); editor?.focus();
-  };
-  $('editor-action-dialog').showModal(); $('editor-action-value').focus(); $('editor-action-value').select();
+  const value = editor.getText();
+  const safeFrom = Math.max(0, Math.min(Number.isFinite(from) ? from : 0, value.length));
+  const safeTo = Math.max(0, Math.min(Number.isFinite(to) ? to : safeFrom, value.length));
+  const anchor = Math.min(safeFrom, safeTo), head = Math.max(safeFrom, safeTo);
+  // In-buffer source access: the Markdown projection is the same persistent
+  // buffer, not a separate edit session. Switching presentation preserves
+  // content, caret history and undo; selecting the exact syntax range keeps
+  // keyboard focus and selection predictable.
+  if (!editor.isSource()) editor.setPresentation(true, false);
+  editor.selectRange(anchor, head, true);
 }
 function openSourceSnapshot() {
   if (!editor) return;
@@ -97,14 +105,14 @@ async function mountUnifiedEditor() {
   } catch { limited = true; }
   if (current !== documentAtOpen || generation !== renderGeneration) return;
   let extensionCache = null, extensionContent = null;
+  const codeHighlightCache = new Map();
   editorDocument = current; editorPath = current.path;
   fallbackCheckedContent = current.content;
   const editorOptions = {
-    content: current.content, forceSource: limited, richParent: $('preview'), sourceParent: $('source-editor'), scroller: $('reader-scroll'),
+    content: current.content, forceSource: limited, transitionLocked, richParent: $('preview'), sourceParent: $('source-editor'), scroller: $('reader-scroll'),
     onChange(content) { if (current !== documentAtOpen) return; current.content = content; previewSnapshot = null; updateTitle(); scheduleStats(); scheduleEditorOutline(); },
     onPresentation: editorPresentation, message: toast, loadKatex, remoteImages: () => remoteImages, themeRevision: () => diagramThemeRevision,
-    editText: (title, value, apply) => openEditorAction(title, value, apply),
-    editLink: (value, apply, open) => openEditorAction('Link URL', value, apply, open),
+    revealSource: (from, to) => revealSourceForEdit(from, to),
     openLink(href) { const anchor = document.createElement('a'); anchor.setAttribute('href', href); followPreviewLink(anchor); },
     async renderExtension(source) {
       if (extensionContent !== current.content) {
@@ -123,6 +131,34 @@ async function mountUnifiedEditor() {
     async renderDiagram(source, signal) {
       if (mermaidSourceTooLarge(source)) return { ok: false };
       const { result } = await requestMermaidRender(source, signal); return result;
+    },
+    // Reuse the native, sanitized syntax highlighter for fenced code. The
+    // result is only the inner HTML of its escaped code element; the rich
+    // editor copies text nodes and token spans out of it, never markup.
+    async highlightCode(code, language) {
+      const key = `${language}\u0000${code}`;
+      if (codeHighlightCache.has(key)) return codeHighlightCache.get(key);
+      const longestRun = Math.max(2, ...[...String(code).matchAll(/`+/g)].map(match => match[0].length));
+      const fence = '`'.repeat(longestRun + 1);
+      const tag = /^[a-z0-9_+#.-]*$/i.test(language) ? language : '';
+      const result = await invoke('render_markdown', { content: `${fence}${tag}\n${code}\n${fence}`, remoteImages: false });
+      const html = typeof result === 'string' ? result : result.html;
+      const parsed = new DOMParser().parseFromString(html || '', 'text/html');
+      const highlightedNode = parsed.querySelector('pre code');
+      // The native adapter terminates its code element with a newline. Remove
+      // exactly that terminator so the token layer mirrors the node text.
+      if (highlightedNode?.textContent.endsWith('\n')) {
+        const walker = document.createTreeWalker(highlightedNode, NodeFilter.SHOW_TEXT);
+        let last = null, current;
+        while ((current = walker.nextNode())) last = current;
+        if (last?.nodeValue.endsWith('\n')) last.nodeValue = last.nodeValue.slice(0, -1);
+      }
+      const highlighted = highlightedNode?.innerHTML || '';
+      if (key.length < 100000) {
+        codeHighlightCache.set(key, highlighted);
+        if (codeHighlightCache.size > 100) codeHighlightCache.delete(codeHighlightCache.keys().next().value);
+      }
+      return highlighted;
     },
     async renderImage(destination, allowRemote) {
       // Reuse the native renderer's canonical, document-relative resolver and
@@ -163,9 +199,8 @@ $('source-snapshot-copy').onclick = async () => {
   try { await navigator.clipboard.writeText($('source-snapshot-text').value); $('source-snapshot-status').textContent = 'Snapshot copied.'; }
   catch { $('source-snapshot-text').focus(); $('source-snapshot-text').select(); document.execCommand('copy'); $('source-snapshot-status').textContent = 'Snapshot selected for copying.'; }
 };
-$('editor-action-cancel').onclick = () => { $('editor-action-dialog').close(); editor?.focus(); };
-for (const id of ['source-dialog', 'editor-action-dialog']) $(id).addEventListener('cancel', event => {
-  event.preventDefault(); $(id).close(); editor?.focus();
+$('source-dialog').addEventListener('cancel', event => {
+  event.preventDefault(); $('source-dialog').close(); editor?.focus();
 });
 $('format-tools').addEventListener('mousedown', event => { if (event.target.closest('button')) event.preventDefault(); });
 $('format-tools').addEventListener('click', event => { const command = event.target.closest('[data-editor-command]')?.dataset.editorCommand; if (command) editor?.command(command); });

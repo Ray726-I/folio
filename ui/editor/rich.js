@@ -193,6 +193,63 @@ export function createRichEditor(parent, options) {
     return { anchor: richToSource(model, state.selection.anchor), head: richToSource(model, state.selection.head) };
   };
   const check = action => { if (!options.isLocked()) action(); };
+  // In-buffer source access for links, math and images. The Markdown buffer
+  // stays the truth; these helpers only select the exact syntax range in the
+  // shared source projection for direct typing. No modal, no separate edit
+  // session. Lock and undo are preserved by the shell entry.
+  function revealLinkSource(from, to, href) {
+    if (options.isLocked() || !options.revealSource) return;
+    const needle = String(href || '');
+    const verified = verifiedSourceRange(from, to);
+    if (verified) {
+      if (needle) {
+        const start = model.source.indexOf(needle, verified.to);
+        if (start >= verified.to && start <= verified.to + needle.length + 10) {
+          options.revealSource(start, start + needle.length);
+          return;
+        }
+      }
+      options.revealSource(verified.from, verified.to);
+      return;
+    }
+    const mapped = richMapping(model, from, { bias: 'right' });
+    if (mapped && Number.isInteger(mapped.source)) {
+      if (needle) {
+        const start = model.source.indexOf(needle, mapped.source);
+        if (start >= mapped.source && start <= mapped.source + needle.length + 10) {
+          options.revealSource(start, start + needle.length);
+          return;
+        }
+      }
+      options.revealSource(mapped.source, mapped.source);
+    }
+  }
+  function revealAtomSource(pmPos, attrText) {
+    if (options.isLocked() || !options.revealSource) return;
+    const mapped = richMapping(model, pmPos, { bias: 'right' });
+    const owner = mapped?.owner;
+    let from = owner?.sourceFrom, to = owner?.sourceTo;
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to > model.source.length || from >= to) {
+      if (Number.isInteger(mapped?.source)) options.revealSource(mapped.source, mapped.source);
+      return;
+    }
+    const needle = String(attrText ?? '');
+    if (needle) {
+      const inner = model.source.indexOf(needle, from);
+      if (inner >= from && inner + needle.length <= to) {
+        options.revealSource(inner, inner + needle.length);
+        return;
+      }
+    }
+    options.revealSource(from, to);
+  }
+  function revealCurrentSelection() {
+    if (options.isLocked() || !options.revealSource) return;
+    try {
+      const selection = sourceSelection(view.state);
+      options.revealSource(selection.anchor, selection.head);
+    } catch {}
+  }
   function listItem(node, editor, getPos) {
     const dom = document.createElement('li'), contentDOM = document.createElement('div'); contentDOM.className = 'list-content';
     let checkbox;
@@ -216,7 +273,13 @@ export function createRichEditor(parent, options) {
   function mathView(node, editor, getPos) {
     const dom = document.createElement(node.isInline ? 'span' : 'div'); dom.className = node.isInline ? 'math-inline' : 'math-block'; dom.contentEditable = 'false';
     const formula = document.createElement('span'); formula.className = 'math-formula'; formula.title = 'Click to edit formula';
-    const edit = button('✎', () => check(() => options.editText('Math formula', node.attrs.tex, tex => editor.dispatch(editor.state.tr.setNodeMarkup(getPos(), null, { tex })))));
+    const edit = button('✎', () => {
+      if (options.isLocked()) return;
+      let pos = null;
+      try { pos = getPos(); } catch { pos = null; }
+      if (pos != null) revealAtomSource(pos, node.attrs.tex);
+      else revealCurrentSelection();
+    });
     edit.classList.add('math-edit'); edit.setAttribute('aria-label', 'Edit formula'); edit.title = 'Edit formula';
     formula.addEventListener('mousedown', event => { if (event.button !== 0) return; event.preventDefault(); if (!options.isLocked()) edit.click(); });
     dom.append(formula, edit); let generation = 0;
@@ -229,13 +292,23 @@ export function createRichEditor(parent, options) {
     render(); const refresh = () => { edit.disabled = options.isLocked(); }; refreshers.add(refresh);
     return { dom, update(next) { if (next.type !== node.type) return false; node = next; render(); return true; }, stopEvent: () => true, ignoreMutation: () => true, destroy() { generation++; refreshers.delete(refresh); } };
   }
-  function imageView(node) {
+  function imageView(node, editorView, getPos) {
     const dom = document.createElement('span'); dom.className = 'image-widget'; dom.contentEditable = 'false'; let generation = 0;
     const lease = options.reserveImage();
+    const edit = button('Edit image', () => {
+      if (options.isLocked()) return;
+      let pos = null;
+      try { pos = getPos(); } catch { pos = null; }
+      if (pos != null) revealAtomSource(pos, node.attrs.src);
+      else revealCurrentSelection();
+    });
+    edit.setAttribute('aria-label', 'Edit image'); edit.title = 'Edit image source';
     const render = async (consent = false) => {
       const current = ++generation; dom.replaceChildren();
       lease.assign('');
       const caption = document.createElement('span'); caption.className = 'image-caption'; caption.textContent = node.attrs.alt || 'Image'; dom.append(caption);
+      edit.disabled = options.isLocked();
+      dom.append(edit);
       if (!lease.allowed) { caption.textContent = 'Image limit reached. Source is preserved.'; return; }
       try {
         const image = await options.resolveImage(node.attrs.src, consent);
@@ -254,14 +327,72 @@ export function createRichEditor(parent, options) {
   }
   function codeView(node, editor, getPos) {
     const dom = document.createElement('div'); dom.className = 'code-container';
-    const drawing = document.createElement('div'), pre = document.createElement('pre'), code = document.createElement('code'); pre.append(code);
+    const drawing = document.createElement('div');
+    // The native renderer already owns a safe, sanitized syntax highlighter.
+    // Keep its tokens in a non-editable backing layer and leave the real
+    // editable text above it. When the code block is focused the backing layer
+    // is covered by the normal editable surface, so selection and IME behave
+    // exactly as before; the tokens never enter the ProseMirror document.
+    const highlight = document.createElement('pre'); highlight.className = 'code-highlight'; highlight.setAttribute('aria-hidden', 'true');
+    const highlightCode = document.createElement('code'); highlight.append(highlightCode);
+    const pre = document.createElement('pre'); pre.className = 'code-surface';
+    const code = document.createElement('code'); pre.append(code);
     const details = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'Diagram source'; details.append(summary, pre);
     let generation = 0, source = null, theme = null, abortController = null;
+    let highlightGeneration = 0, highlightTimer = 0, highlightedSource = null, highlightedLanguage = null;
+    dom.addEventListener('focusin', () => dom.classList.add('code-editing'));
+    dom.addEventListener('focusout', () => requestAnimationFrame(() => { if (!dom.contains(document.activeElement)) dom.classList.remove('code-editing'); }));
+    const clearHighlight = () => {
+      highlightGeneration++; clearTimeout(highlightTimer);
+      highlightCode.replaceChildren(); dom.classList.remove('code-highlighted');
+      highlightedSource = null; highlightedLanguage = null;
+    };
+    const scheduleHighlight = language => {
+      const sourceText = node.textContent;
+      if (sourceText === highlightedSource && language === highlightedLanguage) return;
+      highlightedSource = sourceText; highlightedLanguage = language;
+      const current = ++highlightGeneration; clearTimeout(highlightTimer);
+      // Keep the real text visible until fresh tokens for this exact source
+      // arrive; never show a stale highlight over changed code.
+      dom.classList.remove('code-highlighted');
+      if (!options.highlightCode || !sourceText || sourceText.length > 200000) { highlightCode.replaceChildren(); return; }
+      highlightTimer = setTimeout(async () => {
+        try {
+          const html = await options.highlightCode(sourceText, language);
+          if (current !== highlightGeneration || !dom.isConnected) return;
+          const parsed = new DOMParser().parseFromString(String(html || ''), 'text/html');
+          const source = parsed.querySelector('pre code') || parsed.body;
+          const copy = document.createDocumentFragment();
+          // Copy text and token spans only; never inject arbitrary markup.
+          const copyTokens = (from, to) => {
+            for (const child of from.childNodes) {
+              if (child.nodeType === Node.TEXT_NODE) to.append(document.createTextNode(child.nodeValue));
+              else if (child.nodeType === Node.ELEMENT_NODE && child.tagName === 'SPAN') {
+                const span = document.createElement('span');
+                for (const name of child.classList) if (/^[a-z0-9_-]+$/i.test(name)) span.classList.add(name);
+                copyTokens(child, span); to.append(span);
+              } else copyTokens(child, to);
+            }
+          };
+          if (source) copyTokens(source, copy);
+          highlightCode.replaceChildren(copy);
+          dom.classList.toggle('code-highlighted', highlightCode.textContent === sourceText && highlightCode.childNodes.length > 0);
+        } catch { if (current === highlightGeneration) { highlightCode.replaceChildren(); dom.classList.remove('code-highlighted'); } }
+      }, 60);
+    };
     const render = async () => {
       const language = node.attrs.params.trim().split(/\s/)[0]; dom.dataset.language = language;
-      if (language !== 'mermaid') { if (!pre.isConnected) dom.replaceChildren(pre); return; }
+      if (language !== 'mermaid') {
+        dom.classList.remove('mermaid-host'); delete dom.dataset.mermaidSource;
+        code.className = /^[a-z0-9_+#.-]+$/i.test(language) ? `language-${language}` : '';
+        if (pre.parentNode !== dom || highlight.nextSibling !== pre) dom.replaceChildren(highlight, pre);
+        scheduleHighlight(language);
+        return;
+      }
+      clearHighlight();
       dom.classList.add('mermaid-host'); dom.dataset.mermaidSource = node.textContent;
-      if (!drawing.isConnected) dom.replaceChildren(drawing, details);
+      if (pre.parentNode !== details) details.append(summary, pre);
+      if (!drawing.isConnected || !details.isConnected) dom.replaceChildren(drawing, details);
       if (source === node.textContent && theme === options.themeRevision()) return;
       source = node.textContent; theme = options.themeRevision(); const current = ++generation;
       dom.dataset.themeRevision = String(theme);
@@ -275,7 +406,7 @@ export function createRichEditor(parent, options) {
       } catch { if (current === generation) { drawing.textContent = 'Mermaid diagram could not be rendered.'; drawing.className = 'mermaid-error'; details.open = true; } }
     };
     render(); refreshers.add(render);
-    return { dom, contentDOM: code, update(next) { if (next.type !== node.type) return false; node = next; render(); return true; }, ignoreMutation: mutation => mutation.type === 'attributes' || !pre.contains(mutation.target), destroy() { generation++; abortController?.abort(); refreshers.delete(render); } };
+    return { dom, contentDOM: code, update(next) { if (next.type !== node.type) return false; node = next; render(); return true; }, ignoreMutation: mutation => mutation.type === 'attributes' || !pre.contains(mutation.target), destroy() { generation++; clearTimeout(highlightTimer); highlightGeneration++; abortController?.abort(); refreshers.delete(render); } };
   }
   function rawView(node, editor, getPos) {
     const dom = document.createElement('section'); dom.className = 'extension-block';
@@ -691,7 +822,10 @@ export function createRichEditor(parent, options) {
   ];
   function stateFor(doc, selection) {
     return EditorState.create({ doc, selection: selection ? selectionAt(doc, sourceToRich(model, selection.anchor), sourceToRich(model, selection.head)) : undefined, plugins: [
-      new Plugin({ filterTransaction: tr => !options.isLocked() || !tr.docChanged }),
+      // A locked transition must also reject transactions that only set
+      // stored marks (for example Ctrl+B at an empty selection). Otherwise the
+      // mark survives the rejected open and bolds the user's next typing.
+      new Plugin({ filterTransaction: tr => !options.isLocked() || (!tr.docChanged && !tr.storedMarksSet) }),
       new Plugin({
         // Public table repair policy replaces stock tableEditing's drag and
         // normalization behavior while keeping TableView/schema/commands.
@@ -745,7 +879,9 @@ export function createRichEditor(parent, options) {
     view.dispatch(view.state.tr.setSelection(next));
   }
   view = new EditorView(parent, {
-    state: stateFor(model.doc), editable: () => !options.isLocked(),
+    // Keep the view focusable during temporary transition protection; the
+    // transaction filter below enforces the effective lock for document edits.
+    state: stateFor(model.doc), editable: () => !options.isUserLocked(),
     attributes: { 'aria-label': 'Formatted Markdown editor', spellcheck: 'true' },
     nodeViews: { list_item: listItem, image: imageView, math_inline: mathView, math_block: mathView, code_block: codeView, raw_block: rawView, table: node => new TableView(node, 80) },
     dispatchTransaction(tr) {
@@ -857,7 +993,7 @@ export function createRichEditor(parent, options) {
         let from = ranges[index].from, to = ranges[index].to;
         for (let i = index - 1; i >= 0 && ranges[i].to === from; i--) from = ranges[i].from;
         for (let i = index + 1; i < ranges.length && ranges[i].from === to; i++) to = ranges[i].to;
-        options.editLink(href, value => check(() => editor.dispatch(editor.state.tr.removeMark(from, to, schema.marks.link).addMark(from, to, schema.marks.link.create({ href: value })))), () => options.openLink(href));
+        revealLinkSource(from, to, href);
       }
       return true;
     }, auxclick(editor, event) { const anchor = event.target.closest('a'); if (!anchor || event.button !== 1) return false; event.preventDefault(); options.openLink(anchor.getAttribute('href') || ''); return true; } }
@@ -887,7 +1023,8 @@ export function createRichEditor(parent, options) {
         if (meta.logical) setBookmark(selection.anchor, selection.head, view.state);
       }
     },
-    setLocked() { view.setProps({ editable: () => !options.isLocked() }); for (const refresh of refreshers) refresh(); },
+    setLocked() { view.setProps({ editable: () => !options.isUserLocked() }); for (const refresh of refreshers) refresh(); },
+    setTransitionLocked() { for (const refresh of refreshers) refresh(); },
     refreshMedia() { for (const refresh of refreshers) refresh(); },
     focus: () => view.focus(),
     command(name) {
@@ -902,13 +1039,14 @@ export function createRichEditor(parent, options) {
         const cell = header => schema.nodes[header ? 'table_header' : 'table_cell'].createAndFill();
         const table = schema.nodes.table.create(null, [schema.nodes.table_row.create(null, [cell(true), cell(true)]), schema.nodes.table_row.create(null, [cell(false), cell(false)])]);
         view.dispatch(view.state.tr.replaceSelectionWith(table).scrollIntoView());
-      } else if (name === 'math') {
-        options.editText('Math formula', '', tex => check(() => view.dispatch(view.state.tr.replaceSelectionWith(schema.nodes.math_inline.create({ tex })))));
-      } else if (name === 'link') {
-        const { from, to } = view.state.selection;
-        options.editLink('', href => check(() => { if (from === to) view.dispatch(view.state.tr.insertText(href, from).addMark(from, from + href.length, schema.marks.link.create({ href }))); else view.dispatch(view.state.tr.addMark(from, to, schema.marks.link.create({ href }))); }));
-      } else if (name === 'image') {
-        options.editText('Image path or URL', '', src => check(() => view.dispatch(view.state.tr.replaceSelectionWith(schema.nodes.image.create({ src, alt: '' })))));
+      } else if (name === 'math' || name === 'link' || name === 'image') {
+        // Creating a link, formula or image starts from the exact Markdown
+        // syntax in the shared buffer. Reveal the current position in the
+        // source projection for direct typing instead of a detached prompt.
+        // Existing links, formulas and images already reveal their own
+        // URL/TeX/src range through their click/Edit affordances above.
+        revealCurrentSelection();
+        return;
       } else commands[name]?.(view.state, view.dispatch, view);
       view.focus();
     },

@@ -19,7 +19,7 @@ export function headings(content) {
   return result;
 }
 export function create(options) {
-  let content = options.content, locked = false, showMarkdown = false, sourceEditor = null, richEditor = null;
+  let content = options.content, locked = false, transitionLocked = Boolean(options.transitionLocked), showMarkdown = false, sourceEditor = null, richEditor = null;
   let history = [], future = [], groupTime = 0, groupSelection = null, sourceSelection = { anchor: 0, head: 0 };
   let forceSource = options.forceSource || content.length > MAX_RICH_LENGTH;
   let sourceOrigin = false;
@@ -38,8 +38,10 @@ export function create(options) {
   const consent = new Set(), imageCache = new Map();
   function selection() { return showMarkdown || forceSource ? sourceEditor?.selection() || sourceSelection : richEditor?.selection() || sourceSelection; }
   function notify() { options.onChange(content); }
+  const isLocked = () => locked || transitionLocked;
+  const isUserLocked = () => locked;
   function record(next, after, before, typing = true) {
-    if (locked || next === content) return;
+    if (isLocked() || next === content) return;
     if (next.length > MAX_SOURCE_BYTES / 4 && new TextEncoder().encode(next).length > MAX_SOURCE_BYTES) { options.message('This edit would exceed the 20 MiB document limit. The previous document is preserved.'); sync(content, before); return; }
     const now = Date.now();
     const previousSelection = before || sourceSelection;
@@ -65,7 +67,7 @@ export function create(options) {
       release() { if (!released) { imageCount--; imageBytes -= bytes; released = true; } }
     };
   }
-  const shared = { ...options, reserveImage, isLocked: () => locked, undo: redo => undo(redo) };
+  const shared = { ...options, reserveImage, isLocked, isUserLocked, undo: redo => undo(redo) };
   async function resolveImage(destination, allow) {
     const key = String(destination || ''), epoch = mediaEpoch;
     const remote = /^(?:[a-z][a-z\d+.-]*:)?[/\\]{2}/i.test(key) || /^https?:/i.test(key);
@@ -140,7 +142,7 @@ export function create(options) {
     });
   }
   function undo(redo = false) {
-    if (locked) return false;
+    if (isLocked()) return false;
     const from = redo ? future : history, to = redo ? history : future;
     const entry = from.pop(); if (!entry) return false;
     to.push({ content, selection: selection(), fallback: forceSource }); groupTime = 0;
@@ -159,7 +161,20 @@ export function create(options) {
     isFallback: () => forceSource,
     setFallback(value) { forceSource = Boolean(value) || content.length > MAX_RICH_LENGTH; presentation(showMarkdown, false); },
     setPresentation: (next, focus = true) => presentation(next, focus),
-    setLocked(next) { locked = Boolean(next); groupTime = 0; sourceEditor?.setLocked(locked); richEditor?.setLocked(locked); options.onPresentation(showMarkdown, locked, forceSource); },
+    setLocked(next) {
+      // Transition protection is temporary and owned by the app. An unlock
+      // attempt while a document is being replaced must not clear either the
+      // protection or the user's persistent Lock.
+      if (transitionLocked) return;
+      locked = Boolean(next); groupTime = 0; sourceEditor?.setLocked(locked); richEditor?.setLocked(locked); options.onPresentation(showMarkdown, locked, forceSource);
+    },
+    setTransitionLocked(next) {
+      transitionLocked = Boolean(next); groupTime = 0;
+      // Keep the editor focusable while transition protection is active: both
+      // engines reject document-changing transactions against the effective
+      // lock. Only refresh widget affordances here.
+      sourceEditor?.setTransitionLocked?.(); richEditor?.setTransitionLocked?.();
+    },
     replaceContent(next) { if (next !== content) { record(next, sourceSelection, selection(), false); sync(content); } },
     selectRange(anchor, head = anchor, focus = true) {
       if (showMarkdown || forceSource) sourceOrigin = true;
@@ -169,7 +184,7 @@ export function create(options) {
       if (focus) this.focus();
     },
     undo,
-    command(name) { if (locked) return; if (showMarkdown || forceSource) presentation(false); groupTime = 0; richEditor.command(name); groupTime = 0; },
+    command(name) { if (isLocked()) return; if (showMarkdown || forceSource) presentation(false); groupTime = 0; richEditor.command(name); groupTime = 0; },
     focus() { (showMarkdown || forceSource ? sourceEditor : richEditor)?.focus(); },
     refreshMedia(revoke = false) { mediaEpoch++; imageCache.clear(); cachedImageBytes = 0; if (revoke) consent.clear(); richEditor?.refreshMedia(); },
     destroy() { disposed = true; mediaEpoch++; options.sourceParent?.removeEventListener('mousedown', noteSourceOrigin); options.sourceParent?.removeEventListener('keydown', noteSourceOrigin); sourceEditor?.destroy(); richEditor?.destroy(); }

@@ -38,6 +38,8 @@
     <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.35 5.65M20 5v6h-6"/></symbol>
     <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
     <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></symbol>
+    <symbol id="i-caret" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-view" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2.4"/><circle cx="15" cy="17" r="2.4"/></symbol>
   </svg>
 
   <header class="headerbar">
@@ -45,12 +47,26 @@
       <button id="home" class="icon-button" title="Go to welcome screen" aria-label="Go to welcome screen" disabled>
         <svg class="icon" aria-hidden="true"><use href="#i-home"/></svg>
       </button>
-      <button id="open" class="button ghost" title="Open a file or folder (Ctrl+O)" aria-label="Open a file or folder (Ctrl+O)">
-        <svg class="icon" aria-hidden="true"><use href="#i-open"/></svg><span>Open</span>
-      </button>
-      <button id="open-folder" class="button ghost" title="Open a folder" aria-label="Open a folder" hidden>
-        <svg class="icon" aria-hidden="true"><use href="#i-open"/></svg><span>Open folder</span>
-      </button>
+      <div class="open-group" id="open-group">
+        <button id="open" class="button ghost open-main" title="Open a file or folder (Ctrl+O)" aria-label="Open a file or folder (Ctrl+O)">
+          <svg class="icon" aria-hidden="true"><use href="#i-open"/></svg><span>Open</span>
+        </button>
+        <button id="open-chevron" class="button ghost open-chevron" title="More open options" aria-label="More open options" aria-haspopup="menu" aria-expanded="false" aria-controls="open-menu">
+          <svg class="icon" aria-hidden="true"><use href="#i-caret"/></svg>
+        </button>
+        <div id="open-menu" class="menu" role="menu" aria-label="Open options" hidden>
+          <button id="open-file" class="menu-item" role="menuitem">
+            <svg class="icon" aria-hidden="true"><use href="#i-file"/></svg><span class="menu-text">Open file or folder…</span><span class="menu-hint">Ctrl+O</span>
+          </button>
+          <button id="open-folder" class="menu-item" role="menuitem" hidden>
+            <svg class="icon" aria-hidden="true"><use href="#i-open"/></svg><span class="menu-text">Open folder…</span>
+          </button>
+          <div class="menu-separator" role="separator" aria-hidden="true"></div>
+          <button id="picker-toggle" class="menu-item" role="menuitem">
+            <svg class="icon" aria-hidden="true"><use href="#i-theme"/></svg><span class="menu-text">Use system file picker</span>
+          </button>
+        </div>
+      </div>
       <span class="header-divider" aria-hidden="true"></span>
       <button id="folder-toggle" class="icon-button" title="Toggle file tree (Ctrl+B)" aria-label="Toggle file tree" aria-controls="file-browser" aria-expanded="false" aria-pressed="false" hidden>
         <svg class="icon" aria-hidden="true"><use href="#i-open"/></svg>
@@ -64,21 +80,31 @@
       <div id="document-location" class="subtitle">Markdown, one file at a time</div>
     </div>
     <div class="header-end">
-      <button id="width-toggle" class="icon-button document-control" title="Use full document width" aria-label="Use full document width" aria-pressed="false" hidden>
-        <svg class="icon" aria-hidden="true"><use href="#i-width-expand"/></svg>
-      </button>
       <button id="show-markdown" class="icon-button document-control" aria-pressed="false" aria-label="Show Markdown near the cursor (Ctrl+E)" title="Show Markdown near the cursor (Ctrl+E)" hidden>
         <svg class="icon" aria-hidden="true"><use href="#i-edit"/></svg>
       </button>
       <button id="lock-document" class="icon-button document-control" aria-pressed="false" aria-label="Protect against accidental edits" title="Protect against accidental edits" hidden>
         <svg class="icon" aria-hidden="true"><use href="#i-unlock"/></svg>
       </button>
-      <button id="source-snapshot" class="icon-button document-control" aria-label="Inspect and copy exact Markdown" title="Inspect and copy exact Markdown" hidden>
-        <svg class="icon" aria-hidden="true"><use href="#i-code"/></svg>
-      </button>
-      <button id="format-toggle" class="icon-button document-control" aria-pressed="true" aria-expanded="true" aria-controls="format-tools" aria-label="Hide formatting toolbar" title="Hide formatting toolbar" hidden>
-        <svg class="icon" aria-hidden="true"><use href="#i-format"/></svg>
-      </button>
+      <div class="menu-group document-control" id="view-group" hidden>
+        <button id="view-menu-button" class="icon-button" title="View and appearance options" aria-label="View and appearance options" aria-haspopup="menu" aria-expanded="false" aria-controls="view-menu">
+          <svg class="icon" aria-hidden="true"><use href="#i-view"/></svg>
+        </button>
+        <div id="view-menu" class="menu menu-right" role="menu" aria-label="View and appearance" hidden>
+          <p class="menu-heading" aria-hidden="true">View</p>
+          <button id="width-toggle" class="menu-item" role="menuitem" aria-pressed="false" aria-label="Use full document width" title="Use full document width">
+            <svg class="icon" aria-hidden="true"><use href="#i-width-expand"/></svg><span class="menu-text">Full document width</span>
+          </button>
+          <button id="format-toggle" class="menu-item" role="menuitem" aria-pressed="true" aria-expanded="true" aria-controls="format-tools" aria-label="Hide formatting toolbar" title="Hide formatting toolbar">
+            <svg class="icon" aria-hidden="true"><use href="#i-format"/></svg><span class="menu-text">Formatting toolbar</span>
+          </button>
+          <div class="menu-separator" role="separator" aria-hidden="true"></div>
+          <p class="menu-heading" aria-hidden="true">Inspect</p>
+          <button id="source-snapshot" class="menu-item" role="menuitem" aria-label="Inspect and copy exact Markdown" title="Inspect and copy exact Markdown">
+            <svg class="icon" aria-hidden="true"><use href="#i-code"/></svg><span class="menu-text">Inspect exact Markdown</span>
+          </button>
+        </div>
+      </div>
       <span class="header-divider" aria-hidden="true"></span>
       <button id="save" class="icon-button document-control" title="Save (Ctrl+S)" aria-label="Save" hidden>
         <svg class="icon" aria-hidden="true"><use href="#i-save"/></svg>

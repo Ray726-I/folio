@@ -149,9 +149,10 @@ export function createSourceEditor(parent, options) {
       else revealBounds(options.scroller, bounds);
     });
   };
+  const lockedAtCreate = Boolean(options.isUserLocked?.() ?? options.isLocked?.());
   const view = new EditorView({ parent, state: EditorState.create({ doc: options.content, extensions: [
     markdown({ base: markdownLanguage }), drawSelection(), EditorView.lineWrapping,
-    permission.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]),
+    permission.of([EditorState.readOnly.of(lockedAtCreate), EditorView.editable.of(!lockedAtCreate)]),
     EditorState.transactionFilter.of(tr => options.isLocked() && tr.docChanged && !tr.annotation(external) ? [] : tr),
     decorations,
     EditorView.domEventHandlers({ keydown(event) {
@@ -186,6 +187,7 @@ export function createSourceEditor(parent, options) {
     },
     revealSelection: scheduleReveal,
     setLocked(locked) { view.dispatch({ effects: permission.reconfigure([EditorState.readOnly.of(locked), EditorView.editable.of(!locked)]) }); },
+    setTransitionLocked() {},
     focus() { view.focus(); },
     destroy() { view.destroy(); }
   };

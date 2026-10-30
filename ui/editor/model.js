@@ -24,6 +24,18 @@ export const schema = new Schema({ nodes, marks: commonSchema.spec.marks.update(
 } }).addToEnd('strike', { parseDOM: [{ tag: 's' }, { tag: 'del' }], toDOM: () => ['s', 0] }) });
 
 export const tokenizer = new MarkdownIt({ html: true, linkify: true, typographer: false });
+// markdown-it has no footnote extension, so it parses `[^1]: Definition.` as a
+// link reference definition and consumes it without emitting a token. The
+// definition then only survives in source gaps and never appears in the rich
+// view. Comrak (the native renderer) does support footnotes, so leave these
+// lines in the block stream for the extension fallback instead.
+const referenceRule = tokenizer.block.ruler.__rules__.find(rule => rule.name === 'reference');
+const parseReference = referenceRule.fn;
+tokenizer.block.ruler.at('reference', (state, start, end, silent) => {
+  const line = state.src.slice(state.bMarks[start] + state.tShift[start], state.eMarks[start]);
+  if (/^\[\^[^\]\n]+\]:/.test(line)) return false;
+  return parseReference(state, start, end, silent);
+}, { alt: referenceRule.alt });
 tokenizer.block.ruler.before('fence', 'folio_frontmatter', (state, start, end, silent) => {
   if (start !== 0 || state.src.slice(state.bMarks[0], state.eMarks[0]).trim() !== '---') return false;
   let next = start + 1;
@@ -55,7 +67,10 @@ tokenizer.inline.ruler.after('escape', 'folio_math', (state, silent) => {
     if (state.src[to] === '\n') return false;
     if (state.src[to] === '$') break;
   }
-  if (to >= state.posMax || /\s/.test(state.src[to - 1]) || /\d/.test(state.src[to + 1] || '')) return false;
+  // A digit-leading span that closes on a price separator (`$5-`) is currency,
+  // not TeX. Without this, `I paid $5-$x for it` yields a bogus math node.
+  const currency = /\d/.test(state.src[from + 1] || '') && /[-.,]/.test(state.src[to - 1] || '');
+  if (to >= state.posMax || /\s/.test(state.src[to - 1]) || /\d/.test(state.src[to + 1] || '') || currency) return false;
   if (!silent) { const token = state.push('math_inline', '', 0); token.content = state.src.slice(from + 1, to); }
   state.pos = to + 1; return true;
 });

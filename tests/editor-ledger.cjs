@@ -238,7 +238,14 @@ function findRun(ledger, text, occurrence = 0) {
   assert.equal(raw.node.textContent, 'text[^1]');
   roundTripSource(ledger, 0, 'literal raw start');
   roundTripSource(ledger, source.indexOf('^1'), 'literal raw interior');
-  assert.ok(ledger.gaps.some(gap => gap.kind === 'reference' && gap.text === '[^1]: note'));
+  // A footnote definition is Comrak syntax, not a link reference definition:
+  // it must be an owned raw block (and therefore visible in the rich view)
+  // rather than an invisible reference gap.
+  const definition = ledger.owners.find(owner => owner.type === 'raw_block' && owner.sourceFrom === source.indexOf('[^1]: note'));
+  assert.ok(definition, 'footnote definition is mapped as a raw block');
+  assert.equal(definition.confidence, 'exact');
+  assert.equal(definition.node.textContent, '[^1]: note');
+  roundTripSource(ledger, source.indexOf('note'), 'footnote definition interior');
 
   const changed = model.doc.firstChild.type.create(model.doc.firstChild.attrs, schema.text('different'));
   const mismatched = buildLedger(source, schema.nodes.doc.create(null, [changed]));

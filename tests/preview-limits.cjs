@@ -33,6 +33,7 @@ const small = '# Small again\n\nBack under the limit.\n';
     await page.keyboard.press('Control+Shift+z'); assert.equal(await page.evaluate(() => current.content), limited + 'APPENDED');
     await page.keyboard.press('Control+s'); await page.waitForFunction(() => !busy && savedContent !== null);
     assert.equal(await page.evaluate(() => savedContent), limited + 'APPENDED');
+    await page.locator('#view-menu-button').click();
     await page.locator('#source-snapshot').click();
     assert.equal(await page.locator('#source-snapshot-text').inputValue(), limited + 'APPENDED');
     await page.locator('#source-snapshot-close').click();

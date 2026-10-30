@@ -95,6 +95,18 @@
 .math-edit { font:11px var(--font-ui); line-height:1; padding:2px 4px; color:var(--muted); background:transparent; border:0; border-radius:4px; opacity:.45; }
 .math-edit:hover,.math-edit:focus-visible { opacity:1; color:var(--fg); background:var(--hover); }
 .math-error,.source-inline { color:var(--red); }
+.code-container { position:relative; }
+.code-container>.code-highlight { position:absolute; inset:0; z-index:0; margin:0; overflow:hidden; pointer-events:none; user-select:none; }
+.code-container>.code-surface { position:relative; z-index:1; }
+/* Only hide the editable glyphs once a sanitized token layer is ready. Until
+   then, and whenever the block has focus, the ordinary text is visible. */
+.code-container.code-highlighted:not(.code-editing)>.code-surface { background:transparent; border-color:transparent; }
+.code-container.code-highlighted:not(.code-editing)>.code-surface code { color:transparent; caret-color:var(--fg); }
+.code-container.code-highlighted:not(.code-editing)>.code-surface code::selection { color:transparent; }
+@media(forced-colors:active) {
+  .code-container>.code-highlight { display:none; }
+  .code-container.code-highlighted:not(.code-editing)>.code-surface code { color:CanvasText; }
+}
 .code-container pre { white-space:pre-wrap; }
 .code-container details>summary { cursor:pointer; font:12px var(--font-ui); color:var(--muted); margin-top:8px; }
 .source-block { font-size:.75em; white-space:pre-wrap; }
@@ -2039,15 +2051,15 @@ body.focus-mode #file-browser,body.focus-mode .sidebar-resizer {
 
 @media(pointer:coarse) {
   .icon-button {
-    width:36px;
-    height:36px
+    width:44px;
+    height:44px
   }
   .icon-button.tiny {
-    width:30px;
-    height:30px
+    width:44px;
+    height:44px
   }
   .segmented button {
-    min-height:32px
+    min-height:44px
   }
 }
 
@@ -2118,6 +2130,108 @@ body {
   width:18px;
   height:18px;
   color:var(--muted)
+}
+
+/* Compact header menus: one Open control with file/folder choices, and one
+   View control holding the low-frequency appearance and inspect actions. */
+.open-group,.menu-group {
+  position:relative;
+  display:flex;
+  align-items:center
+}
+
+.open-main {
+  border-top-right-radius:0!important;
+  border-bottom-right-radius:0!important
+}
+
+.open-chevron {
+  min-width:0;
+  min-height:32px;
+  padding:0 7px;
+  margin-left:-1px;
+  border-top-left-radius:0!important;
+  border-bottom-left-radius:0!important;
+  border-left:1px solid var(--line)
+}
+
+.open-chevron .icon {
+  width:14px;
+  height:14px
+}
+
+.menu {
+  position:absolute;
+  top:calc(100% + 6px);
+  left:0;
+  z-index:30;
+  min-width:248px;
+  padding:6px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:var(--panel);
+  box-shadow:0 12px 34px #0003,0 2px 6px #0002
+}
+
+.menu-right {
+  left:auto;
+  right:0
+}
+
+.menu-heading {
+  margin:4px 8px 3px;
+  font-size:10px;
+  font-weight:650;
+  letter-spacing:.09em;
+  text-transform:uppercase;
+  color:var(--muted)
+}
+
+.menu-item {
+  display:flex;
+  align-items:center;
+  gap:10px;
+  width:100%;
+  padding:9px 10px;
+  border-radius:7px;
+  text-align:left;
+  font-size:12.5px;
+  font-weight:500;
+  color:var(--fg);
+  white-space:nowrap
+}
+
+.menu-item:hover {
+  background:var(--hover)
+}
+
+.menu-item .icon {
+  width:16px;
+  height:16px;
+  color:var(--muted);
+  flex:none
+}
+
+.menu-item[aria-pressed="true"] .icon {
+  color:var(--accent)
+}
+
+.menu-item .menu-text {
+  flex:1;
+  overflow:hidden;
+  text-overflow:ellipsis
+}
+
+.menu-item .menu-hint {
+  font-size:11px;
+  color:var(--muted);
+  flex:none
+}
+
+.menu-separator {
+  height:1px;
+  margin:6px 4px;
+  background:var(--line)
 }
 
 .icon-button {
@@ -2837,14 +2951,11 @@ dialog {
     display:none
   }
   #open {
-    width:32px;
-    padding:0
+    padding-left:10px;
+    padding-right:10px
   }
   .header-divider {
     display:none
-  }
-  #width-toggle {
-    display:none!important
   }
   .welcome {
     padding-top:36px
@@ -2889,18 +3000,18 @@ dialog {
 
 @media(pointer:coarse) {
   .icon-button {
-    width:36px;
-    height:36px
+    width:44px;
+    height:44px
   }
   .segmented button {
-    width:34px;
-    height:30px
+    width:44px;
+    height:44px
   }
   .outline-link {
-    min-height:34px
+    min-height:44px
   }
   .folder-entry {
-    min-height:34px
+    min-height:44px
   }
 }
 

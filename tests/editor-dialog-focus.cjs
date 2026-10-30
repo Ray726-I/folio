@@ -6,6 +6,7 @@ const { openEditor } = require('./editor-browser.cjs');
     const { page } = session;
     await page.locator('#preview p').click();
     await page.keyboard.press('End');
+    await page.locator('#view-menu-button').click();
     await page.locator('#source-snapshot').click();
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('#source-dialog').evaluate(node => node.open), false);

@@ -53,5 +53,32 @@ const extensionTableModel = parseSource(extensionTableSource);
 assert.deepEqual(extensionTableModel.doc.content.content.map(node => node.type.name), ['raw_block']);
 assert.equal(updateSource(extensionTableModel.doc, extensionTableModel).source, extensionTableSource);
 
+// A Comrak footnote definition (`[^1]:`) is not a Markdown link reference
+// definition. It must stay visible as an extension block instead of being
+// consumed by markdown-it's link-reference parser and disappearing from the
+// rich view (while only the reference paragraph remained).
+const footnoteSource = 'Reference[^1].\n\n[^1]: Definition.\n';
+const footnoteModel = parseSource(footnoteSource);
+assert.deepEqual(footnoteModel.doc.content.content.map(node => node.type.name), ['raw_block', 'raw_block']);
+assert.equal(footnoteModel.doc.child(1).textContent, '[^1]: Definition.');
+assert.equal(updateSource(footnoteModel.doc, footnoteModel).source, footnoteSource);
+
+// Currency amounts are prose, not inline math. A digit-leading `$...$` whose
+// content ends in a price separator (`$5-$`) must not spawn math nodes, and
+// the surrounding currency string must round-trip verbatim.
+for (const currencySource of ['$5-$\n', 'I paid $5-$x for it\n']) {
+  const currencyModel = parseSource(currencySource);
+  let mathNodes = 0;
+  currencyModel.doc.descendants(node => { if (node.type.name === 'math_inline') mathNodes++; });
+  assert.equal(mathNodes, 0, `currency is not math: ${currencySource.trim()}`);
+  assert.equal(updateSource(currencyModel.doc, currencyModel).source, currencySource);
+}
+
+// Digit-leading math with an ordinary expression/operand stays math.
+for (const mathSource of ['$2+2$\n', '$5$']) {
+  const digitMathModel = parseSource(mathSource);
+  assert.equal(digitMathModel.doc.firstChild.firstChild.type.name, 'math_inline', `digit math still parses: ${mathSource}`);
+}
+
 const empty = parseSource(''); assert.equal(updateSource(empty.doc, empty).source, '');
 console.log('PASS: source slices, unchanged extensions, GFM table/task/math model, table hard-break reparse, centered-alignment open and cross-projection position mapping.');

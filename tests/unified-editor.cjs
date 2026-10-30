@@ -63,6 +63,7 @@ const fixture = process.env.FOLIO_FIXTURE || path.resolve('target/debug/examples
     assert.ok((await page.evaluate(() => current.content)).includes('Y'));
     await page.locator('#show-markdown').click();
     assert.ok((await page.locator('#preview td').first().innerText()).includes('Y'), 'source caret maps back to the same cell');
+    await page.locator('#view-menu-button').click();
     await page.locator('#source-snapshot').click();
     const snapshot = await page.locator('#source-snapshot-text').inputValue();
     assert.equal(snapshot, await page.evaluate(() => current.content));

@@ -19,6 +19,18 @@ function syncOpenAffordance() {
   open.querySelector('use').setAttribute('href', native ? '#i-file' : '#i-open');
   open.querySelector('span').textContent = native ? 'Open file' : 'Open';
   $('open-folder').hidden = !native;
+  const fileOption = $('open-file');
+  if (fileOption) {
+    const fileLabel = native ? 'Open file…' : 'Open file or folder…';
+    fileOption.querySelector('.menu-text').textContent = fileLabel;
+    fileOption.setAttribute('aria-label', fileLabel.replace('…', '') + ' (Ctrl+O)');
+  }
+  const pickerOption = $('picker-toggle');
+  if (pickerOption) {
+    const pickerLabel = native ? 'Use Folio file picker' : 'Use system file picker';
+    pickerOption.querySelector('.menu-text').textContent = pickerLabel;
+    pickerOption.setAttribute('aria-label', pickerLabel);
+  }
 }
 function setFilePicker(next) {
   const value = next === 'native' ? 'native' : 'folio';
@@ -84,14 +96,22 @@ function goHome() {
   return enqueue(async () => {
     if ($('document-view').hidden) return;
     if (!(await allowDiscard())) return;
-    await invoke('new_document');
-    ++renderGeneration;
-    previewSnapshot = null; previewBlocks = [];
-    current = { path: null, name: 'Untitled.md', content: '', saved: '', active: false };
-    activeFolder = null; folderEntries = []; expandedFolders.clear(); folderVisible = true;
-    setLineEnding(null);
-    mode = 'read'; root.dataset.mode = mode;
-    showWelcome(); status('');
+    // Native new_document resets backend state before it resolves, so the
+    // outgoing document must be immutable as soon as departure is approved.
+    // Keep the guard through teardown and release it on every exit.
+    try {
+      setTransitionLocked(true);
+      await invoke('new_document');
+      ++renderGeneration;
+      previewSnapshot = null; previewBlocks = [];
+      current = { path: null, name: 'Untitled.md', content: '', saved: '', active: false };
+      activeFolder = null; folderEntries = []; expandedFolders.clear(); folderVisible = true;
+      setLineEnding(null);
+      mode = 'read'; root.dataset.mode = mode;
+      showWelcome(); status('');
+    } finally {
+      setTransitionLocked(false);
+    }
   });
 }
 const narrowDrawers = () => window.matchMedia('(max-width:960px)').matches;
@@ -185,15 +205,23 @@ function enqueue(action) {
 async function openPath(path, confirmed = false) {
   if (!confirmed && !(await allowDiscard())) return false;
   status('Opening…');
-  const document = await invoke('open_document', { path });
-  ++renderGeneration;
-  previewSnapshot = null;
-  previewBlocks = [];
-  current = { path: document.path, name: document.name, content: document.content, saved: document.content, active: true };
-  if (activeFolder && !samePath(document.path, activeFolder.path) && !isWithin(document.path, activeFolder.path)) { activeFolder = null; folderEntries = []; expandedFolders.clear(); }
-  if (activeFolder) expandParentsOf(document.path);
-  setLineEnding(document.lineEnding || null);
-  showDocument(); $('reader-scroll').scrollTop = 0; await setMode('read'); addRecent(current.path); return true;
+  // Native open switches backend active-document state before it resolves, so
+  // the outgoing document must become immutable before the call starts. Keep
+  // the guard through replacement and new-editor mounting, and always release.
+  try {
+    setTransitionLocked(true);
+    const document = await invoke('open_document', { path });
+    ++renderGeneration;
+    previewSnapshot = null;
+    previewBlocks = [];
+    current = { path: document.path, name: document.name, content: document.content, saved: document.content, active: true };
+    if (activeFolder && !samePath(document.path, activeFolder.path) && !isWithin(document.path, activeFolder.path)) { activeFolder = null; folderEntries = []; expandedFolders.clear(); }
+    if (activeFolder) expandParentsOf(document.path);
+    setLineEnding(document.lineEnding || null);
+    showDocument(); $('reader-scroll').scrollTop = 0; await setMode('read'); addRecent(current.path); return true;
+  } finally {
+    setTransitionLocked(false);
+  }
 }
 function requestOpen(path) { return enqueue(() => openPath(path)); }
 let pickerListing = null, pickerSelection = null;
@@ -236,10 +264,12 @@ function confirmOpenPicker() {
   if (path) requestOpenLocation(path);
 }
 function openEntry() {
+  closeAllMenus();
   if (filePicker() === 'native') return openNative('file');
   return openChooser();
 }
 function openFolderEntry() {
+  closeAllMenus();
   if (filePicker() === 'native') return openNative('folder');
   return openChooser();
 }
@@ -329,30 +359,40 @@ function renderFolderEntries() {
 }
 async function openFolderPath(path, confirmed = false) {
   if (!confirmed && !(await allowDiscard())) return false;
-  // Scan first: if the folder cannot be read, keep the current document intact
-  // instead of leaving the backend and UI out of sync.
-  const listing = await invoke('open_folder', { path });
-  await invoke('new_document');
-  ++renderGeneration;
-  activeFolder = { path: listing.path, name: listing.name }; folderEntries = listing.entries;
-  expandedFolders.clear(); folderVisible = true;
-  current = { path: null, name: 'Untitled.md', content: '', saved: '', active: false };
-  previewSnapshot = null;
-  previewBlocks = [];
-  setLineEnding(null);
-  mode = 'read'; root.dataset.mode = mode;
-  $('reader-scroll').hidden = false;
-  // Tear down the previous document's editor before showDocument() builds the
-  // outline and folder view, so no stale content or headings survive.
-  await renderPreview();
-  showDocument(); $('reader-scroll').scrollTop = 0; status('');
-  $('folder-empty').querySelector('h1').textContent = folderEntries.some(entry => !entry.directory) ? 'Folder opened' : 'No Markdown files';
-  $('folder-empty').querySelector('p').textContent = folderEntries.some(entry => !entry.directory) ? 'Choose a Markdown file from the file tree.' : 'This folder has no Markdown files. Open another folder to browse it.';
-  const limits = [];
-  if (listing.skipped) limits.push(`${listing.skipped} unreadable ${listing.skipped === 1 ? 'entry was' : 'entries were'} skipped`);
-  if (listing.truncated) limits.push('only the first 5,000 entries are shown');
-  if (limits.length) toast(`Folder opened with limits: ${limits.join('; ')}.`);
-  return true;
+  // The scan and the backend document reset are asynchronous, so protect the
+  // outgoing document as soon as departure is approved. Otherwise typing during
+  // a slow scan is accepted into a document that is about to be replaced.
+  // Keep the guard through folder adoption and rendering, and release it on
+  // every exit; a failed scan leaves the current document intact.
+  try {
+    setTransitionLocked(true);
+    // Scan first: if the folder cannot be read, keep the current document intact
+    // instead of leaving the backend and UI out of sync.
+    const listing = await invoke('open_folder', { path });
+    await invoke('new_document');
+    ++renderGeneration;
+    activeFolder = { path: listing.path, name: listing.name }; folderEntries = listing.entries;
+    expandedFolders.clear(); folderVisible = true;
+    current = { path: null, name: 'Untitled.md', content: '', saved: '', active: false };
+    previewSnapshot = null;
+    previewBlocks = [];
+    setLineEnding(null);
+    mode = 'read'; root.dataset.mode = mode;
+    $('reader-scroll').hidden = false;
+    // Tear down the previous document's editor before showDocument() builds the
+    // outline and folder view, so no stale content or headings survive.
+    await renderPreview();
+    showDocument(); $('reader-scroll').scrollTop = 0; status('');
+    $('folder-empty').querySelector('h1').textContent = folderEntries.some(entry => !entry.directory) ? 'Folder opened' : 'No Markdown files';
+    $('folder-empty').querySelector('p').textContent = folderEntries.some(entry => !entry.directory) ? 'Choose a Markdown file from the file tree.' : 'This folder has no Markdown files. Open another folder to browse it.';
+    const limits = [];
+    if (listing.skipped) limits.push(`${listing.skipped} unreadable ${listing.skipped === 1 ? 'entry was' : 'entries were'} skipped`);
+    if (listing.truncated) limits.push('only the first 5,000 entries are shown');
+    if (limits.length) toast(`Folder opened with limits: ${limits.join('; ')}.`);
+    return true;
+  } finally {
+    setTransitionLocked(false);
+  }
 }
 function requestOpenLocation(path) {
   return enqueue(async () => {
@@ -388,13 +428,21 @@ function requestSave(saveAs = false) { return enqueue(() => save(saveAs)); }
 function newDocument(sample = false) {
   return enqueue(async () => {
     if (!(await allowDiscard())) return;
-    await invoke('new_document'); ++renderGeneration;
-    previewSnapshot = null;
-    previewBlocks = [];
-    const content = sample ? SAMPLE : '';
-    current = { path: null, name: sample ? 'Welcome.md' : 'Untitled.md', content, saved: content, active: true };
-    setLineEnding(null);
-    showDocument(); $('reader-scroll').scrollTop = 0; await setMode('read'); if (!sample) editor?.focus();
+    // Same protection as Home: the backend document is replaced before the
+    // native reset resolves, so reject edits to the outgoing document now and
+    // release the temporary guard after the new editor is in place or fails.
+    try {
+      setTransitionLocked(true);
+      await invoke('new_document'); ++renderGeneration;
+      previewSnapshot = null;
+      previewBlocks = [];
+      const content = sample ? SAMPLE : '';
+      current = { path: null, name: sample ? 'Welcome.md' : 'Untitled.md', content, saved: content, active: true };
+      setLineEnding(null);
+      showDocument(); $('reader-scroll').scrollTop = 0; await setMode('read'); if (!sample) editor?.focus();
+    } finally {
+      setTransitionLocked(false);
+    }
   });
 }
 function addRecent(path) { const recent = preferences.get('recent', []); preferences.set('recent', [path, ...recent.filter(item => !samePath(item, path))].slice(0, 6)); renderRecent(); }
@@ -513,6 +561,8 @@ function setDocumentWidth(full, persist = true) {
   button.setAttribute('aria-label', label);
   button.title = label;
   button.querySelector('use').setAttribute('href', wideLayout ? '#i-width-contract' : '#i-width-expand');
+  const menuText = button.querySelector('.menu-text');
+  if (menuText) menuText.textContent = wideLayout ? 'Centered document width' : 'Full document width';
   if (anchor && previousTop !== undefined) $('reader-scroll').scrollTop += anchor.getBoundingClientRect().top - previousTop;
   if (persist) preferences.set('wideLayout', wideLayout);
 }
@@ -529,9 +579,69 @@ function setFormatToolbarVisible(visible, persist = true) {
   if (persist) preferences.set('formatToolbarVisible', formatToolbarVisible);
 }
 
+function closeAllMenus(returnFocus = false) {
+  for (const id of ['open-menu', 'view-menu']) {
+    const menu = $(id);
+    if (menu && !menu.hidden) {
+      menu.hidden = true;
+      const trigger = document.querySelector(`[aria-controls="${id}"]`);
+      trigger?.setAttribute('aria-expanded', 'false');
+      if (returnFocus && menu.contains(document.activeElement)) trigger?.focus();
+    }
+  }
+}
+function setupMenu(triggerId, menuId) {
+  const trigger = $(triggerId), menu = $(menuId);
+  if (!trigger || !menu) return;
+  const items = () => [...menu.querySelectorAll('.menu-item:not([hidden])')];
+  function openMenu() {
+    const wasHidden = menu.hidden;
+    closeAllMenus();
+    if (!wasHidden) return;
+    menu.hidden = false;
+    trigger.setAttribute('aria-expanded', 'true');
+    items()[0]?.focus();
+  }
+  trigger.addEventListener('click', event => { event.stopPropagation(); menu.hidden ? openMenu() : closeAllMenus(true); });
+  trigger.addEventListener('keydown', event => {
+    if (event.key === 'ArrowDown' && menu.hidden) { event.preventDefault(); openMenu(); }
+    else if (event.key === 'Escape' && !menu.hidden) { event.preventDefault(); closeAllMenus(true); }
+  });
+  menu.addEventListener('keydown', event => {
+    const list = items();
+    const current = list.indexOf(document.activeElement);
+    if (event.key === 'Escape') { event.preventDefault(); closeAllMenus(true); }
+    else if (event.key === 'ArrowDown') { event.preventDefault(); list[(current + 1 + list.length) % list.length]?.focus(); }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); list[(current - 1 + list.length) % list.length]?.focus(); }
+    else if (event.key === 'Home') { event.preventDefault(); list[0]?.focus(); }
+    else if (event.key === 'End') { event.preventDefault(); list[list.length - 1]?.focus(); }
+    else if (event.key === 'Tab') { closeAllMenus(); }
+  });
+  menu.addEventListener('click', event => {
+    if (!event.target.closest('.menu-item')) return;
+    setTimeout(() => {
+      const dialogOpen = ['open-dialog', 'source-dialog', 'command-dialog', 'confirm-dialog', 'editor-action-dialog'].some(id => $(id)?.open);
+      const triggerForMenu = document.querySelector(`[aria-controls="${menuId}"]`);
+      menu.hidden = true;
+      triggerForMenu?.setAttribute('aria-expanded', 'false');
+      if (!dialogOpen && menu.contains(document.activeElement)) triggerForMenu?.focus();
+    }, 0);
+  });
+}
+document.addEventListener('pointerdown', event => {
+  if (!event.target.closest('.menu') && !event.target.closest('[aria-controls="open-menu"],[aria-controls="view-menu"]')) closeAllMenus();
+});
+setupMenu('open-chevron', 'open-menu');
+setupMenu('view-menu-button', 'view-menu');
+
 $('home').onclick = goHome;
 $('open').onclick = $('welcome-open').onclick = openEntry;
+$('open-file').onclick = openEntry;
 $('open-folder').onclick = openFolderEntry;
+$('picker-toggle').onclick = () => { toggleFilePicker(); };
+$('open').addEventListener('keydown', event => {
+  if (event.altKey && event.key === 'ArrowDown') { event.preventDefault(); $('open-chevron').click(); }
+});
 $('open-parent').onclick = () => pickerListing?.parent && browseTo(pickerListing.parent).catch(toast);
 $('open-go').onclick = () => browseTo($('open-path').value.trim()).catch(toast);
 $('open-path').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); browseTo($('open-path').value.trim()).catch(toast); } };
