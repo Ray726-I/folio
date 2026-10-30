@@ -6,13 +6,52 @@ import { baseKeymap, toggleMark, setBlockType, wrapIn, chainCommands, exitCode }
 import { splitListItem, sinkListItem, liftListItem, wrapInList } from 'prosemirror-schema-list';
 import { fixTables, goToNextCell, addRowAfter, addColumnAfter, deleteRow, deleteColumn, deleteTable, TableView, CellSelection, isInTable, cellAround, nextCell } from 'prosemirror-tables';
 import { inputRules, wrappingInputRule, textblockTypeInputRule, InputRule } from 'prosemirror-inputrules';
-import { schema, parseSource, updateSource, sourceToRich, richToSource, sourceMapping, richMapping } from './model.js';
+import MarkdownIt from 'markdown-it';
+import { schema, parseSource, updateSource, sourceToRich, richToSource, sourceMapping, richMapping, INLINE_HTML_SPAN_TAGS } from './model.js';
 import { buildLedger, applySourcePatches } from './source-ledger.js';
 import { tryTextEdits } from './source-edits.js';
 
 const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
 const NAVIGATION_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']);
 const MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'AltGraph', 'Meta', 'CapsLock', 'OS', 'Super', 'Hyper']);
+
+// Extension projections are sanitized HTML, not the document. To toggle a task
+// inside one we map the rendered checkbox back to the single marker character
+// in the exact raw source slice. This tokenizer deliberately does NOT use the
+// rich model's extension fallback (that is what put the task list in a raw
+// block in the first place); it only lists the source's own list items so
+// fences, escaped markers and prose cannot contribute phantom positions.
+const rawTaskTokenizer = new MarkdownIt({ html: true, linkify: false, typographer: false });
+const RAW_TASK_LINE = /^(?:[ \t]*>[ \t]?)*[ \t]*(?:[-+*]|\d{1,9}[.)])[ \t]+\[([ xX])\](?=[ \t]|$)/;
+const RAW_TASK_MARKER = /^[ xX]$/;
+
+// Return the source offset of each GFM task marker in `source`, in document
+// order. A null result means the source could not be inspected safely; callers
+// must then leave every checkbox disabled rather than guessing a position.
+export function rawTaskMarkers(source) {
+  if (typeof source !== 'string' || !source) return [];
+  let tokens;
+  try { tokens = rawTaskTokenizer.parse(source, {}); } catch { return null; }
+  const starts = [0];
+  for (let index = 0; index < source.length; index++) if (source[index] === '\n') starts.push(index + 1);
+  const markers = [];
+  for (const token of tokens) {
+    if (token.type !== 'list_item_open' || !Array.isArray(token.map)) continue;
+    const start = starts[token.map[0]];
+    if (!Number.isInteger(start) || start < 0 || start > source.length) return null;
+    let end = source.indexOf('\n', start);
+    if (end < 0) end = source.length;
+    const line = source.slice(start, end).replace(/\r$/, '');
+    const match = RAW_TASK_LINE.exec(line);
+    if (!match) continue;
+    const bracket = match[0].lastIndexOf('[');
+    if (bracket < 0) return null;
+    const offset = start + bracket + 1;
+    if (!RAW_TASK_MARKER.test(source.slice(offset, offset + 1))) return null;
+    markers.push({ offset, checked: match[1] !== ' ' });
+  }
+  return markers;
+}
 
 // Explicit source-grapheme policy for collapsed Delete/Backspace. A bookmark
 // may be non-collapsed in source even when its projected ProseMirror selection
@@ -158,7 +197,7 @@ export function createRichEditor(parent, options) {
   // Enter over a selection, paste and cut. It checks Lock/size before parsing
   // or committing, splices only the exact source interval, reparses the
   // candidate, and commits the canonical parse through the existing view.
-  function replaceLogicalSelection(insert, origin = 'typing', explicitRange = null) {
+  function replaceLogicalSelection(insert, origin = 'typing', explicitRange = null, nextSelection = null) {
     if (options.isLocked()) return { handled: true, committed: false };
     const range = explicitRange || logicalRange(view.state);
     if (!range || range.all && explicitRange && explicitRange.all === false) return { handled: false, committed: false };
@@ -185,7 +224,14 @@ export function createRichEditor(parent, options) {
       options.message('This edit could not be applied as an exact source change. The previous document is preserved.');
       return { handled: true, committed: false };
     }
-    const committed = commitCandidate(parsed, { anchor: from + insert.length, head: from + insert.length }, origin === 'typing' || origin === 'paste');
+    // Command insertions may want the caret inside the syntax they just added
+    // (for example the URL of a new link). Offsets are relative to `insert` so
+    // the caller never has to reason about the surrounding source bytes.
+    const relativeAnchor = nextSelection ? nextSelection.anchor : insert.length;
+    const relativeHead = nextSelection ? nextSelection.head : insert.length;
+    const anchor = Math.max(0, Math.min(patched.source.length, from + relativeAnchor));
+    const head = Math.max(0, Math.min(patched.source.length, from + relativeHead));
+    const committed = commitCandidate(parsed, { anchor, head }, origin === 'typing' || origin === 'paste');
     return { handled: true, committed };
   }
 
@@ -250,6 +296,74 @@ export function createRichEditor(parent, options) {
       const selection = sourceSelection(view.state);
       options.revealSource(selection.anchor, selection.head);
     } catch {}
+  }
+  // Formatting commands that author Markdown syntax (Link, Image, Math) write
+  // through the same exact-source path as typing, so the bytes stay predictable
+  // and the shell's undo history remains authoritative. The returned range is
+  // verified against the ledger; an ambiguous projection falls back to the
+  // existing "reveal source" affordance rather than guessing an offset.
+  function commandSourceRange() {
+    const bookmarked = bookmarkRange(view.state);
+    if (bookmarked) return bookmarked.all
+      ? { from: 0, to: model.source.length }
+      : { from: bookmarked.from, to: bookmarked.to };
+    const selection = view.state.selection;
+    if (!(selection instanceof TextSelection)) return null;
+    if (!selection.empty) {
+      const verified = verifiedSourceRange(selection.from, selection.to);
+      return verified ? { from: verified.from, to: verified.to } : null;
+    }
+    const mapped = richMapping(model, selection.head, { bias: 'right' });
+    if (!mapped || !mapped.exact || mapped.confidence !== 'exact' || !mapped.owner) return null;
+    if (mapped.owner.confidence !== 'exact' || mapped.owner.supported === false) return null;
+    if (!Number.isInteger(mapped.source)) return null;
+    return { from: mapped.source, to: mapped.source };
+  }
+  function looksLikeDestination(text) {
+    if (!text || /\s/.test(text) || !safeDestination(text)) return false;
+    return /^(?:[a-z][a-z\d+.-]*:\S+|\/\/\S+|\/{1,2}\S*|\.{1,2}\/\S+|[\w.-]+\/[\w./-]*)$/i.test(text);
+  }
+  function insertCommandSyntax(name) {
+    const range = commandSourceRange();
+    if (!range) return false;
+    const selected = model.source.slice(range.from, range.to);
+    let insert, anchor, head;
+    if (name === 'link') {
+      if (selected && looksLikeDestination(selected)) {
+        insert = `[${selected}](${selected})`;
+        const start = insert.lastIndexOf(`(${selected})`) + 1;
+        anchor = start; head = start + selected.length;
+      } else if (selected) {
+        insert = `[${selected}](https://example.com)`;
+        const start = insert.indexOf('https://example.com');
+        anchor = start; head = start + 'https://example.com'.length;
+      } else {
+        insert = '[text](https://example.com)';
+        anchor = 1; head = 1 + 'text'.length;
+      }
+    } else if (name === 'image') {
+      if (selected && looksLikeDestination(selected)) {
+        insert = `![image](${selected})`;
+        anchor = 2; head = 2 + 'image'.length;
+      } else if (selected) {
+        insert = `![${selected}](image.png)`;
+        const start = insert.lastIndexOf('image.png');
+        anchor = start; head = start + 'image.png'.length;
+      } else {
+        insert = '![alt](image.png)';
+        anchor = 2; head = 2 + 'alt'.length;
+      }
+    } else if (name === 'math') {
+      if (selected) {
+        insert = `$${selected}$`;
+        anchor = 1; head = 1 + selected.length;
+      } else {
+        insert = '$x$';
+        anchor = 1; head = 2;
+      }
+    } else return false;
+    const outcome = replaceLogicalSelection(insert, 'command', { from: range.from, to: range.to, all: false, collapsed: range.from === range.to }, { anchor, head });
+    return outcome.committed;
   }
   function listItem(node, editor, getPos) {
     const dom = document.createElement('li'), contentDOM = document.createElement('div'); contentDOM.className = 'list-content';
@@ -383,7 +497,27 @@ export function createRichEditor(parent, options) {
     };
     const render = async () => {
       const language = node.attrs.params.trim().split(/\s/)[0]; dom.dataset.language = language;
+      if (language === 'math') {
+        clearHighlight(); abortController?.abort(); source = null; theme = null;
+        dom.classList.remove('mermaid-host'); delete dom.dataset.mermaidSource;
+        summary.textContent = 'Math source';
+        if (pre.parentNode !== details) details.append(summary, pre);
+        if (!drawing.isConnected || !details.isConnected) dom.replaceChildren(drawing, details);
+        const current = ++generation, tex = node.textContent;
+        drawing.className = 'math-block math-formula'; drawing.textContent = tex;
+        try {
+          const katex = await options.loadKatex();
+          if (current !== generation || !dom.isConnected) return;
+          katex.render(tex, drawing, { displayMode: true, throwOnError: true, trust: false, strict: 'warn' });
+        } catch {
+          if (current !== generation) return;
+          drawing.textContent = 'Formula could not be rendered. Its source is preserved.';
+          drawing.classList.add('math-error'); details.open = true;
+        }
+        return;
+      }
       if (language !== 'mermaid') {
+        generation++; abortController?.abort(); source = null; theme = null;
         dom.classList.remove('mermaid-host'); delete dom.dataset.mermaidSource;
         code.className = /^[a-z0-9_+#.-]+$/i.test(language) ? `language-${language}` : '';
         if (pre.parentNode !== dom || highlight.nextSibling !== pre) dom.replaceChildren(highlight, pre);
@@ -391,10 +525,12 @@ export function createRichEditor(parent, options) {
         return;
       }
       clearHighlight();
+      summary.textContent = 'Diagram source';
       dom.classList.add('mermaid-host'); dom.dataset.mermaidSource = node.textContent;
       if (pre.parentNode !== details) details.append(summary, pre);
       if (!drawing.isConnected || !details.isConnected) dom.replaceChildren(drawing, details);
       if (source === node.textContent && theme === options.themeRevision()) return;
+      drawing.className = '';
       source = node.textContent; theme = options.themeRevision(); const current = ++generation;
       dom.dataset.themeRevision = String(theme);
       abortController?.abort(); abortController = new AbortController();
@@ -409,23 +545,24 @@ export function createRichEditor(parent, options) {
     render(); refreshers.add(render);
     return { dom, contentDOM: code, update(next) { if (next.type !== node.type) return false; node = next; render(); return true; }, ignoreMutation: mutation => mutation.type === 'attributes' || !pre.contains(mutation.target), destroy() { generation++; clearTimeout(highlightTimer); highlightGeneration++; abortController?.abort(); refreshers.delete(render); } };
   }
-  // Reading selections may start, cross and end inside a rendered projection.
-  // ProseMirror maps any DOM position inside an atom to the atom boundary and
-  // rewrites the DOM range, which truncates cross-block drags to the editable
-  // side. While a drag is active the editor's selection observer is paused so
-  // the native range is left alone; it is re-synced on release (or on the
-  // next edit/pointer gesture if a reading range is still standing). The
-  // guarded range always covers rendered text, never the literal source.
+  // Reading selections may start, cross and end inside a rendered projection
+  // or inline element. ProseMirror maps any DOM position inside an atom to
+  // the atom boundary and rewrites the DOM range, which truncates cross-block
+  // drags to the editable side. While a drag is active the editor's selection
+  // observer is paused so the native range is left alone; it is re-synced on
+  // release (or on the next edit/pointer gesture if a reading range is still
+  // standing). The guarded range always covers rendered text, never the
+  // literal source.
   let selectionGuarded = false;
-  function previewIntersectsSelection() {
+  function renderedRangeActive() {
     try {
       const selection = window.getSelection();
       if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return false;
-      const previews = view?.dom.querySelectorAll('.extension-preview');
-      if (!previews || !previews.length) return false;
+      const rendered = view?.dom.querySelectorAll('.extension-preview, .html-inline');
+      if (!rendered || !rendered.length) return false;
       for (let i = 0; i < selection.rangeCount; i++) {
         const range = selection.getRangeAt(i);
-        for (const preview of previews) if (range.intersectsNode(preview)) return true;
+        for (const node of rendered) if (range.intersectsNode(node)) return true;
       }
     } catch {}
     return false;
@@ -446,7 +583,7 @@ export function createRichEditor(parent, options) {
     if (!selectionGuarded) return;
     // A standing reading range keeps its guard; anything else hands selection
     // back to the editor so typing and caret movement stay predictable.
-    if (previewIntersectsSelection()) return;
+    if (renderedRangeActive()) return;
     setSelectionGuarded(false);
     try { view?.domObserver.flush(); } catch {}
   }
@@ -457,12 +594,256 @@ export function createRichEditor(parent, options) {
   }
   function copyGuardedSelection(event) {
     const data = event.clipboardData;
-    if (!data || !previewIntersectsSelection()) return false;
+    if (!data || !renderedRangeActive()) return false;
     const text = window.getSelection()?.toString() ?? '';
     if (!text) return false;
     event.preventDefault();
     try { data.setData('text/plain', text); } catch {}
     return true;
+  }
+  // Text-shaped reading paint via the CSS Custom Highlights API. The real DOM
+  // range stays authoritative (selection, copy and editing all behave
+  // natively); a mirrored Highlight repaints it per text fragment so engines
+  // that fill whole blocks for multi-block selections show the same calm
+  // per-line wash as everywhere else. Unsupported engines never engage, which
+  // keeps ordinary native painting as the fallback.
+  const folioHighlightName = 'folio-selection';
+  const customHighlightSupported = (() => {
+    try {
+      return typeof Highlight === 'function'
+        && !!(window.CSS && window.CSS.highlights)
+        && CSS.supports('selector(::highlight(folio-selection))');
+    } catch { return false; }
+  })();
+  let folioPaintActive = false;
+  function folioHighlightRanges(range) {
+    const result = [];
+    const root = range.commonAncestorContainer;
+    const scope = root.nodeType === Node.ELEMENT_NODE ? root : root.parentElement;
+    if (!scope || !view.dom.contains(scope)) return result;
+    // Fast path: nothing inside needs native-only painting.
+    if (typeof scope.querySelector !== 'function' || !scope.querySelector('.code-surface code')) {
+      result.push(range.cloneRange());
+      return result;
+    }
+    // Slow path: split around token-highlighted code, whose glyphs must stay
+    // transparent over the token layer. Per MDN the `how` argument names the
+    // SOURCE point first (END_TO_START compares this.start to source.end),
+    // so the receiver/argument order below is deliberate and covered by
+    // reading-custom-highlight.
+    const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+    const probe = document.createRange();
+    let text;
+    const intersects = node => {
+      probe.selectNodeContents(node);
+      if (probe.compareBoundaryPoints(Range.START_TO_END, range) <= 0) return null;
+      if (probe.compareBoundaryPoints(Range.END_TO_START, range) >= 0) return null;
+      const out = document.createRange();
+      if (range.compareBoundaryPoints(Range.START_TO_START, probe) <= 0) out.setStart(node, 0);
+      else if (range.startContainer === node) out.setStart(node, range.startOffset);
+      else out.setStart(node, 0);
+      if (range.compareBoundaryPoints(Range.END_TO_END, probe) >= 0) out.setEnd(node, node.nodeValue.length);
+      else if (range.endContainer === node) out.setEnd(node, range.endOffset);
+      else out.setEnd(node, node.nodeValue.length);
+      return out.collapsed ? null : out;
+    };
+    while ((text = walker.nextNode())) {
+      // Token-highlighted code keeps its native painting (wash background
+      // with transparent text over the token layer); everything else is
+      // mirrored per fragment.
+      if (text.parentElement && text.parentElement.closest('.code-surface code')) continue;
+      const part = intersects(text);
+      if (part) result.push(part);
+    }
+    return result;
+  }
+  function applyFolioRanges(ranges) {
+    if (!customHighlightSupported || !view) return;
+    if (!ranges.length) {
+      if (folioPaintActive) {
+        folioPaintActive = false;
+        try { window.CSS.highlights.delete(folioHighlightName); } catch {}
+        view.dom.classList.remove('folio-paint');
+      }
+      return;
+    }
+    try {
+      window.CSS.highlights.set(folioHighlightName, new Highlight(...ranges));
+      if (!folioPaintActive) {
+        folioPaintActive = true;
+        view.dom.classList.add('folio-paint');
+      }
+    } catch {
+      // Registry hiccup (detached nodes?): fall back to native painting.
+      folioPaintActive = false;
+      try { window.CSS.highlights.delete(folioHighlightName); } catch {}
+      view.dom.classList.remove('folio-paint');
+    }
+  }
+  // Find jumps select the match in editor state, but focus stays in the find
+  // field. ProseMirror only paints its native selection while the editor has
+  // focus, so mirror the match through the same custom-highlight registry the
+  // reading selection uses. Keyboard focus and the scroll position stay
+  // untouched while the hit remains visibly marked.
+  let searchHighlight = null;
+  function searchDomRange(from, to) {
+    if (!Number.isInteger(from) || !Number.isInteger(to) || to <= from) return null;
+    let start, end;
+    try {
+      start = sourceMapping(model, from, { bias: 'right' }).pm;
+      end = sourceMapping(model, to, { bias: 'left' }).pm;
+    } catch { return null; }
+    if (!Number.isInteger(start) || !Number.isInteger(end) || end <= start) return null;
+    try {
+      const a = view.domAtPos(start), b = view.domAtPos(end);
+      const range = document.createRange();
+      range.setStart(a.node, a.offset); range.setEnd(b.node, b.offset);
+      return range.collapsed ? null : range;
+    } catch { return null; }
+  }
+  function paintSearchHighlight() {
+    if (!searchHighlight) return false;
+    try {
+      const range = searchDomRange(searchHighlight.from, searchHighlight.to);
+      if (!range) return false;
+      applyFolioRanges(folioHighlightRanges(range));
+      return true;
+    } catch { return false; }
+  }
+  function syncFolioHighlight() {
+    if (!customHighlightSupported || !view) return;
+    const selection = window.getSelection();
+    let ranges = [];
+    if (selection && selection.rangeCount > 0 && !selection.isCollapsed
+      && view.dom.contains(selection.anchorNode) && view.dom.contains(selection.focusNode)
+      && !view.dom.classList.contains('ProseMirror-hideselection')) {
+      try { ranges = folioHighlightRanges(selection.getRangeAt(0)); }
+      catch { ranges = []; }
+    }
+    // A standing find highlight survives selectionchange events that belong
+    // to the find field (the native document selection is empty there).
+    if (!ranges.length && paintSearchHighlight()) return;
+    applyFolioRanges(ranges);
+  }
+  function setSearchHighlight(from, to) {
+    searchHighlight = Number.isInteger(from) && Number.isInteger(to) && to > from ? { from, to } : null;
+    if (!searchHighlight) applyFolioRanges([]);
+    else if (!paintSearchHighlight()) applyFolioRanges([]);
+  }
+  function clearSearchHighlight() {
+    searchHighlight = null;
+    syncFolioHighlight();
+  }
+  // Inline author HTML (keyboard keys, variables, sample output...) renders as
+  // real sanitized elements instead of literal code text. The atom keeps the
+  // exact source for round-tripping and reveals it in the source presentation
+  // on demand, exactly like math and image atoms. Only allowlisted tags
+  // render; anything else (or a malformed fragment) falls back to the
+  // previous code-chip rendering, which is always safe to display.
+  const INLINE_HTML_ELEMENTS = new Set(INLINE_HTML_SPAN_TAGS);
+  function renderInlineHtml(source) {
+    let host;
+    try {
+      const parsed = new DOMParser().parseFromString(`<div>${source}</div>`, 'text/html');
+      host = parsed.body.firstElementChild;
+      if (!host || host.tagName !== 'DIV' || host.nextElementSibling) return null;
+      // The merged pair is exactly one element; surrounding text would mean
+      // the tokenizer and this renderer disagree, so refuse loudly.
+      if ([...host.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.nodeValue.trim() !== '')) return null;
+      const root = host.firstElementChild;
+      // Only a complete open..close pair renders as a real element. A lone
+      // tag falls back to the literal chip below, exactly as before.
+      if (!root || !new RegExp(`</${root.tagName}\\s*>\\s*$`, 'i').test(source)) return null;
+    } catch { return null; }
+    const fragment = document.createDocumentFragment();
+    const clean = (from, to) => {
+      for (const child of [...from.childNodes]) {
+        if (child.nodeType === Node.TEXT_NODE) to.append(document.createTextNode(child.nodeValue));
+        else if (child.nodeType === Node.ELEMENT_NODE) {
+          const tag = child.tagName.toLowerCase();
+          if (!INLINE_HTML_ELEMENTS.has(tag)) return false;
+          const element = document.createElement(tag);
+          if (tag === 'a') {
+            const href = child.getAttribute('href');
+            // Same destination policy as Markdown links: relative document
+            // links keep working, script/data/file targets never do.
+            if (href && safeDestination(href)) element.setAttribute('href', href);
+          }
+          // Every other attribute is dropped: no handlers, no styles, and no
+          // forged editor markers can ride along.
+          if (!clean(child, element)) return false;
+          to.append(element);
+        }
+        // Comments and processing instructions are dropped silently.
+      }
+      return true;
+    };
+    if (!clean(host, fragment) || !fragment.childNodes.length) return null;
+    return fragment;
+  }
+  function rawInlineView(node, editor, getPos) {
+    const dom = document.createElement('span');
+    dom.className = 'html-inline';
+    // Join the editable surface like projections do: ProseMirror leaves an
+    // explicitly set contenteditable alone, and a non-editable island would
+    // punch holes in selection painting. Input is blocked below because the
+    // DOM is a sanitized rendering, not the document. Under Lock the whole
+    // editor (including this span) is uniformly non-editable, so selections
+    // span the same way in both modes.
+    const syncEditability = () => {
+      try { dom.contentEditable = String(!options.isUserLocked()); } catch {}
+    };
+    syncEditability();
+    const guardMutation = event => { event.preventDefault(); };
+    dom.addEventListener('beforeinput', guardMutation);
+    dom.addEventListener('drop', guardMutation);
+    dom.addEventListener('dragstart', guardMutation);
+    // Author links behave like Markdown links: plain click reveals the exact
+    // source in the source presentation for editing, Ctrl/Cmd-click opens.
+    // Other inline elements have no click action; the atom selects normally.
+    dom.addEventListener('click', event => {
+      const anchor = event.target.closest('a');
+      if (!anchor || event.button !== 0) return;
+      if (event.ctrlKey || event.metaKey || options.isLocked()) return;
+      let pos = null;
+      try { pos = getPos(); } catch { pos = null; }
+      if (pos == null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      revealAtomSource(pos, anchor.getAttribute('href') || '');
+    });
+    const render = () => {
+      dom.replaceChildren();
+      const rendered = renderInlineHtml(node.attrs.source);
+      let content = null;
+      if (rendered) content = rendered;
+      else {
+        // Fallback preserves the previous literal rendering for tags outside
+        // the allowlist and malformed fragments; the source stays exact.
+        const code = document.createElement('code');
+        code.className = 'source-inline';
+        code.textContent = node.attrs.source;
+        const fallback = document.createDocumentFragment();
+        fallback.append(code);
+        content = fallback;
+      }
+      // Preserve an outer Markdown link mark exactly like the schema
+      // serializer does: wrap the rendering in an anchor so the link stays
+      // clickable and reveals its URL instead of going silently dead.
+      const link = node.marks.find(mark => mark.type.name === 'link');
+      if (link) {
+        const anchor = document.createElement('a');
+        const href = link.attrs.href;
+        if (href && safeDestination(href)) anchor.setAttribute('href', href);
+        anchor.setAttribute('rel', 'noreferrer');
+        anchor.append(content);
+        dom.append(anchor);
+      } else dom.append(content);
+    };
+    render();
+    const refresh = () => syncEditability();
+    refreshers.add(refresh);
+    return { dom, update(next) { if (next.type !== node.type) return false; node = next; render(); return true; }, ignoreMutation: () => true, destroy() { refreshers.delete(refresh); } };
   }
   function rawView(node, editor, getPos) {
     const dom = document.createElement('section'); dom.className = 'extension-block';
@@ -518,19 +899,120 @@ export function createRichEditor(parent, options) {
     actions.append(edit);
     dom.append(projection, actions);
     let generation = 0;
+    let mountedSource = null;
+    function invalidateTasks() {
+      mountedSource = null;
+      projection.querySelectorAll('input[type="checkbox"]').forEach(box => { box.disabled = true; });
+    }
+    // The raw node's ledger owner is the only accepted anchor. Both the node
+    // text and the live model source must agree on the exact byte slice before
+    // any checkbox is enabled; a stale projection or a remapped ledger fails
+    // closed and leaves the native disabled state in place.
+    function taskFrame() {
+      let pos = null;
+      try { pos = getPos(); } catch { return null; }
+      if (pos == null) return null;
+      let ledger = model.ledger;
+      if (!ledger) {
+        // Structural edits can leave the attached ledger lazy. Rebuild it from
+        // the exact source/document pair; never fall back to text search.
+        try { ledger = model.ledger = buildLedger(model.source, model.doc, { segments: model.segments }); }
+        catch { return null; }
+      }
+      const owner = ledger?.owners?.find(entry => entry.pmFrom === pos && entry.type === 'raw_block');
+      if (!owner || owner.confidence !== 'exact' || owner.supported === false) return null;
+      if (!Number.isInteger(owner.sourceFrom) || !Number.isInteger(owner.sourceTo)) return null;
+      if (owner.sourceFrom < 0 || owner.sourceTo > model.source.length || owner.sourceFrom > owner.sourceTo) return null;
+      // The ledger ends a raw owner at the next block boundary, so it may
+      // include the blank separator after the literal node text. Compare the
+      // node's own length and keep that as the mapping boundary.
+      const to = owner.sourceFrom + node.textContent.length;
+      if (to > owner.sourceTo) return null;
+      if (model.source.slice(owner.sourceFrom, to) !== node.textContent) return null;
+      // renderExtension selects the projection by the first occurrence of this
+      // literal. If an identical raw slice appears earlier, the rendered
+      // controls do not provably belong to this node, so disable them.
+      if (model.source.indexOf(node.textContent) !== owner.sourceFrom) return null;
+      return { from: owner.sourceFrom, to };
+    }
+    function taskMarkerAt(index) {
+      if (mountedSource !== node.textContent) return null;
+      const frame = taskFrame();
+      if (!frame) return null;
+      const markers = rawTaskMarkers(model.source.slice(frame.from, frame.to));
+      if (!markers || !Number.isInteger(index) || index < 0 || index >= markers.length) return null;
+      const marker = markers[index];
+      const offset = frame.from + marker.offset;
+      if (offset <= frame.from || offset + 1 >= frame.to) return null;
+      if (model.source[offset - 1] !== '[' || model.source[offset + 1] !== ']') return null;
+      if (!RAW_TASK_MARKER.test(model.source[offset])) return null;
+      if ((model.source[offset] !== ' ') !== marker.checked) return null;
+      return { offset, checked: marker.checked };
+    }
+    const boundTaskControls = new WeakSet();
+    function toggleRawTask(checkbox, index) {
+      if (options.isLocked()) { checkbox.checked = !checkbox.checked; return; }
+      const marker = taskMarkerAt(index);
+      if (!marker) { checkbox.checked = !checkbox.checked; return; }
+      const wanted = Boolean(checkbox.checked);
+      if (wanted === marker.checked) { checkbox.checked = marker.checked; return; }
+      // Only the marker character changes. The source-first commit reparses
+      // and refuses the transaction if the result cannot be represented
+      // exactly; restore the control instead of leaving a lying checkbox.
+      const outcome = replaceLogicalSelection(wanted ? 'x' : ' ', 'task', { from: marker.offset, to: marker.offset + 1, all: false, collapsed: false });
+      if (!outcome.committed) checkbox.checked = marker.checked;
+    }
+    function syncTaskControls() {
+      const boxes = [...projection.querySelectorAll('input[type="checkbox"][data-task-index]')];
+      if (!boxes.length) return;
+      const frame = taskFrame();
+      const markers = frame ? rawTaskMarkers(model.source.slice(frame.from, frame.to)) : null;
+      // Rendered tasks and source task items must agree one-for-one. Anything
+      // else (an extension the local tokenizer and Comrak disagree on, a
+      // malformed projection, duplicate fragments) disables every box here.
+      const safe = mountedSource === node.textContent && markers && markers.length === boxes.length ? markers : null;
+      boxes.forEach((checkbox, index) => {
+        checkbox.contentEditable = 'false';
+        checkbox.__folioTaskIndex = index;
+        checkbox.disabled = options.isLocked() || !safe;
+        if (!safe) return;
+        checkbox.setAttribute('aria-label', 'Toggle task');
+        if (boundTaskControls.has(checkbox)) return;
+        boundTaskControls.add(checkbox);
+        checkbox.addEventListener('mousedown', event => event.preventDefault());
+        checkbox.addEventListener('change', event => {
+          event.stopPropagation();
+          toggleRawTask(checkbox, checkbox.__folioTaskIndex);
+        });
+      });
+    }
     const render = async () => {
       const current = ++generation;
-      try { const html = await options.renderExtension(node.textContent); if (generation === current && dom.isConnected) projection.innerHTML = html; }
+      const source = node.textContent;
+      invalidateTasks();
+      try {
+        const html = await options.renderExtension(source);
+        if (generation === current && source === node.textContent && dom.isConnected) { projection.innerHTML = html; mountedSource = source; syncTaskControls(); }
+      }
       catch { if (current === generation) projection.textContent = 'Rendered view unavailable. Use Edit source to inspect the exact Markdown.'; }
     };
-    Promise.resolve().then(render);
-    const refresh = () => { edit.disabled = options.isLocked(); syncEditability(); };
+    let lastRemote = options.remoteImages();
+    const refresh = () => {
+      const remote = options.remoteImages();
+      if (remote !== lastRemote) {
+        lastRemote = remote; generation++; invalidateTasks();
+        if (!remote) projection.querySelectorAll('img').forEach(img => { img.removeAttribute('srcset'); img.removeAttribute('src'); });
+      }
+      edit.disabled = options.isLocked(); syncEditability(); syncTaskControls(); Promise.resolve().then(render);
+    };
     refreshers.add(refresh); refresh();
     const removeListeners = () => { refreshers.delete(refresh); };
     // Atom view: the literal source is not mounted in the reading DOM, so no
     // duplicate selectable text exists here. All source edits go through the
-    // explicit source presentation via the edit action above.
-    return { dom, update(next) { if (next.type !== node.type) return false; node = next; Promise.resolve().then(render); return true; }, ignoreMutation: () => true, stopEvent: event => event.target.closest('button') != null, destroy() { generation++; removeListeners(); } };
+    // explicit source presentation via the edit action above; task checkboxes
+    // are the one bounded exception, because their whole state is one marker
+    // character in the exact raw slice.
+    return { dom, update(next) { if (next.type !== node.type) return false; if (next.textContent !== node.textContent) { generation++; invalidateTasks(); } node = next; Promise.resolve().then(render); return true; }, ignoreMutation: () => true, stopEvent: event => event.target.closest?.('button, input[type="checkbox"]') != null, destroy() { generation++; removeListeners(); } };
   }
   const safeDestination = value => {
     const destination = String(value || '');
@@ -676,6 +1158,19 @@ export function createRichEditor(parent, options) {
     if (options.isLocked()) return true;
     return replaceLogicalSelection('\n', 'enter', range).handled;
   }
+  // Shift+Enter is a soft line break, not a block split. ProseMirror's base
+  // keymap has no binding for it, so without this it silently does nothing.
+  // Code blocks keep their native newline behavior; all other textblocks get a
+  // schema hard_break, which serializes as backslash-newline (or <br> in cells).
+  function insertSoftBreak(state, dispatch) {
+    if (!(state.selection instanceof TextSelection)) return false;
+    const $from = state.selection.$from;
+    if ($from.parent.type.spec.code) return baseKeymap.Enter(state, dispatch);
+    if (!dispatch) return true;
+    if (options.isLocked()) return true;
+    dispatch(state.tr.replaceSelectionWith(schema.nodes.hard_break.create()).scrollIntoView());
+    return true;
+  }
   function selectAllLogical(state, dispatch, view) {
     if (!dispatch) return true;
     const tr = state.tr.setSelection(new AllSelection(state.doc)).setMeta('folio-projection', true);
@@ -732,6 +1227,7 @@ export function createRichEditor(parent, options) {
         'Mod-b': toggleMark(schema.marks.strong), 'Mod-i': toggleMark(schema.marks.em), 'Mod-`': toggleMark(schema.marks.code),
         'Mod-a': selectAllLogical,
         Backspace: deleteLogical(true), Delete: deleteLogical(false),
+        'Shift-Enter': insertSoftBreak,
         Enter: chainCommands(enterLogical, tableEnter, completeDivider, splitListItem(schema.nodes.list_item), baseKeymap.Enter),
         Tab: chainCommands(tabCell(1), sinkListItem(schema.nodes.list_item)), 'Shift-Tab': chainCommands(tabCell(-1), liftListItem(schema.nodes.list_item)),
         'Mod-Enter': chainCommands(exitTableForward, exitCode),
@@ -776,7 +1272,7 @@ export function createRichEditor(parent, options) {
     // transaction filter below enforces the effective lock for document edits.
     state: stateFor(model.doc), editable: () => !options.isUserLocked(),
     attributes: { 'aria-label': 'Formatted Markdown editor', spellcheck: 'true' },
-    nodeViews: { list_item: listItem, image: imageView, math_inline: mathView, math_block: mathView, code_block: codeView, raw_block: rawView, table: node => new TableView(node, 80) },
+    nodeViews: { list_item: listItem, image: imageView, math_inline: mathView, math_block: mathView, code_block: codeView, raw_block: rawView, raw_inline: rawInlineView, table: node => new TableView(node, 80) },
     dispatchTransaction(tr) {
       const beforeSelection = sourceSelection(view.state);
       const tabMeta = tr.getMeta('folio-tab-cell');
@@ -820,6 +1316,12 @@ export function createRichEditor(parent, options) {
     },
     handleTextInput(editor, from, to, text) {
       if (editor.composing) return false;
+      // A formatting command (Ctrl+B/Ctrl+I or a toolbar mark) sets stored
+      // marks on the ProseMirror state. The logical source splice below would
+      // reparse the document and silently discard them, so an explicit mark
+      // intent must take the native rich-text path and let the serializer emit
+      // the Markdown delimiters.
+      if (editor.state.storedMarks !== null) return false;
       const range = bookmarkRange(editor.state);
       if (range) {
         if (bookmark.all) {
@@ -828,6 +1330,12 @@ export function createRichEditor(parent, options) {
         }
         const pmFrom = Math.min(bookmark.pmAnchor, bookmark.pmHead), pmTo = Math.max(bookmark.pmAnchor, bookmark.pmHead);
         if (from !== pmFrom || to !== pmTo) return false;
+        // A source offset inside an empty paragraph is the blank separator
+        // itself, not a text position. Let ProseMirror insert into the visible
+        // empty paragraph and serialize the block instead of splicing into the
+        // separator (which would join the following paragraph).
+        const $from = editor.state.selection.$from;
+        if ($from.parent.isTextblock && $from.parent.content.size === 0) return false;
         return replaceLogicalSelection(text, 'typing', range).handled;
       }
       const selection = editor.state.selection;
@@ -928,6 +1436,9 @@ export function createRichEditor(parent, options) {
   window.addEventListener('pointerup', releaseSelectionGuard);
   window.addEventListener('pointercancel', releaseSelectionGuard);
   window.addEventListener('blur', releaseSelectionGuard);
+  // Mirror the live DOM range into the folio-selection custom highlight (see
+  // above). Document-level so ranges leaving the reader clear the mirror.
+  document.addEventListener('selectionchange', syncFolioHighlight);
   return {
     view,
     captureSelection() {
@@ -942,6 +1453,22 @@ export function createRichEditor(parent, options) {
         view.updateState(state);
         if (meta.logical && selection) setBookmark(selection.anchor, selection.head, state);
       } else if (selection) {
+        // A source offset that falls inside inter-block whitespace cannot be
+        // represented by the parsed rich document. If the current rich caret
+        // is a transient empty paragraph (for example after Enter at the start
+        // of a paragraph), keep that paragraph instead of snapping to the next
+        // block's first character; otherwise toggling presentations makes the
+        // next character join the following paragraph as a soft break.
+        const mapped = selection.anchor === selection.head
+          ? sourceMapping(model, selection.anchor, { bias: 'right' }) : null;
+        const current = view.state.selection;
+        const transientEmpty = current instanceof TextSelection && current.empty
+          && current.$from.parent.type === schema.nodes.paragraph
+          && current.$from.parent.content.size === 0;
+        if (mapped && (!mapped.exact || mapped.confidence !== 'exact') && transientEmpty) {
+          bookmark = null;
+          return;
+        }
         // A zero-write presentation of the same logical selection must not
         // invalidate its bookmark (toggle/media/focus round trip).
         const unchanged = !meta.logical && bookmarkRange(view.state) &&
@@ -956,6 +1483,8 @@ export function createRichEditor(parent, options) {
     setLocked() { view.setProps({ editable: () => !options.isUserLocked() }); for (const refresh of refreshers) refresh(); },
     setTransitionLocked() { for (const refresh of refreshers) refresh(); },
     refreshMedia() { for (const refresh of refreshers) refresh(); },
+    setSearchHighlight,
+    clearSearchHighlight,
     focus: () => view.focus(),
     command(name) {
       if (options.isLocked()) return;
@@ -970,17 +1499,19 @@ export function createRichEditor(parent, options) {
         const table = schema.nodes.table.create(null, [schema.nodes.table_row.create(null, [cell(true), cell(true)]), schema.nodes.table_row.create(null, [cell(false), cell(false)])]);
         view.dispatch(view.state.tr.replaceSelectionWith(table).scrollIntoView());
       } else if (name === 'math' || name === 'link' || name === 'image') {
-        // Creating a link, formula or image starts from the exact Markdown
-        // syntax in the shared buffer. Reveal the current position in the
-        // source projection for direct typing instead of a detached prompt.
-        // Existing links, formulas and images already reveal their own
-        // URL/TeX/src range through their click/Edit affordances above.
-        revealCurrentSelection();
+        // Author real Markdown syntax at the exact source selection. This is
+        // what makes the toolbar buttons usable rather than only exposing an
+        // empty source range: the selected text becomes the label/TeX/src when
+        // it fits, and a placeholder stays selected for direct typing.
+        if (!insertCommandSyntax(name)) revealCurrentSelection();
+        view.focus();
         return;
       } else commands[name]?.(view.state, view.dispatch, view);
       view.focus();
     },
     destroy() {
+      document.removeEventListener('selectionchange', syncFolioHighlight);
+      try { window.CSS.highlights.delete('folio-selection'); } catch {}
       window.removeEventListener('pointerup', releaseSelectionGuard);
       window.removeEventListener('pointercancel', releaseSelectionGuard);
       window.removeEventListener('blur', releaseSelectionGuard);

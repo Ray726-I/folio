@@ -149,6 +149,8 @@ async function deliverOk(page, id, tag) {
     assert.equal(await page.locator('#preview .mermaid-host').count(), 1, 'error keeps its host');
     assert.equal(await page.locator('#preview .mermaid-host svg, #preview .mermaid-host script').count(), 0, 'errors insert no SVG or scripts');
     assert.equal(await page.locator('#preview .mermaid-source').textContent(), 'not a diagram', 'error keeps the source');
+    await page.evaluate(() => editor.refreshMedia());
+    assert.equal(await page.locator('#preview .mermaid-error').count(), 1, 'refreshing an unchanged failed diagram preserves its error state');
     opening = openDoc(page, byName('offline.md').path);
     await waitRequests(page, 4);
     const offline = (await requests())[3];

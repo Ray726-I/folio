@@ -1166,6 +1166,42 @@ input,textarea,[contenteditable="true"],.ProseMirror,.cm-content {
   color:var(--selection-ink,currentcolor)
 }
 
+/* Text-shaped reading paint via the CSS Custom Highlights registry (see
+   syncFolioHighlight in the rich editor). The real DOM range stays
+   authoritative; the mirrored folio-selection Highlight repaints it per text
+   fragment, so engines that would otherwise fill whole blocks paint the same
+   calm per-line wash. The paint class suppresses ONLY the native ::selection
+   background, and only once the mirror has a range to show: text color,
+   table/node indicators and the code-token transparency below are untouched.
+   Token-highlighted code keeps its native painting (wash background with
+   transparent glyphs over the token layer), so its ranges are excluded from
+   the mirror and its background is restored here. */
+::highlight(folio-selection) {
+  background-color:var(--selection-wash,color-mix(in srgb,var(--accent) 45%,var(--bg)))
+}
+#preview .ProseMirror.folio-paint ::selection {
+  background-color:transparent
+}
+#preview .ProseMirror.folio-paint .code-container.code-highlighted:not(.code-editing)>.code-surface code::selection {
+  background-color:var(--selection-wash,color-mix(in srgb,var(--accent) 45%,var(--bg)))
+}
+
+/* Text-shaped reading paint for the source presentation: same mirror contract
+   as above under its own registry name (only one presentation is ever
+   visible). The wash matches the existing source-mode selection exactly, so
+   only the shape changes, never the color. CodeMirror's own drawn layer is
+   hidden while the mirror paints so full-width block divs cannot reintroduce
+   rectangles. */
+::highlight(folio-source-selection) {
+  background-color:var(--selection)
+}
+#source-editor .cm-editor.folio-source-paint ::selection {
+  background-color:transparent
+}
+#source-editor .cm-editor.folio-source-paint .cm-selectionBackground {
+  display:none
+}
+
 #preview .ProseMirror .selectedCell:after {
   background:var(--selection-wash,color-mix(in srgb,var(--accent) 45%,var(--bg)));
   opacity:.8
@@ -1850,6 +1886,13 @@ body.focus-mode #file-browser,body.focus-mode .sidebar-resizer {
   max-width:100%;
   overflow-x:auto;
   margin:1.4em 0
+}
+
+/* CodeMirror measures block widgets without external margins. Keep the same
+   spacing inside the widget so later clicks map to the correct source line. */
+.markdown .table-scroll.source-table-preview {
+  margin:0;
+  padding:1.4em 0
 }
 
 .markdown .table-scroll table {
@@ -3027,6 +3070,96 @@ dialog {
   }
   .folder-entry {
     min-height:44px
+  }
+  /* Audited editor and Open targets: 44px hit boxes on touch only.
+     Desktop keeps its compact visuals; coarse layouts absorb the growth
+     (the toolbar wraps, the header title shrinks, task rows gain room)
+     instead of overlapping. */
+  .editor-toolbar .button {
+    min-width:44px;
+    min-height:44px
+  }
+  .button.open-main,.button.open-chevron {
+    min-width:44px;
+    min-height:44px
+  }
+  .math-edit {
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    min-width:44px;
+    min-height:44px
+  }
+  /* Task checkboxes keep their 16px visual centered in a 44px native hit
+     box. The replaced-element rendering ignores padding, so appearance:none
+     opts into a styleable box: content-box sizing centers the glyph while
+     the padding stays transparent touch room, and block padding (which never
+     collapses) keeps stacked 44px boxes from overlapping. Desktop keeps the
+     native control untouched. */
+  .markdown .task-item {
+    margin:0;
+    padding-top:.45em;
+    padding-bottom:.45em
+  }
+  .markdown .task-item>ul,.markdown .task-item>ol {
+    margin-top:.45em
+  }
+  .markdown li>input {
+    position:relative;
+    appearance:none;
+    -webkit-appearance:none;
+    box-sizing:content-box;
+    width:16px;
+    height:16px;
+    padding:12px;
+    border:2px solid var(--muted);
+    border-radius:6px;
+    background-color:transparent;
+    background-clip:content-box;
+    vertical-align:middle
+  }
+  .markdown .task-item>input {
+    position:absolute;
+    left:calc(-1.5em - 14px);
+    top:calc(.6em - 14px + .45em);
+    margin:0
+  }
+  .markdown li>input:disabled {
+    opacity:.55;
+    cursor:default
+  }
+  .markdown li>input:checked {
+    background-color:var(--accent);
+    border-color:var(--accent)
+  }
+  .markdown li>input:checked::after {
+    content:"";
+    position:absolute;
+    left:16px;
+    top:16px;
+    width:6px;
+    height:10px;
+    border:solid var(--bg);
+    border-width:0 3px 3px 0;
+    transform:rotate(42deg)
+  }
+}
+
+@media(pointer:coarse) and (forced-colors:active) {
+  /* High-contrast touch keeps a native 44px box instead of the drawn check
+     so the platform palette stays authoritative. */
+  .markdown li>input {
+    appearance:auto;
+    -webkit-appearance:auto;
+    box-sizing:border-box;
+    width:44px;
+    height:44px;
+    padding:0;
+    border:0;
+    background:none
+  }
+  .markdown li>input:checked::after {
+    content:none
   }
 }
 

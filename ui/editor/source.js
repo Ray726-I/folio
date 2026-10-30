@@ -62,6 +62,25 @@ function revealBounds(scroller, bounds, margin = SCROLL_MARGIN) {
 class TablePreview extends WidgetType {
   constructor(text, from, selectCell) { super(); this.text = text; this.from = from; this.selectCell = selectCell; }
   eq(other) { return this.text === other.text && this.from === other.from; }
+  // Nearest cell to a point inside the table, using the same row/column
+  // indexing as the direct-hit path below. Borders, spacing gaps and cell
+  // padding all belong to the table, so they resolve to the closest cell
+  // instead of the table start.
+  nearestCell(wrapper, x, y) {
+    let best = null;
+    const rows = [...wrapper.querySelectorAll('tr')];
+    rows.forEach((row, rowIndex) => {
+      [...row.children].forEach((cell, column) => {
+        if (cell.tagName !== 'TD' && cell.tagName !== 'TH') return;
+        const rect = cell.getBoundingClientRect();
+        const dx = Math.max(rect.left - x, 0, x - rect.right);
+        const dy = Math.max(rect.top - y, 0, y - rect.bottom);
+        const distance = dx * dx + dy * dy;
+        if (!best || distance < best.distance) best = { distance, rowIndex, column, cell };
+      });
+    });
+    return best;
+  }
   toDOM() {
     const wrapper = document.createElement('div'); wrapper.className = 'table-scroll source-table-preview';
     // Markdown-it has HTML disabled and images replaced with escaped alt text.
@@ -69,14 +88,32 @@ class TablePreview extends WidgetType {
     wrapper.setAttribute('aria-label', 'Markdown table. Activate to edit its source.');
     wrapper.addEventListener('mousedown', event => {
       if (event.button !== 0) return;
+      const target = event.target && event.target.closest ? event.target.closest('td,th') : null;
+      let rowIndex, column, anchor;
+      if (target) {
+        const row = target.parentElement;
+        rowIndex = [...wrapper.querySelectorAll('tr')].indexOf(row);
+        column = [...row.children].indexOf(target);
+        anchor = target;
+      } else {
+        // Inside the wrapper but outside any cell (table chrome, spacing or
+        // padding) still belongs to the visual table: hand the nearest cell
+        // to the shared reveal. Anything outside the table element (wrapper
+        // background, scrollbars) is left alone so native scrolling and
+        // stray clicks never yank the caret.
+        const table = event.target && event.target.closest ? event.target.closest('table') : null;
+        if (!table || !wrapper.contains(table)) return;
+        const hit = this.nearestCell(wrapper, event.clientX, event.clientY);
+        if (!hit) return;
+        rowIndex = hit.rowIndex;
+        column = hit.column;
+        anchor = hit.cell;
+      }
       event.preventDefault();
-      const cell = event.target.closest('td,th'), row = cell?.parentElement;
-      const rowIndex = row ? [...wrapper.querySelectorAll('tr')].indexOf(row) : 0;
-      const column = cell ? [...row.children].indexOf(cell) : 0;
       // Revealing the source replaces the compact widget with taller Markdown
       // lines. Hand the clicked row's screen position to the shared reveal so
       // the selection update and row anchoring land in the same frame.
-      this.selectCell(tableCellOffset(this.text, this.from, rowIndex, column), (cell || wrapper).getBoundingClientRect().top);
+      this.selectCell(tableCellOffset(this.text, this.from, rowIndex, column), anchor.getBoundingClientRect().top);
     });
     return wrapper;
   }
@@ -126,6 +163,51 @@ export function createSourceEditor(parent, options) {
     view.dispatch({ selection: { anchor: offset } });
     view.focus();
   };
+  // Text-shaped reading paint via the CSS Custom Highlights API (same
+  // technique as the rich editor's folio-selection mirror, but a distinct
+  // registry entry: only one presentation is ever visible). The real DOM
+  // range stays authoritative; the mirror repaints it per text fragment so
+  // engines that fill whole blocks for multi-line selections show the same
+  // calm per-line wash as everywhere else. Unsupported engines never engage
+  // and keep ordinary native painting.
+  const folioSourceHighlightName = 'folio-source-selection';
+  const customHighlightSupported = (() => {
+    try {
+      return typeof Highlight === 'function'
+        && !!(window.CSS && window.CSS.highlights)
+        && CSS.supports('selector(::highlight(folio-source-selection))');
+    } catch { return false; }
+  })();
+  let folioSourcePaintActive = false;
+  function syncFolioSourceHighlight() {
+    if (!customHighlightSupported) return;
+    const selection = window.getSelection();
+    let mirrored = false;
+    if (selection && selection.rangeCount > 0 && !selection.isCollapsed
+      && view.dom.contains(selection.anchorNode) && view.dom.contains(selection.focusNode)
+      && !view.dom.closest('[hidden]')) {
+      try {
+        window.CSS.highlights.set(folioSourceHighlightName, new Highlight(selection.getRangeAt(0).cloneRange()));
+        mirrored = true;
+      } catch { mirrored = false; }
+    }
+    if (mirrored) {
+      if (!folioSourcePaintActive) {
+        folioSourcePaintActive = true;
+        view.dom.classList.add('folio-source-paint');
+      }
+    } else if (folioSourcePaintActive) {
+      folioSourcePaintActive = false;
+      try { window.CSS.highlights.delete(folioSourceHighlightName); } catch {}
+      view.dom.classList.remove('folio-source-paint');
+    }
+  }
+  function clearFolioSourceHighlight() {
+    if (!folioSourcePaintActive) return;
+    folioSourcePaintActive = false;
+    try { window.CSS.highlights.delete(folioSourceHighlightName); } catch {}
+    try { view.dom.classList.remove('folio-source-paint'); } catch {}
+  }
   const decorate = state => sourceDecorations(state, selectTableCell);
   const decorations = StateField.define({
     create: decorate,
@@ -176,6 +258,12 @@ export function createSourceEditor(parent, options) {
     })
   ] }) });
   if (options.content.length > MAX_REVEAL_LENGTH) queueMicrotask(() => options.message?.('Inline Markdown reveal is off for documents over 2 MiB. The complete source remains editable.'));
+  // One document-level listener mirrors the native range; it is removed on
+  // destroy. A capture-phase blur listener clears the mirror when focus
+  // leaves the editor (refocus re-syncs through the selection it restores).
+  const onDomBlur = event => { if (event.target && view.dom.contains(event.target)) clearFolioSourceHighlight(); };
+  document.addEventListener('selectionchange', syncFolioSourceHighlight);
+  document.addEventListener('blur', onDomBlur, true);
   return {
     view,
     selection() { return { anchor: view.state.selection.main.anchor, head: view.state.selection.main.head }; },
@@ -189,6 +277,11 @@ export function createSourceEditor(parent, options) {
     setLocked(locked) { view.dispatch({ effects: permission.reconfigure([EditorState.readOnly.of(locked), EditorView.editable.of(!locked)]) }); },
     setTransitionLocked() {},
     focus() { view.focus(); },
-    destroy() { view.destroy(); }
+    destroy() {
+      document.removeEventListener('selectionchange', syncFolioSourceHighlight);
+      document.removeEventListener('blur', onDomBlur, true);
+      try { window.CSS.highlights.delete('folio-source-selection'); } catch {}
+      view.destroy();
+    }
   };
 }

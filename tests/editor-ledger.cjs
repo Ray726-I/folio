@@ -380,8 +380,17 @@ function findRun(ledger, text, occurrence = 0) {
   assert.equal(mapRich(ledger, image.pmTo).source, image.sourceTo);
   const tag = ledger.owners.find(owner => owner.type === 'raw_inline');
   assert.ok(tag && tag.confidence === 'exact');
-  assert.equal(tag.node.attrs.source, '<b>');
+  // A balanced pair merges into one atom carrying the exact source, so the
+  // rich view can render the real element instead of literal tag text.
+  assert.equal(tag.node.attrs.source, '<b>raw</b>');
+  assert.equal(tag.sourceFrom, source.indexOf('<b>'));
+  assert.equal(tag.sourceTo, source.indexOf('</b>') + '</b>'.length);
   roundTripSource(ledger, source.indexOf('<b>'), 'raw inline html');
+  // Like math atoms, endpoints map exactly; interior positions resolve to the
+  // atom's edges.
+  assert.equal(mapSource(ledger, tag.sourceTo).pm, tag.pmTo);
+  assert.equal(mapRich(ledger, tag.pmTo).source, tag.sourceTo);
+  assert.equal(mapRich(ledger, tag.pmFrom).source, tag.sourceFrom);
 }
 
 console.log('PASS: source ledger exact paragraph start, occurrence-aware mapping, escapes/entities, nested tasks, math, tables, links/images, literal raw blocks, partial/unmapped mismatch metadata and verified source patches.');

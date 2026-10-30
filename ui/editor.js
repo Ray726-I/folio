@@ -1,6 +1,7 @@
 'use strict';
 // Shell adapter. The engines live in the locally bundled editor/ modules.
 let editor = null, editorDocument = null, editorPath = null, outlineTimer, fallbackCheckedContent = null;
+let outlineRevision = 0;
 let previewBlocks = [];
 // Temporary protection while a queued open replaces the active document. This
 // is separate from the user's persistent Lock; it starts before native
@@ -57,20 +58,55 @@ function openSourceSnapshot() {
   $('source-dialog').showModal(); $('source-snapshot-text').focus();
 }
 function scheduleEditorOutline() { clearTimeout(outlineTimer); outlineTimer = setTimeout(refreshEditorOutline, 180); }
+function headingSlug(text) {
+  // Match the native renderer's heading-id convention: lowercase, drop
+  // punctuation but keep letters, digits, whitespace, hyphens and underscores,
+  // then turn every remaining whitespace character into a hyphen (runs are not
+  // collapsed, so "A & B" becomes "a--b" like the preview's own id).
+  return String(text).toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-');
+}
 function refreshEditorOutline() {
   if (!editor || !current.active) return;
   const headings = window.FolioEditor.headings(current.content);
+  const lineStarts = [0];
+  for (let index = 0; index < current.content.length; index++) if (current.content[index] === '\n') lineStarts.push(index + 1);
   $('outline-items').replaceChildren(); outlineEntries = []; outlineActiveIndex = -1;
-  const elements = [...$('preview').querySelectorAll('h1,h2,h3,h4,h5,h6')];
-  for (const [index, heading] of headings.entries()) {
-    const button = document.createElement('button'); button.className = 'outline-link'; button.textContent = heading.text;
-    button.dataset.level = heading.level; button.style.setProperty('--indent', `${(heading.level - 1) * 12}px`); button.tabIndex = index ? -1 : 0;
-    const id = `doc-${heading.text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, '').trim().replace(/\s+/g, '-') || index}`;
-    button.onclick = () => { editor.selectRange(heading.offset); setActiveOutline(index); elements[index]?.scrollIntoView({ block: 'center' }); };
-    $('outline-items').append(button); outlineEntries.push({ id, element: elements[index], button, offset: heading.offset });
+  const elements = editor.isSource() ? [] : [...$('preview').querySelectorAll('h1,h2,h3,h4,h5,h6')];
+  const seenIds = new Set();
+  let cursor = 0;
+  for (const heading of headings) {
+    let element = null;
+    while (cursor < elements.length) {
+      const candidate = elements[cursor];
+      const extension = candidate.closest('.extension-preview');
+      if (heading.raw && !extension) break;
+      cursor++;
+      if (!heading.raw && extension) continue;
+      if (extension) {
+        const pos = candidate.dataset?.sourcepos;
+        const offset = pos ? lineStarts[Math.max(0, Number.parseInt(pos, 10) - 1)] : undefined;
+        if (candidate.dataset.folioOutlineRevision !== String(outlineRevision) || offset !== heading.offset) continue;
+      }
+      if (Number(candidate.tagName.slice(1)) === heading.level) { element = candidate; break; }
+    }
+    const semantic = heading.semantic ?? heading.text.replace(/\$([^$\n]+)\$/g, '$1').replace(/[*_`~]/g, '');
+    const text = element && element.closest('.extension-preview') ? (element.textContent.trim() || semantic) : semantic;
+    let id = element?.closest('.extension-preview') ? element.id : '';
+    if (!id) {
+      const base = `doc-${headingSlug(text) || 'heading'}`;
+      id = base;
+      let suffix = 1;
+      while (seenIds.has(id)) id = `${base}-${suffix++}`;
+    }
+    seenIds.add(id);
+    const button = document.createElement('button'); button.className = 'outline-link'; button.textContent = text;
+    button.dataset.level = heading.level; button.style.setProperty('--indent', `${(heading.level - 1) * 12}px`); button.tabIndex = outlineEntries.length ? -1 : 0;
+    button.onclick = () => { editor.selectRange(heading.offset); setActiveOutline(outlineEntries.indexOf(entry)); element?.scrollIntoView({ block: 'center' }); };
+    const entry = { id, element, button, offset: heading.offset };
+    $('outline-items').append(button); outlineEntries.push(entry);
   }
-  $('outline-count').textContent = headings.length ? `${headings.length} ${headings.length === 1 ? 'section' : 'sections'}` : 'No headings';
-  if (!headings.length) { const empty = document.createElement('p'); empty.className = 'sidebar-empty'; empty.textContent = 'Add a heading to build the outline.'; $('outline-items').append(empty); }
+  $('outline-count').textContent = outlineEntries.length ? `${outlineEntries.length} ${outlineEntries.length === 1 ? 'section' : 'sections'}` : 'No headings';
+  if (!outlineEntries.length) { const empty = document.createElement('p'); empty.className = 'sidebar-empty'; empty.textContent = 'Add a heading to build the outline.'; $('outline-items').append(empty); }
   requestAnimationFrame(updateActiveOutline);
 }
 
@@ -104,29 +140,53 @@ async function mountUnifiedEditor() {
     limited = /data-preview-limit=/.test(html || ''); previewBlocks = result.blocks || [];
   } catch { limited = true; }
   if (current !== documentAtOpen || generation !== renderGeneration) return;
-  let extensionCache = null, extensionContent = null;
+  let extensionCache = null, extensionContent = null, extensionRemote = null;
   const codeHighlightCache = new Map();
   editorDocument = current; editorPath = current.path;
   fallbackCheckedContent = current.content;
   const editorOptions = {
     content: current.content, forceSource: limited, transitionLocked, richParent: $('preview'), sourceParent: $('source-editor'), scroller: $('reader-scroll'),
-    onChange(content) { if (current !== documentAtOpen) return; current.content = content; previewSnapshot = null; updateTitle(); scheduleStats(); scheduleEditorOutline(); },
+    onChange(content) { if (current !== documentAtOpen) return; outlineRevision++; current.content = content; previewSnapshot = null; updateTitle(); scheduleStats(); scheduleEditorOutline(); if (!$('find-bar').hidden) editor?.clearHighlight?.(); },
     onPresentation: editorPresentation, message: toast, loadKatex, remoteImages: () => remoteImages, themeRevision: () => diagramThemeRevision,
     revealSource: (from, to) => revealSourceForEdit(from, to),
     openLink(href) { const anchor = document.createElement('a'); anchor.setAttribute('href', href); followPreviewLink(anchor); },
     async renderExtension(source) {
-      if (extensionContent !== current.content) {
-        extensionContent = current.content;
-        extensionCache = invoke('render_markdown', { content: current.content, remoteImages: false });
+      const snapshot = current.content;
+      const revision = outlineRevision;
+      const allowedRemote = remoteImages === true;
+      if (extensionContent !== snapshot || extensionRemote !== allowedRemote) {
+        extensionContent = snapshot;
+        extensionRemote = allowedRemote;
+        extensionCache = invoke('render_markdown', { content: snapshot, remoteImages: allowedRemote });
       }
       const result = await extensionCache;
-      if (current !== documentAtOpen) return '';
+      if (current !== documentAtOpen || (remoteImages === true) !== allowedRemote) throw new Error('Extension render expired');
+      if (current.content !== snapshot) return editorOptions.renderExtension(source);
       const parsed = new DOMParser().parseFromString(typeof result === 'string' ? result : result.html || '', 'text/html');
-      const offset = current.content.indexOf(source), line = offset < 0 ? -1 : current.content.slice(0, offset).split('\n').length;
+      const offset = snapshot.indexOf(source), line = offset < 0 ? -1 : snapshot.slice(0, offset).split('\n').length;
       const match = [...parsed.body.querySelectorAll('[data-sourcepos]')].find(node => node.dataset.sourcepos.startsWith(`${line}:`));
-      const html = match?.outerHTML || (/^---\n/.test(source) ? '' : null);
-      if (html === null) throw new Error('No safe projection for this extension');
-      return html;
+      if (match?.matches('h1,h2,h3,h4,h5,h6')) match.dataset.folioOutlineRevision = String(revision);
+      let html = match?.outerHTML;
+      if (html === undefined && /^\s*</.test(source) && !/^---\n/.test(source)) {
+        // Raw author HTML blocks are emitted without a data-sourcepos wrapper.
+        // Render exactly this block through the native sanitizer instead of
+        // trusting any author-provided marker; remote images follow the user's
+        // explicit preference and stay blocked otherwise.
+        try {
+          const fallback = await invoke('render_markdown', { content: source, remoteImages: allowedRemote });
+          if (current !== documentAtOpen || (remoteImages === true) !== allowedRemote) throw new Error('Extension render expired');
+          if (current.content !== snapshot) return editorOptions.renderExtension(source);
+          const fallbackParsed = new DOMParser().parseFromString(typeof fallback === 'string' ? fallback : fallback.html || '', 'text/html');
+          html = fallbackParsed.body.innerHTML;
+        } catch { html = undefined; }
+      }
+      const output = html ?? (/^---\n/.test(source) ? '' : null);
+      if (output === null) throw new Error('No safe projection for this extension');
+      // Raw projections mount asynchronously; refresh once the caller has
+      // inserted the returned HTML so extension headings take their place in
+      // the outline with the same source identity as the preview.
+      setTimeout(scheduleEditorOutline, 0);
+      return output;
     },
     async renderDiagram(source, signal) {
       if (mermaidSourceTooLarge(source)) return { ok: false };

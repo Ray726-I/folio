@@ -74,6 +74,8 @@ function showDocument() {
   $('welcome').hidden = true; $('document-view').hidden = false; $('statusbar').hidden = false;
   $('home').disabled = false;
   document.querySelectorAll('.document-control').forEach(control => { control.hidden = !current.active; });
+  setFormatToolbarVisible(formatToolbarVisible, false);
+  if (!current.active) editorPresentation(false, false, false);
   resetHistory(); $('disk-banner').hidden = true; updateTitle(); updateStats(); setOutline(outlineVisible);
   $('folder-empty').hidden = current.active || !activeFolder;
   renderFolderEntries();
@@ -89,6 +91,7 @@ function showWelcome() {
   $('file-browser').hidden = true; $('folder-divider').hidden = true; $('folder-toggle').hidden = true;
   document.body.classList.remove('focus-mode');
   document.querySelectorAll('.document-control').forEach(control => { control.hidden = true; });
+  setFormatToolbarVisible(formatToolbarVisible, false); editorPresentation(false, false, false);
   updateTitle(); updateStats();
   previewLimitedKind = null; syncSourceFallback();
 }
@@ -150,7 +153,31 @@ async function setMode(next) {
   if (!$('find-bar').hidden) updateFind();
 }
 function requestMode(next) { return enqueue(() => setMode(next)); }
-function zoomText(delta, reset = false) { fontSize = reset ? 19 : Math.min(40, Math.max(12, fontSize + delta)); root.style.setProperty('--text-size', `${fontSize}px`); preferences.set('fontSize', fontSize); status(`Document text: ${fontSize} px`); }
+function readerScrollAnchor() {
+  if (!current.active) return null;
+  const scroller = $('reader-scroll');
+  if (!scroller || scroller.hidden) return null;
+  const top = scroller.getBoundingClientRect().top + 24;
+  if (editor?.isSource?.()) {
+    const line = [...$('source-editor').querySelectorAll('.cm-line')]
+      .find(element => element.getBoundingClientRect().bottom > top);
+    return line || $('source-editor').querySelector('.cm-content');
+  }
+  const blocks = [...$('preview').querySelectorAll('.ProseMirror > *')];
+  return blocks.find(element => element.getBoundingClientRect().bottom > top) || blocks[0] || null;
+}
+function zoomText(delta, reset = false) {
+  // Reflow from a font-size change moves every later line. Keep the block or
+  // source line at the top of the reader anchored, so zooming text does not
+  // throw the reader thousands of pixels away.
+  const anchor = readerScrollAnchor();
+  const previousTop = anchor?.getBoundingClientRect().top;
+  fontSize = reset ? 19 : Math.min(40, Math.max(12, fontSize + delta));
+  root.style.setProperty('--text-size', `${fontSize}px`);
+  preferences.set('fontSize', fontSize);
+  status(`Document text: ${fontSize} px`);
+  if (anchor && previousTop !== undefined) $('reader-scroll').scrollTop += anchor.getBoundingClientRect().top - previousTop;
+}
 function zoomWindow(delta, reset = false) { windowZoom = reset ? 1 : Math.min(2, Math.max(.6, Math.round((windowZoom + delta) * 10) / 10)); $('zoom-reset').textContent = `${Math.round(windowZoom * 100)}%`; preferences.set('windowZoom', windowZoom); invoke('set_window_zoom', { scale: windowZoom }).catch(toast); }
 function applyReadingFont(font = readingFont, persist = true) {
   readingFont = font === 'sans' ? 'sans' : 'serif';
@@ -230,6 +257,7 @@ function pickerHint(base) {
   $('open-selection-hint').textContent = base + suffix;
 }
 async function browseTo(path) {
+  const restoreFocus = $('open-items').contains(document.activeElement);
   pickerListing = await invoke('browse_directory', { path }); pickerSelection = null;
   $('open-path').value = pickerListing.path;
   $('open-parent').disabled = !pickerListing.parent;
@@ -237,18 +265,42 @@ async function browseTo(path) {
   $('open-items').replaceChildren();
   for (const entry of pickerListing.entries) {
     const row = document.createElement('button'); row.className = 'file-dialog-item'; row.setAttribute('role', 'option'); row.setAttribute('aria-selected', 'false');
+    row.__folioPickerEntry = entry;
     row.append(icon(entry.directory ? 'open' : 'file'));
     const label = document.createElement('span'); label.textContent = entry.name; row.append(label);
-    row.onclick = () => {
-      pickerSelection = entry;
-      $('open-items').querySelectorAll('.file-dialog-item').forEach(item => item.setAttribute('aria-selected', String(item === row)));
-      pickerHint(entry.directory ? 'Open selected folder' : 'Open selected Markdown file');
-    };
+    row.onclick = () => selectPickerRow(row);
     row.ondblclick = () => entry.directory ? browseTo(entry.path).catch(toast) : confirmOpenPicker();
     $('open-items').append(row);
   }
   if (!pickerListing.entries.length) { const empty = document.createElement('p'); empty.className = 'empty-results'; empty.textContent = 'No Markdown files or folders here'; $('open-items').append(empty); }
+  if (restoreFocus) $('open-items').querySelector('.file-dialog-item')?.focus();
 }
+function selectPickerRow(row) {
+  const entry = row?.__folioPickerEntry;
+  if (!entry) return;
+  pickerSelection = entry;
+  $('open-items').querySelectorAll('.file-dialog-item').forEach(item => item.setAttribute('aria-selected', String(item === row)));
+  pickerHint(entry.directory ? 'Open selected folder' : 'Open selected Markdown file');
+}
+$('open-items').addEventListener('keydown', event => {
+  const rows = [...$('open-items').querySelectorAll('.file-dialog-item')];
+  if (!rows.length) return;
+  const currentRow = document.activeElement?.closest?.('.file-dialog-item');
+  const index = rows.indexOf(currentRow);
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Home' || event.key === 'End') {
+    event.preventDefault();
+    const next = event.key === 'Home' ? rows[0]
+      : event.key === 'End' ? rows[rows.length - 1]
+      : index < 0 ? (event.key === 'ArrowUp' ? rows[rows.length - 1] : rows[0])
+      : rows[(index + (event.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length];
+    selectPickerRow(next); next.focus(); next.scrollIntoView({ block: 'nearest' });
+  } else if (event.key === 'Enter' && currentRow) {
+    event.preventDefault();
+    selectPickerRow(currentRow);
+    if (currentRow.__folioPickerEntry?.directory) browseTo(currentRow.__folioPickerEntry.path).catch(toast);
+    else confirmOpenPicker();
+  }
+});
 async function openChooser() {
   try {
     const initial = activeFolder?.path || (current.path ? dirname(current.path) : null);
@@ -324,6 +376,7 @@ function renderFolderEntries() {
   setFolderVisible(folderVisible);
   const list = $('folder-items');
   const scrollTop = $('folder-items').scrollTop;
+  const previousFocus = document.activeElement?.closest?.('.folder-entry')?.dataset.path || null;
   list.replaceChildren();
   if (!activeFolder) return;
   $('folder-name').textContent = activeFolder.name || activeFolder.path;
@@ -334,6 +387,7 @@ function renderFolderEntries() {
     button.className = `folder-entry${entry.directory ? ' directory' : ''}${samePath(current.path, entry.path) ? ' selected' : ''}`;
     button.style.setProperty('--depth', entry.depth);
     button.title = entry.path;
+    button.dataset.path = entry.path;
     if (entry.directory) {
       const expanded = expandedFolders.has(pathKey(entry.path));
       button.setAttribute('aria-expanded', String(expanded));
@@ -356,6 +410,12 @@ function renderFolderEntries() {
     empty.append(title, hint); list.append(empty);
   }
   $('folder-items').scrollTop = scrollTop;
+  // Expansion re-renders the tree from scratch. Restore focus to the same
+  // entry so keyboard users are not dropped back onto <body> after Enter.
+  if (previousFocus) {
+    const target = [...list.querySelectorAll('.folder-entry')].find(button => button.dataset.path === previousFocus);
+    if (target) { target.focus({ preventScroll: true }); target.scrollIntoView({ block: 'nearest' }); }
+  }
 }
 async function openFolderPath(path, confirmed = false) {
   if (!confirmed && !(await allowDiscard())) return false;
@@ -531,24 +591,53 @@ $('command-search').addEventListener('keydown', event => {
 });
 for (const id of ['command-dialog']) $(id).addEventListener('click', event => { const bounds = $(id).getBoundingClientRect(); if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) $(id).close(); });
 
-let matches = [], findIndex = -1;
+let matches = [], findIndex = -1, findSource = null;
 function openFind() { if (!current.active) return; $('find-bar').hidden = false; $('find-input').focus(); $('find-input').select(); updateFind(); }
-function clearHighlights() {}
-function updateFind() {
-  matches = []; findIndex = -1;
-  const query = $('find-input').value;
-  if (!query) { $('find-result').textContent = ''; return; }
+function clearHighlights() { editor?.clearHighlight?.(); }
+function findMatches(query) {
+  const result = [];
+  if (!query) return result;
   const search = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu'); let match;
-  while ((match = search.exec(current.content)) && matches.length < 2000) matches.push({ from: match.index, to: match.index + match[0].length });
-  if (matches.length) nextFind(1); else $('find-result').textContent = 'No matches';
+  while ((match = search.exec(current.content)) && result.length < 2000) result.push({ from: match.index, to: match.index + match[0].length });
+  return result;
+}
+function updateFind() {
+  const query = $('find-input').value;
+  matches = findMatches(query); findIndex = -1; findSource = current.content;
+  if (!query) { $('find-result').textContent = ''; clearHighlights(); return; }
+  if (matches.length) nextFind(1);
+  else { $('find-result').textContent = 'No matches'; clearHighlights(); }
+}
+function refreshFindOffsets(direction) {
+  // Edits can shift every match. Recompute from the live content before the
+  // next jump instead of selecting through stale byte offsets, then resume
+  // from the caret so a prefix edit lands on the nearest real hit.
+  const anchor = Math.max(0, editor?.getSelection()?.head ?? 0);
+  matches = findMatches($('find-input').value); findSource = current.content;
+  if (direction > 0) {
+    const first = matches.findIndex(match => match.from >= anchor);
+    findIndex = first < 0 ? -1 : first - 1;
+  } else {
+    let last = -1;
+    matches.forEach((match, index) => { if (match.to <= anchor) last = index; });
+    findIndex = last < 0 ? 0 : last + 1;
+  }
 }
 function nextFind(direction) {
-  if (!matches.length) return;
+  const query = $('find-input').value;
+  if (!query) { matches = []; findIndex = -1; $('find-result').textContent = ''; clearHighlights(); return; }
+  if (findSource !== current.content) refreshFindOffsets(direction);
+  if (!matches.length) { findIndex = -1; $('find-result').textContent = 'No matches'; clearHighlights(); return; }
   findIndex = (findIndex + direction + matches.length) % matches.length;
-  editor?.selectRange(matches[findIndex].from, matches[findIndex].to, false);
+  const match = matches[findIndex];
+  // Focus stays in the find field: the editor selection is revealed without
+  // stealing the caret, and a mirrored highlight keeps the hit visible while
+  // the input owns focus.
+  editor?.selectRange(match.from, match.to, false);
+  editor?.highlightRange?.(match.from, match.to);
   $('find-result').textContent = `${findIndex + 1} / ${matches.length}`;
 }
-function closeFind() { $('find-bar').hidden = true; editor?.focus(); }
+function closeFind() { $('find-bar').hidden = true; clearHighlights(); editor?.focus(); }
 function toggleFocus() { document.body.classList.toggle('focus-mode'); }
 function setDocumentWidth(full, persist = true) {
   const anchor = current.active ? previewElementForBlock(previewBlockAtViewportTop()) : null;
@@ -569,7 +658,7 @@ function setDocumentWidth(full, persist = true) {
 function toggleDocumentWidth() { setDocumentWidth(!wideLayout); }
 function setFormatToolbarVisible(visible, persist = true) {
   formatToolbarVisible = visible !== false;
-  $('format-tools').hidden = !formatToolbarVisible;
+  $('format-tools').hidden = !formatToolbarVisible || !current.active;
   const button = $('format-toggle');
   button.setAttribute('aria-pressed', String(formatToolbarVisible));
   button.setAttribute('aria-expanded', String(formatToolbarVisible));
@@ -693,7 +782,8 @@ document.addEventListener('keydown', event => {
   else if (event.code === 'Minus' || key === '-' || key === '_') { event.preventDefault(); event.shiftKey ? zoomText(-1) : zoomWindow(-.1); }
   else if (key === '0') { event.preventDefault(); event.shiftKey ? zoomText(0, true) : zoomWindow(0, true); }
   else if (key === 'o') { event.preventDefault(); openEntry(); }
-  else if (key === 'b' && activeFolder) { event.preventDefault(); setFolderVisible(!folderVisible); }
+  else if (key === 'b' && editor && event.target.closest?.('#source-editor .cm-content')) { event.preventDefault(); editor.command('bold'); }
+  else if (key === 'b' && activeFolder && !event.target.closest?.('#preview .ProseMirror')) { event.preventDefault(); setFolderVisible(!folderVisible); }
   else if (key === 'n') { event.preventDefault(); newDocument(); }
   else if (key === 's') { event.preventDefault(); requestSave(event.shiftKey); }
   else if (key === 'e') { event.preventDefault(); enqueue(() => setMode(mode === 'read' ? 'edit' : 'read')); }

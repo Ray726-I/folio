@@ -31,6 +31,13 @@ let errors = [];
               const items = [...args.content.matchAll(/^- \[([ x])\] (.*)$/gm)];
               return { html: `<h1 id="heading-1">A quiet place for your words</h1><p>Folio opens individual Markdown files.</p><h2 id="heading-2">Plain text, beautifully rendered</h2><ul>${items.map((item, index) => `<li><input type="checkbox" data-task-index="${index}" ${item[1] === 'x' ? 'checked' : ''}> ${escape(item[2])}</li>`).join('')}</ul>`, blocks: [] };
             }
+            if (!args.content.includes('\n\n')) {
+              // Single raw block (table preview fallback, code highlight and
+              // image probes): the real renderer returns the block element it
+              // parsed, never a bare document heading. Keep the mock honest so
+              // async projections cannot inject stray headings into the page.
+              return { html: `<div>${escape(args.content)}</div>`, blocks: [] };
+            }
             const parts = args.content.split(/\n\n/);
             const heading = parts[0] || '# Opened';
             const body = parts[1] || 'Text';

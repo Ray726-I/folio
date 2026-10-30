@@ -2,6 +2,15 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 require('esbuild').buildSync({ entryPoints: ['ui/editor/model.js'], bundle: true, platform: 'node', format: 'cjs', outfile: 'target/editor-model.cjs', logLevel: 'silent' });
 const { parseSource, updateSource, schema, sourceToRich, richToSource } = require(path.resolve('target/editor-model.cjs'));
+for (const source of ['hello:smile:\n', '==one=two==\n', '++one+two++\n']) {
+  const parsed = parseSource(source);
+  assert.equal(parsed.doc.firstChild.type.name, 'raw_block', `native extension preserved: ${source}`);
+  assert.equal(updateSource(parsed.doc, parsed).source, source);
+}
+for (const source of ['C++ and C++\n', '12:30: lunch\n', 'x == y\n']) {
+  assert.equal(parseSource(source).doc.firstChild.type.name, 'paragraph', `ordinary prose remains editable: ${source}`);
+}
+assert.equal(parseSource('$$$\nbody\n$$\n').doc.firstChild.type.name, 'paragraph', 'triple dollar text is not a display-math fence');
 const original = '---\ntitle: preserved\n---\n\n# Heading\n\nText **bold** café 😀.\n\n| A | B |\n|:--|--:|\n| **one** | $x^2$ |\n\n- [ ] Task\n\n<!-- exact  spaces -->\n';
 const model = parseSource(original);
 assert.equal(updateSource(model.doc, model).source, original);
@@ -78,6 +87,26 @@ for (const currencySource of ['$5-$\n', 'I paid $5-$x for it\n']) {
 for (const mathSource of ['$2+2$\n', '$5$']) {
   const digitMathModel = parseSource(mathSource);
   assert.equal(digitMathModel.doc.firstChild.firstChild.type.name, 'math_inline', `digit math still parses: ${mathSource}`);
+}
+
+// Plain prose that merely resembles extension delimiters must remain editable.
+// Only balanced, genuine extension syntax may become a raw projection block.
+for (const proseSource of [
+  'We write C++ and compare x == y.\n',
+  'Meeting at 12:30: room 3\n',
+  'Setext heading\n=====\n'
+]) {
+  const proseModel = parseSource(proseSource);
+  assert.notEqual(proseModel.doc.firstChild.type.name, 'raw_block', `plain prose must stay editable: ${proseSource.trim()}`);
+  assert.equal(updateSource(proseModel.doc, proseModel).source, proseSource);
+}
+assert.equal(parseSource('Setext heading\n=====\n').doc.firstChild.type.name, 'heading',
+  'a genuine setext heading must parse as a heading, not an extension block');
+for (const extensionSource of [':smile: hi\n', '==highlighted==\n', '++inserted++\n', '[[wiki link]]\n']) {
+  const extensionModel = parseSource(extensionSource);
+  assert.equal(extensionModel.doc.firstChild.type.name, 'raw_block',
+    `balanced extension syntax still projects natively: ${extensionSource.trim()}`);
+  assert.equal(updateSource(extensionModel.doc, extensionModel).source, extensionSource);
 }
 
 const empty = parseSource(''); assert.equal(updateSource(empty.doc, empty).source, '');

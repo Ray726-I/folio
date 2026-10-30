@@ -22,6 +22,10 @@ Press <kbd>Use</kbd> to run and stop <samp>here.</samp>[^1]
 ## Second heading
 
 Plain closing paragraph.
+
+Press <kbd>Ctrl</kbd>+<kbd>C</kbd> to copy the <var>value</var>.
+
+Open [<kbd>here</kbd>](https://example.com) for docs.
 `;
 
 async function geometry(page) {
@@ -86,6 +90,59 @@ async function geometry(page) {
     assert.equal(paragraphSelection, 'A bold paragraph with emphasis.', 'paragraph selection covers rendered text only');
     await page.evaluate(() => window.getSelection().removeAllRanges());
 
+    // 2b. Inline author HTML renders as real elements, not literal tags.
+    // The footnote-free paragraph below stays a regular paragraph whose
+    // <kbd>/<var> pairs become single raw_inline atoms with real content.
+    assert.equal(await page.locator('#preview .ProseMirror > p .html-inline kbd').count(), 3, 'kbd pairs render as real elements');
+    assert.equal(await page.locator('#preview .ProseMirror > p .html-inline var').count(), 1, 'var pairs render as real elements');
+    assert.equal(await page.locator('#preview .source-inline').count(), 0, 'no literal-tag code chips in reading view');
+    // A Markdown link around inline HTML stays a working link: the pair
+    // renders wrapped in an anchor that reveals the exact source on click.
+    assert.equal(await page.locator('#preview .ProseMirror > p .html-inline > a[href="https://example.com"] kbd').count(), 1, 'link-wrapped pair renders a real anchor');
+    await page.locator('#preview .ProseMirror > p .html-inline > a').first().click();
+    await page.locator('#source-editor .cm-content').waitFor({ state: 'visible' });
+    assert.equal(await page.evaluate(() => editor.isSource()), true, 'link-wrapped pair click reveals source mode');
+    const linkRevealed = await page.evaluate(() => {
+      const selection = editor.getSelection();
+      return editor.getText().slice(Math.min(selection.anchor, selection.head), Math.max(selection.anchor, selection.head));
+    });
+    assert.ok(linkRevealed.includes('<kbd>here</kbd>'), `link click reveals the exact pair source, got ${JSON.stringify(linkRevealed)}`);
+    await page.locator('#show-markdown').click();
+    await page.waitForFunction(() => !editor.isSource());
+    await page.waitForTimeout(400);
+    // A mouse drag across the rendered keys selects text, and Control+C
+    // serves that rendered text with no markup leaking into the clipboard.
+    const keysGeometry = await page.evaluate(() => {
+      const paragraph = [...document.querySelectorAll('#preview .ProseMirror > p')].find(node => node.textContent.includes('to copy the'));
+      const range = document.createRange();
+      range.setStart(paragraph.firstChild, 0); range.setEnd(paragraph.firstChild, 0);
+      const start = range.getBoundingClientRect();
+      const keys = [...paragraph.querySelectorAll('kbd')].pop().getBoundingClientRect();
+      return { from: { x: start.left, y: (start.top + start.bottom) / 2 }, to: { x: keys.right, y: (keys.top + keys.bottom) / 2 } };
+    });
+    await page.mouse.move(keysGeometry.from.x, keysGeometry.from.y);
+    await page.mouse.down();
+    await page.mouse.move(keysGeometry.to.x, keysGeometry.to.y, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+    const keysSelection = await page.evaluate(() => window.getSelection().toString());
+    assert.ok(keysSelection.includes('Press Ctrl+C'), `inline drag selects rendered keys, got ${JSON.stringify(keysSelection.slice(0, 60))}`);
+    assert.ok(!keysSelection.includes('<kbd>') && !keysSelection.includes('</'), 'inline selection carries no literal tags');
+    await page.evaluate(() => {
+      window.copyProbe = [];
+      for (const type of ['copy', 'cut']) document.addEventListener(type, event => {
+        window.copyProbe.push({ type, text: event.clipboardData ? event.clipboardData.getData('text/plain') : null });
+      });
+    });
+    await page.keyboard.press('Control+c');
+    const keysCopy = await page.evaluate(() => window.copyProbe.at(-1));
+    assert.equal(keysCopy?.type, 'copy', 'Control+C fires a native copy event over inline HTML');
+    assert.ok(keysCopy.text.includes('Press Ctrl+C'), `Control+C serves rendered keys, got ${JSON.stringify(keysCopy.text?.slice(0, 60))}`);
+    assert.ok(!keysCopy.text.includes('<kbd>') && !keysCopy.text.includes('</'), 'native copy carries no literal tags');
+    assert.equal(await page.evaluate(() => current.content), source, 'copy over inline HTML never mutates the document');
+    await page.evaluate(() => window.getSelection().removeAllRanges());
+    await page.waitForTimeout(650);
+
     // 3. Cross-boundary selections span rendered text in both directions.
     // (Gestures sharing an endpoint are spaced out: ProseMirror treats two
     // same-spot presses within 500 ms as a double-click word selection.)
@@ -101,6 +158,23 @@ async function geometry(page) {
     assert.ok(forward.includes('Press Use to run and stop here.'), `ordinary-to-projection drag reaches rendered projection text, got ${JSON.stringify(forward.slice(-60))}`);
     assert.ok(!forward.includes('<kbd>') && !forward.includes('[^1]:'), 'cross selection carries no Markdown source');
     assert.equal(await page.evaluate(() => current.content), source, 'reading selection never mutates the document');
+
+    // 3a. The highlight hugs text: the last line ends mid-line (not snapped
+    // to the block edge, which is what an atom-boundary rewrite paints) and
+    // no selection fragment covers the margin gap between the blocks.
+    const shape = await page.evaluate(() => {
+      const sel = window.getSelection();
+      const rects = [...sel.getRangeAt(0).getClientRects()].map(box => ({ top: box.top, bottom: box.bottom, right: box.right }));
+      const paragraph = [...document.querySelectorAll('#preview .ProseMirror > p')].find(node => node.textContent.startsWith('Before'));
+      const block = document.querySelector('#preview .extension-block');
+      const paraBox = paragraph.getBoundingClientRect(), blockBox = block.getBoundingClientRect();
+      return { rects, paraBottom: paraBox.bottom, blockTop: blockBox.top, blockRight: blockBox.right };
+    });
+    assert.ok(shape.rects.length >= 2, `cross selection spans lines, got ${shape.rects.length} fragment(s)`);
+    const lastFragment = shape.rects[shape.rects.length - 1];
+    assert.ok(lastFragment.right < shape.blockRight - 30, `last highlight line hugs the text end instead of the block edge, got right=${Math.round(lastFragment.right)} vs block=${Math.round(shape.blockRight)}`);
+    assert.ok(shape.rects.every(box => box.bottom <= shape.paraBottom + 4 || box.top >= shape.blockTop - 4),
+      `no highlight fragment covers the gap between blocks ${JSON.stringify(shape.rects.map(box => Math.round(box.top) + '-' + Math.round(box.bottom)))}`);
 
     // 3b. The browser's own clipboard path must serve the rendered range:
     // a real drag is followed by keyboard modifier-only and copy chords. A
@@ -219,7 +293,7 @@ async function geometry(page) {
     assert.equal(await page.evaluate(() => document.querySelector('.extension-edit').disabled), false, 'edit action returns after unlock');
 
     assert.deepEqual(session.errors, []);
-    console.log('PASS: reading view shows no Markdown source disclosure, cross-boundary selection/native copy cover rendered text in both directions, modifier/copy chords preserve the guarded range, and source editing stays one deliberate action away.');
+    console.log('PASS: reading view shows no Markdown source disclosure, inline HTML renders as real elements, cross-boundary selection/native copy cover rendered text in both directions and under lock, and source editing stays one deliberate action away.');
   } catch (error) {
     console.error('PAGE ERRORS:', session.errors);
     await session.page.screenshot({ path: '/tmp/opencode/folio-reading-cleanup-failure.png', fullPage: true }).catch(() => {});

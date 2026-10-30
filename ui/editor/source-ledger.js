@@ -521,13 +521,34 @@ export function buildLedger(source, doc, options = {}) {
         }
         if (ok && got !== child.text.length) ok = false;
       } else {
-        const leaf = leaves[index];
-        const expected = atomMatches(child, leaf);
-        if (!expected) { ok = false; break; }
+        let leaf = leaves[index], consumed = 1;
+        if (!atomMatches(child, leaf) && child.type.name === 'raw_inline') {
+          // A merged pair atom (e.g. `<kbd>Ctrl</kbd>`) spans several leaves
+          // (open tag, text, close tag). Consume consecutive leaves while
+          // their exact source slices concatenate to the atom's verbatim
+          // source. Anything else fails closed below, as before.
+          const wanted = String(child.attrs.source ?? '');
+          let acc = '';
+          while (index + consumed - 1 < leaves.length) {
+            const candidate = leaves[index + consumed - 1];
+            const slice = source.slice(candidate.sourceFrom, candidate.sourceTo);
+            if ((acc + slice).length > wanted.length || !wanted.startsWith(acc + slice)) break;
+            acc += slice;
+            if (acc === wanted) break;
+            consumed++;
+          }
+          if (acc === wanted && consumed > 1 && leaf?.kind === 'raw_inline' && leaves[index + consumed - 1]?.kind === 'raw_inline') {
+            const last = leaves[index + consumed - 1];
+            leaf = { kind: 'raw_inline', text: wanted, source: wanted, sourceFrom: leaf.sourceFrom, sourceTo: last.sourceTo, marks: leaf.marks, marksKey: leaf.marksKey };
+          } else {
+            consumed = 0;
+          }
+        }
+        if (!atomMatches(child, leaf)) { ok = false; break; }
         const atomOwner = ctx.addOwner(child.type.name, child, pmFrom, leaf.sourceFrom, leaf.sourceTo);
         ctx.addRun(atomOwner, leaf, pmFrom, pmTo);
         mapped++;
-        index++;
+        index += consumed;
       }
     }
 

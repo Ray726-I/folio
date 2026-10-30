@@ -12,11 +12,69 @@ function setScrollInstant(scroller, top) {
   scroller.scrollTop = top;
   scroller.style.scrollBehavior = behavior;
 }
+const REVEAL_MARGIN = 24;
+function revealScrollerBounds(scroller, bounds) {
+  if (!scroller || !bounds) return;
+  const rect = scroller.getBoundingClientRect();
+  const min = rect.top + REVEAL_MARGIN, max = rect.bottom - REVEAL_MARGIN;
+  let delta = 0;
+  if (bounds.top < min) delta = bounds.top - min;
+  else if (bounds.bottom > max) delta = bounds.bottom - max;
+  // Match the source presenter: bypass the shell's smooth scrolling so a find
+  // jump lands immediately instead of leaving the selection thousands of
+  // pixels behind.
+  if (delta) setScrollInstant(scroller, scroller.scrollTop + delta);
+}
+function selectionBounds(view) {
+  if (!view) return null;
+  const { anchor, head } = view.state.selection;
+  try {
+    const anchorRect = view.coordsAtPos(anchor), headRect = view.coordsAtPos(head);
+    if (!anchorRect || !headRect) return null;
+    return { top: Math.min(anchorRect.top, headRect.top), bottom: Math.max(anchorRect.bottom, headRect.bottom) };
+  } catch { return null; }
+}
 export function headings(content) {
   const lines = [0]; for (let i = 0; i < content.length; i++) if (content[i] === '\n') lines.push(i + 1);
   const tokens = tokenizer.parse(content, {}), result = [];
-  tokens.forEach((token, index) => { if (token.type === 'heading_open') result.push({ level: +token.tag.slice(1), text: tokens[index + 1]?.content || '', offset: lines[token.map?.[0]] || 0 }); });
+  tokens.forEach((token, index) => {
+    if (token.type !== 'heading_open') return;
+    const inline = tokens[index + 1];
+    const semantic = (inline?.children || []).map(child => {
+      if (['text', 'code_inline', 'math_inline', 'image'].includes(child.type)) return child.content;
+      if (child.type === 'softbreak' || child.type === 'hardbreak') return ' ';
+      return '';
+    }).join('');
+    result.push({ level: +token.tag.slice(1), text: inline?.content || '', semantic, offset: lines[token.map?.[0]] || 0 });
+  });
+  // Extension syntax (shortcodes, wikilinks, footnotes...) falls back to a raw
+  // block, but a heading that starts that block is still a real rendered
+  // heading. Keep it in the outline so headings after it are not misdirected
+  // to the wrong preview element.
+  tokens.forEach(token => {
+    if (token.type !== 'raw_block' || !token.map) return;
+    const offset = lines[token.map[0]] || 0;
+    const end = lines[token.map[1]] ?? content.length;
+    const heading = headingFromRawBlock(content.slice(offset, end));
+    if (heading) result.push({ ...heading, offset, raw: true });
+  });
+  result.sort((a, b) => a.offset - b.offset);
   return result;
+}
+function headingFromRawBlock(raw) {
+  const lines = String(raw || '').split(/\r?\n/);
+  if (!lines.length) return null;
+  // Blockquote and list markers can prefix a heading inside an extension block.
+  const prefix = /^(?:[ \t]*>[ \t]?)*[ \t]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)?/;
+  const first = lines[0].replace(prefix, '');
+  // Author HTML blocks keep their headings in the projection, not in the
+  // tokenizer fallback; never invent an ATX/setext heading from markup.
+  if (first.trimStart().startsWith('<')) return null;
+  const atx = /^(#{1,6})[ \t]+(.*?)(?:[ \t]+#+[ \t]*)?$/.exec(first);
+  if (atx) return { level: atx[1].length, text: atx[2].trim() };
+  const underline = lines[1] && /^[ \t]*(=+|-+)[ \t]*$/.exec(lines[1]);
+  if (underline && first.trim()) return { level: underline[1][0] === '=' ? 1 : 2, text: first.trim() };
+  return null;
 }
 export function create(options) {
   let content = options.content, locked = false, transitionLocked = Boolean(options.transitionLocked), showMarkdown = false, sourceEditor = null, richEditor = null;
@@ -150,6 +208,46 @@ export function create(options) {
     forceSource = Boolean(entry.fallback) || entry.content.length > MAX_RICH_LENGTH;
     sync(entry.content, entry.selection, true); presentation(showMarkdown, false); notify(); return true;
   }
+  // Source-only fallback documents can still accept formatting Markdown. The
+  // rich engine is intentionally not mounted for them, so apply the same
+  // inline syntax directly to the CodeMirror buffer.
+  function sourceCommand(name) {
+    const view = sourceEditor?.view;
+    if (!view || isLocked()) return false;
+    const range = view.state.selection.main;
+    const from = Math.min(range.from, range.to), to = Math.max(range.from, range.to);
+    const selected = view.state.doc.sliceString(from, to);
+    const replace = (insert, anchor, head = anchor) => {
+      view.dispatch({ changes: { from, to, insert }, selection: { anchor: from + anchor, head: from + head }, userEvent: 'input' });
+      view.focus(); return true;
+    };
+    const wrap = (open, close = open) => replace(open + selected + close, open.length, open.length + selected.length);
+    if (name === 'bold') return wrap('**');
+    if (name === 'italic') return wrap('*');
+    if (name === 'code') return wrap('`');
+    if (name === 'strike') return wrap('~~');
+    if (name === 'math') return selected ? wrap('$') : replace('$x$', 1, 2);
+    const destinationText = selected && !/\s/.test(selected) && !/[()]/.test(selected)
+      && /^(?:[a-z][a-z\d+.-]*:\S+|\/\/\S+|\/{1,2}\S*|\.{1,2}\/\S+|[\w.-]+\/[\w./-]*)$/i.test(selected);
+    if (name === 'link') {
+      if (destinationText) return replace(`[${selected}](${selected})`, selected.length + 3, selected.length * 2 + 3);
+      if (selected) return replace(`[${selected}](https://example.com)`, selected.length + 3, selected.length + 22);
+      return replace('[text](https://example.com)', 1, 5);
+    }
+    if (name === 'image') {
+      if (destinationText) return replace(`![image](${selected})`, 2, 7);
+      if (selected) return replace(`![${selected}](image.png)`, selected.length + 4, selected.length + 13);
+      return replace('![alt](image.png)', 2, 5);
+    }
+    const prefix = name === 'heading' ? '## ' : name === 'bullet' ? '- ' : name === 'numbered' ? '1. ' : name === 'quote' ? '> ' : null;
+    if (!prefix) return false;
+    const lineFrom = view.state.doc.lineAt(from).from;
+    const lineTo = view.state.doc.lineAt(to).to;
+    const lines = view.state.doc.sliceString(lineFrom, lineTo).split('\n');
+    const insert = lines.map(line => prefix + line).join('\n');
+    view.dispatch({ changes: { from: lineFrom, to: lineTo, insert }, selection: { anchor: lineFrom + insert.length }, userEvent: 'input' });
+    view.focus(); return true;
+  }
   presentation(false);
   return {
     getText: () => content,
@@ -179,12 +277,30 @@ export function create(options) {
     selectRange(anchor, head = anchor, focus = true) {
       if (showMarkdown || forceSource) sourceOrigin = true;
       groupTime = 0;
-      sync(content, { anchor, head });
+      // Selection requests carry exact source offsets. Keep them as the rich
+      // bookmark so formatted matches (including their Markdown delimiters)
+      // survive projection normalization and presentation switches.
+      sync(content, { anchor, head }, true);
       if (showMarkdown || forceSource) sourceEditor?.revealSelection();
+      else revealScrollerBounds(options.scroller, selectionBounds(richEditor?.view));
       if (focus) this.focus();
     },
     undo,
-    command(name) { if (isLocked()) return; if (showMarkdown || forceSource) presentation(false); groupTime = 0; richEditor.command(name); groupTime = 0; },
+    command(name) {
+      if (isLocked()) return;
+      groupTime = 0;
+      // A source-forced document never mounts the rich engine. Apply the
+      // Markdown command to the source buffer instead of dereferencing null.
+      if (forceSource) { sourceCommand(name); groupTime = 0; return; }
+      if (showMarkdown) presentation(false);
+      groupTime = 0;
+      richEditor?.command(name);
+      groupTime = 0;
+    },
+    highlightRange(anchor, head = anchor) {
+      if (!showMarkdown && !forceSource) richEditor?.setSearchHighlight(anchor, head);
+    },
+    clearHighlight() { richEditor?.clearSearchHighlight?.(); },
     focus() { (showMarkdown || forceSource ? sourceEditor : richEditor)?.focus(); },
     refreshMedia(revoke = false) { mediaEpoch++; imageCache.clear(); cachedImageBytes = 0; if (revoke) consent.clear(); richEditor?.refreshMedia(); },
     destroy() { disposed = true; mediaEpoch++; options.sourceParent?.removeEventListener('mousedown', noteSourceOrigin); options.sourceParent?.removeEventListener('keydown', noteSourceOrigin); sourceEditor?.destroy(); richEditor?.destroy(); }

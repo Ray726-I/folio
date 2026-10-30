@@ -46,7 +46,7 @@ tokenizer.block.ruler.before('fence', 'folio_frontmatter', (state, start, end, s
 });
 tokenizer.block.ruler.before('fence', 'folio_math', (state, start, end, silent) => {
   const line = state.src.slice(state.bMarks[start] + state.tShift[start], state.eMarks[start]);
-  if (!line.startsWith('$$')) return false;
+  if (!line.startsWith('$$') || line.startsWith('$$$')) return false;
   let next = start, tex = '';
   if (line.length > 3 && line.endsWith('$$')) tex = line.slice(2, -2);
   else {
@@ -73,6 +73,46 @@ tokenizer.inline.ruler.after('escape', 'folio_math', (state, silent) => {
   if (to >= state.posMax || /\s/.test(state.src[to - 1]) || /\d/.test(state.src[to + 1] || '') || currency) return false;
   if (!silent) { const token = state.push('math_inline', '', 0); token.content = state.src.slice(from + 1, to); }
   state.pos = to + 1; return true;
+});
+// Author span-level HTML that the rich view renders as real sanitized elements
+// (keyboard keys, variables, sample output...). A balanced open..close pair
+// for an allowlisted tag becomes ONE html_inline token carrying the exact
+// source, so the document keeps a single raw_inline atom with a verbatim
+// round-trip. Anything else falls through to the default single-tag
+// tokenization below, which keeps the previous code-chip rendering.
+export const INLINE_HTML_SPAN_TAGS = ['a', 'abbr', 'b', 'bdi', 'bdo', 'cite', 'code', 'del', 'dfn', 'em', 'i', 'ins', 'kbd', 'mark', 'q', 'ruby', 'rp', 'rt', 's', 'samp', 'small', 'span', 'strong', 'sub', 'sup', 'u', 'var', 'wbr'];
+tokenizer.inline.ruler.before('html_inline', 'folio_html_span', (state, silent) => {
+  if (state.src.charCodeAt(state.pos) !== 0x3C /* < */) return false;
+  const rest = state.src.slice(state.pos, state.posMax);
+  const open = /^<([A-Za-z][A-Za-z0-9]*)((?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*))?)*)\s*(\/?)>/.exec(rest);
+  if (!open || open[3]) return false;
+  const name = open[1].toLowerCase();
+  if (!INLINE_HTML_SPAN_TAGS.includes(name)) return false;
+  // Balanced close: the first `</name>` at nesting depth zero. Inner markup
+  // of any kind is preserved verbatim as part of the pair's exact source.
+  let depth = 1, cursor = open[0].length;
+  while (depth > 0) {
+    const next = rest.indexOf('<', cursor);
+    if (next < 0) return false;
+    const tag = /^<(\/?)([A-Za-z][A-Za-z0-9]*)((?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*))?)*)\s*(\/?)>/.exec(rest.slice(next));
+    if (!tag || tag[1] !== '/') {
+      if (tag && !tag[1] && !tag[4] && tag[2].toLowerCase() === name) depth++;
+      cursor = next + 1;
+      continue;
+    }
+    if (tag[2].toLowerCase() !== name) { cursor = next + 1; continue; }
+    depth--;
+    cursor = next + tag[0].length;
+    if (depth === 0) {
+      if (!silent) {
+        const token = state.push('html_inline', '', 0);
+        token.content = rest.slice(0, cursor);
+      }
+      state.pos += cursor;
+      return true;
+    }
+  }
+  return false;
 });
 tokenizer.core.ruler.after('inline', 'folio_structure', state => {
   const expanded = [];
@@ -103,7 +143,10 @@ tokenizer.core.ruler.after('inline', 'folio_structure', state => {
       // A shortcode needs at least one non-hyphen character.  Otherwise the
       // delimiter row of a center-aligned GFM table (`|:---:|`) is mistaken
       // for `:emoji:` syntax and the table is replaced by a raw block.
-      if (/\[\^[^\]]+\]|\[\[|==[^=]|\+\+[^+]|(?:^|\n)\s*:\s|(?:^|\n)>\s*\[!|\^[^\s^]+\^|(?<!~)~[^~\n]+~(?!~)|:(?=[a-z0-9_+-]*[a-z0-9_+])[a-z0-9_+-]+:/i.test(raw)) {
+      // Only balanced extension delimiters qualify. A plain comparison
+      // (`x == y`), a clock time (`12:30:`) or a setext underline (`=====`)
+      // must stay ordinary Markdown, not become a raw read-only block.
+      if (/\[\^[^\]]+\]|\[\[[^\]]*\]\]|==(?=\S)(?:(?!==)[^\n])+?(?<=\S)==|(?<![+\p{L}\p{N}_])\+\+(?=\S)(?:(?!\+\+)[^\n])+?(?<=\S)\+\+(?![+\p{L}\p{N}_])|(?:^|\n)\s*:\s|(?:^|\n)>\s*\[!|\^[^\s^]+\^|(?<!~)~[^~\n]+~(?!~)|(?<!\\):[a-z_][a-z0-9_+-]*:/iu.test(raw)) {
         const fallback = new state.Token('raw_block', '', 0); fallback.content = raw; fallback.map = token.map;
         result.push(fallback);
         // Skip the whole original block by nesting depth.  Synthetic level-0
@@ -181,8 +224,16 @@ function serializeTableCell(cell) {
 
 function blockText(node) { return serializer.serialize(schema.nodes.doc.create(null, Fragment.from(node))); }
 
-function serializedBlock(node, oldRaw = '') {
+function serializedBlock(node, oldRaw = '', hasFollowing = false) {
   let text = blockText(node);
+  // An empty paragraph can own a whitespace-only raw slice (a blank separator
+  // between blocks). Once it gains text it is a real block and must keep a
+  // blank line before the following block; otherwise the next paragraph joins
+  // it as a soft break. At EOF no extra trailing blank line is needed.
+  if (hasFollowing && oldRaw && !/\S/.test(oldRaw) && !text.endsWith('\n\n') && !text.endsWith('\r\n\r\n')) {
+    const newline = oldRaw.includes('\r\n') ? '\r\n' : '\n';
+    return text.replace(/[\r\n]+$/, '') + newline + newline;
+  }
   if (text.endsWith('\n')) return text;
   if (oldRaw) {
     const ending = /[\r\n]+$/.exec(oldRaw)?.[0];
@@ -299,7 +350,7 @@ export function updateSource(doc, previous) {
       } else addSeparator();
       const node = doc.child(index);
       const template = replacing ? (oldSegments[oldStart]?.raw ?? '') : '';
-      addSegment(node, serializedBlock(node, template));
+      addSegment(node, serializedBlock(node, template, index < newEnd - 1 || newEnd < newCount));
     }
     if (oldEnd > oldStart || newEnd > newStart) changedBefore = true;
   };
