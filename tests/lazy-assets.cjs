@@ -22,12 +22,12 @@ const fixtures = [
   },
   {
     path: mathPath,
-    content: '# Math and diagrams\n\nInline $x^2 + y^2$ and a diagram.',
+    content: '# Math and diagrams\n\nInline $x^2 + y^2$ and a diagram.\n\n```mermaid\ngraph TD;\nA-->B;\n```',
     html: '<h1 id="doc-math">Math and diagrams</h1><p><span data-math-style="inline">x^2 + y^2</span></p><pre data-sourcepos="3:1-6:3"><code class="language-mermaid">graph TD;\nA--&gt;B;</code></pre>'
   },
   {
     path: secondMathPath,
-    content: '# Second math document\n\nMore inline $a^2$ and another diagram.',
+    content: '# Second math document\n\nMore inline $a^2$ and another diagram.\n\n```mermaid\ngraph LR;\nC-->D;\n```',
     html: '<h1 id="doc-math-two">Second math document</h1><p><span data-math-style="inline">a^2</span></p><pre data-sourcepos="3:1-6:3"><code class="language-mermaid">graph LR;\nC--&gt;D;</code></pre>'
   },
   {
@@ -163,6 +163,7 @@ async function installMock(page, bridgeFail = null) {
     assert.equal(await page.locator('#preview .mermaid-error').textContent(), 'Mermaid diagram could not be rendered.', 'bridge errors show the failure text');
     assert.equal(await page.locator('#preview .mermaid-source').textContent(), 'not a diagram', 'invalid Mermaid source should remain available');
     assert.equal(await page.locator('#preview .mermaid-host svg').count(), 0, 'failed renders insert no SVG');
+    assert.equal((await bridgeRequests()).length, 3, 'showing a source fallback must not recreate the node or loop render requests');
     assert.equal(await page.locator('#preview h1').textContent(), 'Malformed diagram', 'the preview should remain usable after a syntax error');
 
     // Failed loads must leave the math and diagram source readable instead of breaking the document.
@@ -178,7 +179,7 @@ async function installMock(page, bridgeFail = null) {
     await fallbackPage.waitForFunction(() => document.querySelector('#preview .mermaid-error'));
     assert.equal(await fallbackPage.evaluate(() => typeof window.katex), 'undefined');
     assert.equal(await fallbackPage.evaluate(() => typeof window.mermaid), 'undefined');
-    assert.equal(await fallbackPage.locator('#preview [data-math-style]').textContent(), 'x^2 + y^2', 'math source should stay readable when KaTeX cannot load');
+    assert.equal(await fallbackPage.locator('#preview .math-formula').textContent(), 'x^2 + y^2', 'math source should stay readable when KaTeX cannot load');
     assert.match(await fallbackPage.locator('#preview .mermaid-error').textContent(), /offline|external images/i, 'offline diagrams get an explicit explanation');
     assert.equal(await fallbackPage.locator('#preview .mermaid-source').textContent(), 'graph TD;\nA-->B;', 'diagram source should stay readable when rendering is offline');
     assert.equal(await fallbackPage.locator('#preview .mermaid-host svg').count(), 0, 'offline diagrams insert no SVG');

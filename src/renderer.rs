@@ -1249,6 +1249,9 @@ pub fn spawn_native_probe(app: tauri::AppHandle) {
 }
 
 #[cfg(debug_assertions)]
+const NATIVE_EDITOR_SOURCE: &str = "# Native editor smoke\n\nIntro paragraph with **bold** text and `code`.\n\n- [ ] Task one\n- [x] Task two\n\n> Quoted line.\n\nUnicode café 😀 stays exact.\n\n<!-- exact  spaces -->\n";
+
+#[cfg(debug_assertions)]
 fn run_native_probe(app: &tauri::AppHandle) -> i32 {
     use std::fs;
 
@@ -1270,6 +1273,8 @@ fn run_native_probe(app: &tauri::AppHandle) -> i32 {
         fs::write(other_dir.join("note.md"), "# Other\n").map_err(|error| error.to_string())?;
         fs::write(other_dir.join("child.md"), "# Other child\n")
             .map_err(|error| error.to_string())?;
+        fs::write(main_dir.join("editor.md"), NATIVE_EDITOR_SOURCE)
+            .map_err(|error| error.to_string())?;
         Ok(())
     })();
     if let Err(error) = setup {
@@ -1286,6 +1291,7 @@ fn run_native_probe(app: &tauri::AppHandle) -> i32 {
     let other_dir = canonical(&other_dir);
     let main_path = canonical(&std::path::Path::new(&main_dir).join("note.md"));
     let other_path = canonical(&std::path::Path::new(&other_dir).join("note.md"));
+    let editor_path = canonical(&std::path::Path::new(&main_dir).join("editor.md"));
 
     let Some(main) = app.get_webview_window(MAIN_LABEL) else {
         println!("FOLIO_NATIVE_PROBE_FAIL main webview missing");
@@ -1321,11 +1327,13 @@ fn run_native_probe(app: &tauri::AppHandle) -> i32 {
         }
     }
     let data = format!(
-        "window.__folioProbeData = {{mainPath: {}, mainDir: {}, otherPath: {}, otherDir: {}}};",
+        "window.__folioProbeData = {{mainPath: {}, mainDir: {}, otherPath: {}, otherDir: {}, editorPath: {}, editorSource: {}}};",
         js_string(&main_path),
         js_string(&main_dir),
         js_string(&other_path),
         js_string(&other_dir),
+        js_string(&editor_path),
+        js_string(NATIVE_EDITOR_SOURCE),
     );
     for (name, window) in [("main", &main), ("renderer", &renderer)] {
         if let Err(error) = window.eval(data.clone()) {
@@ -1423,6 +1431,37 @@ fn run_native_probe(app: &tauri::AppHandle) -> i32 {
     println!("FOLIO_NATIVE_PROBE main-recycle: {recycle_report}");
     if !report_pass(&recycle_report) {
         println!("FOLIO_NATIVE_PROBE_FAIL cancel/retry did not recover");
+        return 1;
+    }
+
+    // Real WebKit smoke for the unified editor: load the actual bundle in the
+    // main webview, open a disposable temp document through `openPath`, verify
+    // focus/selection/lock/snapshot, then save through native IPC.
+    let _ = main.set_focus();
+    if let Err(error) = main.eval("window.focus(); window.__folioNativeProbe.mainEditor();") {
+        println!("FOLIO_NATIVE_PROBE_FAIL could not start editor smoke: {error}");
+        return 1;
+    }
+    let Some(editor_report) = wait_phase(&main, "main-editor", Duration::from_secs(90)) else {
+        println!("FOLIO_NATIVE_PROBE_FAIL editor smoke timed out");
+        return 1;
+    };
+    println!("FOLIO_NATIVE_PROBE main-editor: {editor_report}");
+    if !report_pass(&editor_report) {
+        println!("FOLIO_NATIVE_PROBE_FAIL editor smoke reported failure");
+        return 1;
+    }
+
+    let editor_expected =
+        NATIVE_EDITOR_SOURCE.replacen("Native editor smoke", "Native editor smoke PROBE", 1);
+    let editor_after = fs::read_to_string(&editor_path).unwrap_or_default();
+    let editor_saved_exactly = editor_after == editor_expected;
+    println!(
+        "FOLIO_NATIVE_PROBE editor-file exact={editor_saved_exactly} bytes={}",
+        editor_after.len()
+    );
+    if !editor_saved_exactly {
+        println!("FOLIO_NATIVE_PROBE_FAIL editor save did not write the exact source");
         return 1;
     }
 

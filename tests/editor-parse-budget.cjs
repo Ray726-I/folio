@@ -1,0 +1,14 @@
+const assert = require('node:assert/strict');
+const path = require('node:path');
+require('esbuild').buildSync({ entryPoints: ['ui/editor/model.js'], bundle: true, platform: 'node', format: 'cjs', outfile: 'target/editor-parse-budget.cjs', logLevel: 'silent' });
+const model = require(path.resolve('target/editor-parse-budget.cjs'));
+const originalParse = model.tokenizer.parse;
+let parses = 0;
+model.tokenizer.parse = function (...args) { parses++; return originalParse.apply(this, args); };
+const source = '# Title\n\nPlain __bold__ text.\n';
+const parsed = model.parseSource(source);
+assert.equal(parsed.source, source);
+assert.equal(parsed.doc.child(1).textContent, 'Plain bold text.');
+assert.equal(parses, 1, 'one source revision must tokenize once, sharing its exact tokens with the rich parser and ledger');
+assert.equal(model.sourceToRich(parsed, source.indexOf('Plain')), 8);
+console.log('PASS: parser and ledger share one tokenization of each source revision.');

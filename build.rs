@@ -1,4 +1,7 @@
 fn main() {
+    // The UI is embedded at compile time; rebuild when any asset changes so a
+    // previously built binary cannot silently ship an older editor.
+    println!("cargo:rerun-if-changed=ui");
     // Every custom command must be listed here. Adding a command to
     // `generate_handler!` without adding it below makes the app ACL deny it.
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(

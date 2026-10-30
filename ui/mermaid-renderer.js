@@ -339,7 +339,9 @@
       fontFamily: '"Inter","Adwaita Sans","Cantarell",system-ui,sans-serif',
       flowchart: { htmlLabels: false, curve: 'basis', nodeSpacing: 36, rankSpacing: 46, padding: 16, diagramPadding: 8, useMaxWidth: true },
       sequence: { useMaxWidth: true },
-      gantt: { fontSize: 14, sectionFontSize: 14, barHeight: 24, barGap: 8 }
+      // The isolated native webview is 1px wide. Gantt otherwise inherits
+      // that width and returns a successful, but effectively invisible SVG.
+      gantt: { useWidth: 1024, fontSize: 14, sectionFontSize: 14, barHeight: 24, barGap: 8 }
     });
 
     let rendered;

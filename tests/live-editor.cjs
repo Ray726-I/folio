@@ -1,123 +1,80 @@
-const { chromium } = require('playwright');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const { pathToFileURL } = require('node:url');
-const { execFileSync } = require('node:child_process');
+const { openEditor } = require('./editor-browser.cjs');
 
+const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n| --- | --- |\n| **one** | target |\n| `code` | value |\n| $\\frac{1}{2}$ | math |\n| ' + 'long '.repeat(35) + ' | tail |\n\nAfter the table.\n\n[route](https://example.com/original)\n\n- [ ] Task\n\n![Remote](https://example.com/tracker.png)\n\n$$\nx^2\n$$\n\n<!-- exact  spaces -->\n';
 (async () => {
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'folio-live-'));
-  const livePath = path.join(scratch, 'live.md');
-  const fixture = path.resolve('target/debug/examples', `editor-fixture${process.platform === 'win32' ? '.exe' : ''}`);
-  const screenshot = path.join(os.tmpdir(), 'folio-live-line.png');
-  const platform = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux';
-  const source = '# Live editing\n\n' + ('A **bold** café \u{1f600} sentence with an [inline link](https://example.com), &amp; and \\*escaped\\* punctuation. '.repeat(5)) + '\n\n- [ ] A task\n- Another item\n\n```mermaid\ngraph TD; A-->B;\n```\n\n```rust\nfn main() {}\n```\n';
-  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+  const session = await openEditor(source);
+  const { page, errors, requests } = session;
+  const text = () => page.evaluate(() => current.content);
   try {
-    const page = await browser.newPage({ viewport: { width: 1040, height: 900 } });
-    const errors = []; page.on('pageerror', error => errors.push(String(error)));
-    await page.exposeFunction('nativeRender', content => {
-      const file = path.join(scratch, 'input.md'); fs.writeFileSync(file, content);
-      return JSON.parse(execFileSync(fixture, [file], { encoding: 'utf8' }));
-    });
-    await page.addInitScript(({ source, livePath, platform }) => {
-      window.calls = [];
-      window.__bridge = { requests: [], cancels: [], listeners: {} };
-      window.__TAURI__ = { core: { invoke: async (command, args = {}) => {
-        window.calls.push(command);
-        if (command === 'bootstrap') return { paths: [livePath], theme: null, platform };
-        if (command === 'open_document') return { path: livePath, name: 'live.md', content: source };
-        if (command === 'render_markdown') return window.nativeRender(args.content);
-        if (command === 'save_document') { window.savedContent = args.content; return { path: livePath, name: 'live.md' }; }
-        if (command === 'set_task_checked') return args.content.replace('- [ ] A task', '- [x] A task');
-        if (command === 'mermaid_render_request') {
-          const request = args.request;
-          window.__bridge.requests.push({ id: request.id, source: request.source });
-          setTimeout(() => {
-            const payload = { id: request.id, ok: true, svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100"><text>live-diagram</text></svg>', sanitized: true };
-            for (const callback of window.__bridge.listeners['mermaid-render-result'] || []) callback({ payload });
-          }, 0);
-          return null;
-        }
-        if (command === 'mermaid_render_cancel') { window.__bridge.cancels.push(args.id); return null; }
-        return null;
-      } }, event: { listen: async (name, callback) => { (window.__bridge.listeners[name] ??= []).push(callback); return () => {}; } }, webview: { getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) } };
-    }, { source, livePath, platform });
-    await page.goto(pathToFileURL(path.resolve('ui/index.html')).href);
-    await page.waitForFunction(() => !busy && document.querySelector('.mermaid-host svg'));
-    assert.equal(await page.locator('#mode-switch button').count(), 2);
-    const initialCalls = await page.evaluate(() => calls.filter(x => x === 'render_markdown').length);
-    await page.evaluate(() => window.diagram = document.querySelector('.mermaid-host'));
-    await page.locator('#edit-mode').click(); await page.waitForFunction(() => !busy);
-    assert.equal(await page.evaluate(() => calls.filter(x => x === 'render_markdown').length), initialCalls);
-    const paragraph = page.locator('#preview > p').first();
-    const bounds = await paragraph.boundingBox();
-    await page.mouse.click(bounds.x + 120, bounds.y + 72);
-    const editor = page.locator('.live-editor textarea'); await editor.waitFor();
-    const originalLine = await editor.inputValue();
-    assert(originalLine.length < source.split('\n\n')[1].length / 2, 'only a wrapped visual line should become raw Markdown');
-    assert(await page.locator('.live-before').count()); assert(await page.locator('.live-after').count());
-    await page.screenshot({ path: screenshot });
-    await editor.fill(originalLine + ' EDITED');
-    assert((await page.evaluate(() => current.content)).includes(' EDITED'));
-    await page.keyboard.press('Control+z'); assert.equal(await editor.inputValue(), originalLine);
-    await page.keyboard.press('Control+Shift+z'); assert((await editor.inputValue()).endsWith(' EDITED'));
-    await page.keyboard.press('Control+z'); await page.keyboard.press('Control+y');
-    assert((await editor.inputValue()).endsWith(' EDITED'));
-    await page.keyboard.press('Control+Enter'); await page.waitForFunction(() => !busy);
-    assert.equal(await page.locator('.live-editor').count(), 0);
-    assert(await page.evaluate(() => window.diagram === document.querySelector('.mermaid-host')), 'unchanged Mermaid DOM is reused');
-    await page.locator('#read-mode').click(); await page.waitForFunction(() => !busy);
-    await page.keyboard.press('Control+z'); await page.waitForFunction(() => !busy);
-    assert.equal(await page.evaluate(() => current.content), source);
-    await page.keyboard.press('Control+y'); await page.waitForFunction(() => !busy);
-    assert((await page.evaluate(() => current.content)).includes(' EDITED'));
-    await page.locator('#edit-mode').click(); await page.waitForFunction(() => !busy);
-    await page.locator('.mermaid-host').click();
+    // The cases missed by the margin-based spike: downstream boundaries of
+    // rich/long cells, not just the left edge of the first column.
+    await page.locator('#preview .math-formula .katex').first().waitFor();
+    const bounds = await page.locator('#preview tr').evaluateAll(rows => rows.map(row => [...row.cells].map(cell => ({ x: cell.getBoundingClientRect().x, right: cell.getBoundingClientRect().right }))));
+    for (const column of [0, 1]) for (const edge of ['x', 'right']) {
+      const positions = bounds.map(row => row[column][edge]);
+      assert.ok(Math.max(...positions) - Math.min(...positions) <= 2, `rich-table ${column}/${edge} misaligned`);
+    }
+    const emptyCell = page.locator('#preview td').first();
+    await emptyCell.click(); await page.keyboard.press('Home'); await page.keyboard.press('Shift+End'); await page.keyboard.press('Delete');
+    await page.keyboard.type('new');
+    assert.ok((await emptyCell.innerText()).includes('new'));
+    await page.keyboard.press('Tab'); await page.keyboard.type('Next');
+    assert.ok((await page.locator('#preview td').nth(1).innerText()).includes('Next'));
+    const beforeStructure = await text();
+    await page.locator('.table-tools summary').click();
+    await page.locator('[data-editor-command=row]').click();
+    assert.equal(await page.locator('#preview tr').count(), 6);
+    await page.keyboard.press('Control+z'); assert.equal(await text(), beforeStructure);
+    await page.locator('.table-tools summary').click();
 
-    await editor.waitFor();
-    assert((await editor.inputValue()).startsWith('```mermaid'));
-    await editor.fill('```mermaid\ngraph TD; A-->C;\n```');
-    await page.keyboard.press('Control+Enter'); await page.waitForFunction(() => !busy);
-    await page.locator('pre[data-language="rust"]').click(); await editor.waitFor();
-    assert.equal(await editor.inputValue(), '```rust\nfn main() {}\n```');
-    await editor.fill('```rust\nfn main() { println!("hello"); }\n```');
-    await page.locator('#read-mode').click(); await page.waitForFunction(() => !busy);
-    assert((await page.locator('pre[data-language="rust"]').textContent()).includes('println!'));
-    await page.locator('#edit-mode').click(); await page.waitForFunction(() => !busy);
-    await page.locator('#preview h1').click(); await editor.waitFor();
-    await editor.fill('# A heading before the task');
-    await page.locator('input[data-task-index="0"]').check(); await page.waitForFunction(() => !busy);
-    assert((await page.evaluate(() => current.content)).includes('- [x] A task\n- Another item'));
-    assert((await page.evaluate(() => current.content)).startsWith('# A heading before the task'));
-    await page.keyboard.press('Control+z'); await page.waitForFunction(() => !busy);
-    assert.equal(await page.locator('input[data-task-index="0"]').isChecked(), false);
-    await page.keyboard.press('Control+Shift+z'); await page.waitForFunction(() => !busy);
-    assert.equal(await page.locator('input[data-task-index="0"]').isChecked(), true);
-    await page.locator('#preview h1').click(); await editor.waitFor();
-    await editor.fill('# A different heading');
-    await page.keyboard.press('Control+s'); await page.waitForFunction(() => !busy);
-    assert((await page.evaluate(() => window.savedContent)).startsWith('# A different heading'));
+    // Both projections share the same source history; source mode performs
+    // ordinary exact interval edits even through table syntax.
+    await page.locator('#show-markdown').click(); await page.locator('#source-editor .cm-content').waitFor({ state: 'visible' });
+    await page.keyboard.press('Control+a'); await page.keyboard.press('Delete');
+    assert.equal(await text(), '', 'Select All/Delete must not leave protected table shells');
+    await page.keyboard.press('Control+z'); assert.equal(await text(), beforeStructure);
+    await page.locator('#show-markdown').click();
+    await page.locator('#preview a').first().click();
+    await page.locator('#editor-action-value').fill('https://example.com/changed');
+    await page.locator('#editor-action-form button[type=submit]').click();
+    assert.ok((await text()).includes('https://example.com/changed'));
+    assert.equal(await page.locator('#preview a').first().textContent(), 'route');
+    const beforeMath = await text();
+    await page.locator('#preview .math-block .math-edit').click();
+    await page.locator('#editor-action-value').fill('\\frac{1}{');
+    await page.locator('#editor-action-form button[type=submit]').click();
+    await page.locator('#preview .math-error').waitFor();
+    assert.ok((await text()).includes('\\frac{1}{'));
+    await page.keyboard.press('Control+z'); assert.equal(await text(), beforeMath);
 
-    await page.locator('#preview h1').click(); await editor.waitFor();
-    await editor.fill('# Click away commits');
-    const nextBounds = await page.locator('#preview > p').first().boundingBox();
-    await page.mouse.click(nextBounds.x + 50, nextBounds.y + 15);
-    await page.waitForFunction(() => !busy && inlineEdit && inlineEdit.textarea.value !== '# Click away commits');
-    assert((await page.evaluate(() => current.content)).startsWith('# Click away commits'));
-    await page.keyboard.press('Escape'); await page.waitForFunction(() => !busy);
-    await page.keyboard.press('Control+s'); await page.waitForFunction(() => !busy);
-    await page.keyboard.press('Control+n'); await page.waitForFunction(() => !busy && current.content === '');
-    await editor.waitFor(); await editor.fill('A brand new **document**');
-    await page.locator('#read-mode').click(); await page.waitForFunction(() => !busy);
-    assert.equal(await page.locator('#preview p').textContent(), 'A brand new document');
-    await page.keyboard.press('Control+z'); await page.waitForFunction(() => !busy);
-    assert.equal(await page.evaluate(() => current.content), '');
-    assert.equal(await page.locator('[data-empty-edit]').count(), 0, 'Preview must not display an Edit placeholder');
-    await page.keyboard.press('Control+y'); await page.waitForFunction(() => !busy);
-    assert.equal(await page.evaluate(() => current.content), 'A brand new **document**');
+    // No requests on view/hover/focus. A deliberate Load remains possible
+    // under Lock and must not become a source mutation or broad permission.
+    await page.locator('.image-widget').hover(); assert.deepEqual(requests, []);
+    await page.locator('#lock-document').click(); const locked = await text();
+    await page.getByRole('button', { name: 'Load image', exact: true }).click();
+    await page.waitForFunction(() => window.calls.some(call => call.command === 'render_markdown' && call.args.remoteImages === true));
+    await page.waitForFunction(() => document.querySelector('.image-widget img') !== null);
+    assert.equal(await text(), locked);
+    assert.deepEqual(requests, ['https://example.com/tracker.png']);
+    await page.locator('#lock-document').click();
+
+    // Rich plain prose is continuous: split/join doesn't mount a textarea.
+    await page.locator('#preview .ProseMirror > p').first().click();
+    await page.waitForFunction(() => { const selection = editor.getSelection(); return selection.anchor === selection.head; });
+    await page.keyboard.press('Home'); await page.keyboard.press('ArrowRight');
+    await page.waitForFunction(() => { const selection = editor.getSelection(); return selection.anchor === selection.head; });
+    const beforeSplit = await text();
+    await page.keyboard.press('Enter'); await page.keyboard.press('Backspace');
+    assert.equal(await text(), beforeSplit);
+    assert.equal(await page.locator('.live-editor, #source-fallback').count(), 0);
+    // A saved buffer becomes clean again after undo, across presentations.
+    await page.keyboard.press('Control+s'); await page.waitForFunction(() => !busy && document.getElementById('dirty-dot').hidden);
+    const saved = await text(); await page.keyboard.type('EDIT'); assert.notEqual(await text(), saved);
+    await page.keyboard.press('Control+z'); assert.equal(await text(), saved);
+    assert.equal(await page.locator('#dirty-dot').isVisible(), false);
     assert.deepEqual(errors, []);
-    console.log('PASS: real Markdown visual-line editing, Unicode, whole code blocks, cached diagrams, memory commits, save, checkbox history and all undo/redo shortcuts.');
-  } finally { await browser.close(); fs.rmSync(scratch, { recursive: true, force: true }); }
+    console.log('PASS: rich/long/math tables align, cell/row actions share undo, exact source deletion, link/math editing, consent under Lock, continuous prose and saved-state restoration.');
+  } catch (error) { console.error('PAGE ERRORS:', errors, 'URL:', page.url()); console.error(await page.locator('#toast').textContent({ timeout: 1000 }).catch(() => 'App document is unavailable')); throw error; }
+  finally { await session.close(); }
 })().catch(error => { console.error(error); process.exit(1); });

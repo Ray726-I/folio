@@ -31,6 +31,10 @@
     <symbol id="i-focus" viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"/></symbol>
     <symbol id="i-width-expand" viewBox="0 0 24 24"><path d="M4 5v14M20 5v14M5 12h14M8 9l-3 3 3 3M16 9l3 3-3 3"/></symbol>
     <symbol id="i-width-contract" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14M2 12h7m-3-3 3 3-3 3M22 12h-7m3-3-3 3 3 3"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="i-unlock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 7.6-2"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><path d="m9 8-4 4 4 4M15 8l4 4-4 4"/></symbol>
+    <symbol id="i-format" viewBox="0 0 24 24"><path d="M6 16 10 6l4 10M7.5 13h5M5 20h14"/></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.35 5.65M20 5v6h-6"/></symbol>
     <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
     <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></symbol>
@@ -43,6 +47,9 @@
       </button>
       <button id="open" class="button ghost" title="Open a file or folder (Ctrl+O)" aria-label="Open a file or folder (Ctrl+O)">
         <svg class="icon" aria-hidden="true"><use href="#i-open"/></svg><span>Open</span>
+      </button>
+      <button id="open-folder" class="button ghost" title="Open a folder" aria-label="Open a folder" hidden>
+        <svg class="icon" aria-hidden="true"><use href="#i-open"/></svg><span>Open folder</span>
       </button>
       <span class="header-divider" aria-hidden="true"></span>
       <button id="folder-toggle" class="icon-button" title="Toggle file tree (Ctrl+B)" aria-label="Toggle file tree" aria-controls="file-browser" aria-expanded="false" aria-pressed="false" hidden>
@@ -60,14 +67,18 @@
       <button id="width-toggle" class="icon-button document-control" title="Use full document width" aria-label="Use full document width" aria-pressed="false" hidden>
         <svg class="icon" aria-hidden="true"><use href="#i-width-expand"/></svg>
       </button>
-      <div id="mode-switch" class="segmented document-control" role="group" aria-label="Document mode" hidden>
-        <button id="read-mode" aria-pressed="true" aria-label="Preview" title="Preview (Ctrl+E)">
-          <svg class="icon" aria-hidden="true"><use href="#i-read"/></svg>
-        </button>
-        <button id="edit-mode" aria-pressed="false" aria-label="Edit" title="Edit (Ctrl+E)">
-          <svg class="icon" aria-hidden="true"><use href="#i-edit"/></svg>
-        </button>
-      </div>
+      <button id="show-markdown" class="icon-button document-control" aria-pressed="false" aria-label="Show Markdown near the cursor (Ctrl+E)" title="Show Markdown near the cursor (Ctrl+E)" hidden>
+        <svg class="icon" aria-hidden="true"><use href="#i-edit"/></svg>
+      </button>
+      <button id="lock-document" class="icon-button document-control" aria-pressed="false" aria-label="Protect against accidental edits" title="Protect against accidental edits" hidden>
+        <svg class="icon" aria-hidden="true"><use href="#i-unlock"/></svg>
+      </button>
+      <button id="source-snapshot" class="icon-button document-control" aria-label="Inspect and copy exact Markdown" title="Inspect and copy exact Markdown" hidden>
+        <svg class="icon" aria-hidden="true"><use href="#i-code"/></svg>
+      </button>
+      <button id="format-toggle" class="icon-button document-control" aria-pressed="true" aria-expanded="true" aria-controls="format-tools" aria-label="Hide formatting toolbar" title="Hide formatting toolbar" hidden>
+        <svg class="icon" aria-hidden="true"><use href="#i-format"/></svg>
+      </button>
       <span class="header-divider" aria-hidden="true"></span>
       <button id="save" class="icon-button document-control" title="Save (Ctrl+S)" aria-label="Save" hidden>
         <svg class="icon" aria-hidden="true"><use href="#i-save"/></svg>
@@ -152,8 +163,31 @@
           <button id="find-next" class="icon-button tiny" aria-label="Next match" title="Next match"><svg class="icon" aria-hidden="true"><use href="#i-arrow-down"/></svg></button>
           <button id="find-close" class="icon-button" aria-label="Close search"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
         </div>
-        <div id="reader-scroll" class="reader-scroll" tabindex="0" aria-label="Markdown preview">
+        <div id="format-tools" class="editor-toolbar" role="toolbar" aria-label="Document formatting">
+          <button class="button small ghost" data-editor-command="bold" aria-label="Bold" title="Bold (Ctrl+B)"><strong>B</strong></button>
+          <button class="button small ghost" data-editor-command="italic" aria-label="Italic" title="Italic (Ctrl+I)"><em>I</em></button>
+          <button class="button small ghost" data-editor-command="code">Code</button>
+          <button class="button small ghost" data-editor-command="heading">Heading</button>
+          <button class="button small ghost" data-editor-command="bullet">List</button>
+          <button class="button small ghost" data-editor-command="numbered">1. List</button>
+          <button class="button small ghost" data-editor-command="quote">Quote</button>
+          <button class="button small ghost" data-editor-command="link">Link</button>
+          <button class="button small ghost" data-editor-command="image">Image</button>
+          <button class="button small ghost" data-editor-command="math">Math</button>
+          <button class="button small ghost" data-editor-command="table">Table</button>
+          <details class="table-tools"><summary>Table tools</summary><div>
+            <button class="button small" data-editor-command="row">Add row</button>
+            <button class="button small" data-editor-command="column">Add column</button>
+            <button class="button small" data-editor-command="delete-row">Delete row</button>
+            <button class="button small" data-editor-command="delete-column">Delete column</button>
+            <button class="button small" data-editor-command="delete-table">Delete table</button>
+          </div></details>
+        </div>
+        <div id="editor-lock-note" class="editor-note" role="status" hidden>Locked · You can select, copy, follow links and load images. Unlock to make changes.</div>
+        <div id="editor-notice" class="editor-note" role="status" hidden>Rich formatting is paused for this document's size or complexity. Its complete Markdown remains editable below; nothing is truncated.</div>
+        <div id="reader-scroll" class="reader-scroll" tabindex="0" aria-label="Markdown document">
           <article id="preview" class="markdown"></article>
+          <div id="source-editor" class="markdown" hidden></div>
           <div id="folder-empty" class="folder-empty" hidden>
             <h1>Folder opened</h1>
             <p>Choose a Markdown file from the folder list.</p>
@@ -195,6 +229,18 @@
   </dialog>
 
   <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title"><h2 id="confirm-title"></h2><p id="confirm-message"></p><div id="confirm-actions"></div></dialog>
+  <dialog id="source-dialog" class="source-dialog" aria-labelledby="source-snapshot-title">
+    <div class="source-dialog-head"><h2 id="source-snapshot-title">Source snapshot</h2><button id="source-snapshot-close" class="button">Close</button></div>
+    <p id="source-snapshot-status" role="status"></p>
+    <textarea id="source-snapshot-text" readonly aria-label="Exact Markdown source snapshot" spellcheck="false"></textarea>
+    <button id="source-snapshot-copy" class="button suggested">Copy Markdown</button>
+  </dialog>
+  <dialog id="editor-action-dialog" class="source-dialog" aria-labelledby="editor-action-title">
+    <form id="editor-action-form"><h2 id="editor-action-title">Edit</h2>
+      <textarea id="editor-action-value" aria-labelledby="editor-action-title" spellcheck="false" required></textarea>
+      <div class="source-dialog-head"><button id="editor-action-cancel" type="button" class="button">Cancel</button><button id="editor-action-open" type="button" class="button" hidden>Open link</button><button type="submit" class="button suggested">Apply</button></div>
+    </form>
+  </dialog>
   <div id="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>

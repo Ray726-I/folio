@@ -2,7 +2,7 @@
 
 [View the interactive presentation](https://ray726-i.github.io/folio/) · [Download a Linux release](https://github.com/Ray726-I/folio/releases)
 
-A small cross-platform Markdown reader and editor built with Rust and Tauri. It uses the system webview on each platform: WebKitGTK on Linux, WKWebView on macOS, and WebView2 on Windows. The Markdown parser, syntax highlighter, and file operations are Rust. The UI is plain HTML/CSS with a little JavaScript; no frontend build step is required.
+A small cross-platform Markdown reader and editor built with Rust and Tauri. It uses the system webview on each platform: WebKitGTK on Linux, WKWebView on macOS, and WebView2 on Windows. The Markdown parser, syntax highlighter, and file operations are Rust. The UI is plain HTML/CSS with JavaScript; the editing engine is prebuilt into `ui/vendor/editor/`, so no frontend build step is required to run or build Folio.
 
 Folio is an early prototype. Native build configurations and CI checks target Linux, Windows, and macOS; Windows and macOS still need hands-on validation, including Finder/Explorer “Open With” behaviour. Published release packages are currently Linux-only.
 
@@ -13,7 +13,7 @@ cargo run --release
 cargo run --release -- /path/to/document.md
 ```
 
-After building, run `./target/release/folio [FILE]` directly on Linux/macOS, or the generated executable on Windows. `./run.sh [FILE]` is a Linux helper that uses the release binary if available, otherwise builds it. The UI, reading, and code fonts (Inter, Source Serif 4, and JetBrains Mono) are bundled with the app; reading and editing work offline. Web links require a connection. Remote images are blocked by default and require a connection only when enabled from the command window.
+After building, run `./target/release/folio [FILE]` directly on Linux/macOS, or the generated executable on Windows. `./run.sh [FILE]` is a Linux helper that rebuilds the release binary when needed and then launches it. The UI, reading, and code fonts (Inter, Source Serif 4, and JetBrains Mono) are bundled with the app; reading and editing work offline. Web links require a connection. Remote images are blocked by default and require a connection only when enabled from the command window.
 
 For native prerequisites, follow Tauri's [Linux](https://v2.tauri.app/start/prerequisites/#linux), [macOS](https://v2.tauri.app/start/prerequisites/#macos), or [Windows](https://v2.tauri.app/start/prerequisites/#windows) instructions. Linux builds need GTK 3, WebKitGTK 4.1, libsoup 3, OpenSSL, and librsvg. On Arch/Omarchy, install `webkit2gtk-4.1` from the distribution repositories. No Node runtime is needed to run or build Folio with Cargo.
 
@@ -25,8 +25,12 @@ For native prerequisites, follow Tauri's [Linux](https://v2.tauri.app/start/prer
 | Open a Markdown file or folder | Ctrl+O |
 | Show or hide the file tree | Ctrl+B |
 | New document | Ctrl+N |
-| Switch between Preview and Edit | Header eye/pencil buttons |
-| Toggle Preview / Edit | Ctrl+E |
+| Show or hide Markdown around the cursor | Header **Show Markdown** button or Ctrl+E |
+| Lock / unlock document editing | Header **Lock** button |
+| Exact source snapshot | Header **Source** button |
+| Navigate table cells | Tab / Shift+Tab |
+| Line break in a table cell; new row at the last cell's end | Enter |
+| Leave a table forward / backward | Ctrl+Enter / Ctrl+Shift+Enter |
 | Undo / Redo | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y |
 | Save / Save as | Ctrl+S / Ctrl+Shift+S |
 | Zoom the whole app in / out | Ctrl+= / Ctrl+- |
@@ -83,7 +87,9 @@ Folder and built-in picker listings may be incomplete when enumeration limits
 are reached; a notice identifies limited results rather than implying all
 matching files were found. These limits do not control the OS-native picker.
 
-Saves write a temporary sibling file and rename it atomically. Content fingerprints detect external changes before saving; the app presents Reload, Overwrite, and Cancel choices. It also shows a disk-change banner while the document is open. Folio opens one document at a time. Opening a folder shows a collapsible file tree; unreadable entries are skipped and reported, and very large trees are capped at 5,000 entries and 12 levels. Click a folder to expand it, select a Markdown file to open it, and use the close button or Ctrl+B to hide or show the tree without closing the document. Drag the tree's edge to resize it. In **Edit**, click a rendered text line to reveal its Markdown in place. Other lines stay rendered, including other lines in the same wrapped paragraph. Code, Mermaid, math blocks, and tables reveal their whole source block. Changes apply in memory when you leave the line or press Ctrl+Enter; Ctrl+S saves to disk. Task boxes can be ticked directly. Undo and redo cover text, blocks, and task boxes across mode changes. **Preview** is read-only. Obsidian plugins, PlantUML, and other diagram languages besides Mermaid are not implemented.
+Saves write a temporary sibling file and rename it atomically. Content fingerprints detect external changes before saving; the app presents Reload, Overwrite, and Cancel choices. It also shows a disk-change banner while the document is open. Folio opens one document at a time. Opening a folder shows a collapsible file tree; unreadable entries are skipped and reported, and very large trees are capped at 5,000 entries and 12 levels. Click a folder to expand it, select a Markdown file to open it, and use the close button or Ctrl+B to hide or show the tree without closing the document. Drag the tree's edge to resize it.
+
+The document is one continuously editable view. Paragraphs, headings, lists, tasks, tables, links, images, code and math are formatted but directly editable; there is no separate preview mode or per-line edit island. **Show Markdown** reveals Markdown syntax around the selection and switches to a source-backed presentation with the same buffer, undo history and scroll position; toggling back does not rewrite the file. Untouched blocks keep their original source text, while an edited block is serialized canonically. **Lock** blocks writes but still allows selection, copying, navigation, source inspection and explicitly loading an image. **Source** shows a read-only, copyable snapshot of the exact current buffer, including unsaved changes. Task boxes can be ticked directly, and remote images never load on hover or focus. Documents above the development rich-editor size or complexity threshold fall back to the complete source presentation with an explicit notice. Obsidian plugins, PlantUML, and other diagram languages besides Mermaid are not implemented.
 
 ## Optional Linux desktop installation
 
@@ -117,7 +123,7 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 ```
 
-The Rust tests cover external-edit conflicts, metadata-based change detection, atomic save behavior, CRLF/BOM/permission preservation, new-file umask handling, HTML sanitization (including mixed-case `data-sourcepos` spoofing), remote-image privacy, syntax-highlighted Markdown, math and Mermaid source markers, wikilinks, emoji, extension elements, document anchor identifiers, edit-block source mapping, task toggling, tolerant folder scanning, local image boundaries, and theme validation. An optional UI smoke test checks keyboard controls, the command window, conditional/live Omarchy themes, theme isolation, remote-image toggling, reading-font toggling, icon-only view modes, outline navigation, unsaved-change prompts, structured save conflicts, close protection, find, on-demand vendored KaTeX/Mermaid loading, the collapsible file tree, and live editing. It mocks the native IPC layer; native filesystem and rendering behavior are covered separately by the Rust tests.
+The Rust tests cover external-edit conflicts, metadata-based change detection, atomic save behavior, CRLF/BOM/permission preservation, new-file umask handling, HTML sanitization (including mixed-case `data-sourcepos` spoofing), remote-image privacy, syntax-highlighted Markdown, math and Mermaid source markers, wikilinks, emoji, extension elements, document anchor identifiers, edit-block source mapping, task toggling, tolerant folder scanning, local image boundaries, and theme validation. An optional UI smoke test checks keyboard controls, the command window, conditional/live Omarchy themes, theme isolation, remote-image toggling, reading-font toggling, the unified editor controls, outline navigation, unsaved-change prompts, structured save conflicts, close protection, find, on-demand vendored KaTeX/Mermaid loading, the collapsible file tree, and direct editing. Separate real-editor checks cover rich tables, tasks, math, links, images, Lock, exact source snapshots, shared undo and the complexity fallback. It mocks the native IPC layer; native filesystem and rendering behavior are covered separately by the Rust tests.
 
 ```sh
 npm ci
@@ -148,19 +154,35 @@ For real-webview, CSP, and cross-platform checks that the mocked UI tests cannot
 - `ui/core.js`: shared DOM, IPC, path, and preference helpers.
 - `ui/theme.js`: theme definitions, contrast/palette derivation, Mermaid colours.
 - `ui/preview.js`: preview rendering, lazy KaTeX/Mermaid loading, diagram lifecycle.
-- `ui/editor.js`: in-place editing, source mapping, undo/redo.
+- `ui/editor.js`: editor shell, document lifecycle, outline and dialogs.
+- `ui/editor/`: source model, rich and Markdown presentations, shared history; bundled into `ui/vendor/editor/` by `npm run build:editor`.
 - `ui/app.js`: documents, folders, command window, event wiring.
 - `ui/fonts/`: bundled Inter, Source Serif 4, and JetBrains Mono variable fonts.
 - `ui/vendor/`: vendored preview dependencies; licenses are listed in `THIRD_PARTY_NOTICES.md`.
 - `tests/` and `docs/manual-verification.md`: automated and manual verification.
 
 
-For real-parser live editing regression checks:
+For real-parser editor regression checks:
 
 ```sh
+npm ci
+npm run build:editor
 cargo build --example editor-fixture
-node tests/live-editor.cjs
+npm run test:editor
 ```
+
+The editor bundle is generated from `ui/editor/` and pinned dependencies. Run `npm run build:editor` after changing those sources; `npm run check:editor-bundle` verifies the committed bundle is current.
+
+On Linux, verify the actual Tauri/WebKit keyboard and save path in an isolated
+Xvfb/D-Bus session (requires `xvfb-run`, `dbus-run-session`, libX11 and libXtst):
+
+```sh
+cargo build --locked
+npm run test:native-editor
+```
+
+This uses OS-dispatched XTest input and disposable files, not mocked IPC or
+JavaScript input events. It does not establish physical-keyboard or IME coverage.
 
 The GitHub Actions workflow runs Rust formatting, tests, Clippy, and UI checks on Linux, Windows, and macOS, and builds native bundles on each platform. Node.js is needed only for these UI checks and bundle verification.
 

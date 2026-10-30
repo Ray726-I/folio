@@ -147,6 +147,10 @@ async function runPalette(page, query) {
     await page.reload();
     await page.waitForFunction(() => typeof busy !== 'undefined' && !busy && document.documentElement.dataset.documentWidth);
     assert.equal(await page.evaluate(() => filePicker()), 'native', 'preference survives reload');
+    assert.equal(await page.locator('#open-folder').isVisible(), true, 'native mode exposes a toolbar folder action');
+    assert.equal((await page.locator('#open span').textContent()).trim(), 'Open file', 'native Open advertises files only');
+    assert.match(await page.locator('#open').getAttribute('title'), /file/i, 'native Open title names files');
+    assert.doesNotMatch(await page.locator('#open').getAttribute('title'), /folder/i, 'native Open title does not promise folders');
 
     // 5. Native main Open uses the OS file dialog; all entry points route the same.
     for (const entry of ['toolbar', 'welcome', 'shortcut', 'palette']) {
@@ -176,12 +180,17 @@ async function runPalette(page, query) {
     await runPalette(page, 'Open folder');
     const folderLabels = await page.evaluate(() => [...document.querySelectorAll('#command-results .command-label')].map(el => el.textContent));
     assert.ok(folderLabels.includes('Open folder…'), 'Open folder… is always visible in native mode');
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => { if (document.getElementById('command-dialog').open) document.getElementById('command-dialog').close(); });
     await page.evaluate((n) => { window.nativeCalls = []; window.pickResult = { path: n, kind: 'folder' }; }, notes);
-    await page.keyboard.press('Enter');
+    await page.locator('#open-folder').click();
     await page.waitForFunction(() => !busy && document.getElementById('folder-name').textContent === 'notes');
     const folderPick = await page.evaluate(() => window.nativeCalls.find(c => c.command === 'pick_open_target'));
-    assert.equal(folderPick.args.kind, 'folder', 'Open folder… in native mode requests kind=folder');
+    assert.equal(folderPick.args.kind, 'folder', 'toolbar Open folder in native mode requests kind=folder');
+    assert.equal(await page.evaluate(() => window.nativeCalls.some(c => c.command === 'browse_directory')), false, 'toolbar Open folder in native mode skips the Folio chooser');
     assert.equal(await page.evaluate(() => window.nativeCalls.filter(c => c.command === 'open_folder').length), 1, 'native folder pick opens once');
+    assert.equal(await page.evaluate(() => document.getElementById('folder-empty').querySelector('h1').textContent), 'No Markdown files', 'folder view renders without stale document content');
+    assert.equal(await page.evaluate(() => document.getElementById('editor-lock-note').hidden), true, 'folder view leaves no stale editor state');
 
     // 7. Native cancel changes nothing: no prompt, no recents change, no doc switch.
     await page.evaluate((f) => { window.nativeCalls = []; window.pickResult = { path: f, kind: 'file' }; }, fileA);
@@ -269,6 +278,9 @@ async function runPalette(page, query) {
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => filePicker() === 'folio');
     await page.evaluate(() => { if (document.getElementById('command-dialog').open) document.getElementById('command-dialog').close(); window.nativeCalls = []; });
+    assert.equal(await page.locator('#open-folder').isVisible(), false, 'Folio picker folds folder opening into Open');
+    assert.equal((await page.locator('#open span').textContent()).trim(), 'Open', 'Folio Open covers files and folders');
+    assert.match(await page.locator('#open').getAttribute('title'), /file or folder/i, 'Folio Open advertises both');
     await runPalette(page, 'Open folder');
     await page.keyboard.press('Enter');
     await page.locator('#open-dialog').waitFor();

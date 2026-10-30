@@ -1,253 +1,171 @@
 'use strict';
-// In-place editing, source mapping, and undo/redo.
-let previewBlocks = [], inlineEdit = null;
-let undoStack = [], redoStack = [], lastEditTime = 0, historyGroup = null;
-function resetHistory() { undoStack = []; redoStack = []; historyGroup = null; lastEditTime = 0; }
-function changeContent(content, group = null) {
-  if (content === current.content) return;
-  const now = performance.now();
-  if (!group || group !== historyGroup || now - lastEditTime > 650) {
-    undoStack.push(current.content);
-    let size = undoStack.reduce((sum, value) => sum + value.length, 0);
-    while (undoStack.length > 1 && (undoStack.length > 150 || size > 8 * 1024 * 1024)) size -= undoStack.shift().length;
-  }
-  historyGroup = group; lastEditTime = now; redoStack = [];
-  current.content = content; updateTitle(); scheduleStats();
-}
-async function undoRedo(redo = false) {
-  const from = redo ? redoStack : undoStack, to = redo ? undoStack : redoStack;
-  if (!current.active || !from.length) return;
-  const content = from.pop(); to.push(current.content); historyGroup = null;
-  const edit = inlineEdit;
-  current.content = content;
+// Shell adapter. The engines live in the locally bundled editor/ modules.
+let editor = null, editorDocument = null, editorPath = null, outlineTimer, fallbackCheckedContent = null;
+let previewBlocks = [];
+function resetHistory() {} // History belongs to the active document controller.
+function changeContent(content) { if (editor) editor.replaceContent(content); else { current.content = content; updateTitle(); scheduleStats(); } }
+function undoRedo(redo = false) { return editor?.undo(redo) || false; }
+function commitInlineEdit() { return Promise.resolve(true); }
+function syncPreviewEditing() {}
+function syncSourceFallback() {}
+function previewBlockAtViewportTop() { return 0; }
+function previewElementForBlock() { return $('preview').querySelector('h1,h2,p') || $('source-editor'); }
 
-  if (edit && content.startsWith(edit.prefix) && content.endsWith(edit.suffix)
-      && content.length >= edit.prefix.length + edit.suffix.length) {
-    edit.textarea.value = content.slice(edit.prefix.length, content.length - edit.suffix.length);
-    resizeLiveEditor(edit.textarea);
-    edit.textarea.focus();
-    edit.textarea.setSelectionRange(edit.textarea.value.length, edit.textarea.value.length);
-  } else if (sourceEdit && sourceEdit.textarea.isConnected) {
-    sourceEdit.textarea.value = content;
-    resizeLiveEditor(sourceEdit.textarea);
-    sourceEdit.textarea.focus();
-    try { sourceEdit.textarea.setSelectionRange(content.length, content.length); } catch {}
-  } else {
-    cancelInlineEdit(); await renderPreview();
+function editorPresentation(show, locked, fallback) {
+  mode = show ? 'edit' : 'read'; root.dataset.mode = mode;
+  const showButton = $('show-markdown');
+  showButton.setAttribute('aria-pressed', String(show));
+  const showLabel = show ? 'Hide Markdown (Ctrl+E)' : 'Show Markdown near the cursor (Ctrl+E)';
+  showButton.setAttribute('aria-label', showLabel);
+  showButton.title = showLabel;
+  const lockButton = $('lock-document');
+  lockButton.setAttribute('aria-pressed', String(locked));
+  const lockLabel = locked ? 'Unlock document editing' : 'Protect against accidental edits';
+  lockButton.setAttribute('aria-label', lockLabel);
+  lockButton.title = lockLabel;
+  lockButton.querySelector('use')?.setAttribute('href', locked ? '#i-lock' : '#i-unlock');
+  $('editor-lock-note').hidden = !locked;
+  $('editor-notice').hidden = !fallback;
+  $('format-tools').querySelectorAll('button,select').forEach(control => { control.disabled = locked; });
+}
+function openEditorAction(title, value, apply, open) {
+  if (!editor || editor.isLocked()) return;
+  const documentAtOpen = current;
+  $('editor-action-title').textContent = title; $('editor-action-value').value = value;
+  $('editor-action-open').hidden = !open;
+  $('editor-action-open').onclick = () => { $('editor-action-dialog').close(); open?.(); };
+  $('editor-action-form').onsubmit = event => {
+    event.preventDefault();
+    if (current === documentAtOpen && !editor.isLocked()) apply($('editor-action-value').value);
+    $('editor-action-dialog').close(); editor?.focus();
+  };
+  $('editor-action-dialog').showModal(); $('editor-action-value').focus(); $('editor-action-value').select();
+}
+function openSourceSnapshot() {
+  if (!editor) return;
+  editor.captureSelection?.();
+  $('source-snapshot-text').value = editor.getText();
+  $('source-snapshot-status').textContent = 'Exact Markdown at the time this snapshot was opened. Unsaved changes are included.';
+  $('source-dialog').showModal(); $('source-snapshot-text').focus();
+}
+function scheduleEditorOutline() { clearTimeout(outlineTimer); outlineTimer = setTimeout(refreshEditorOutline, 180); }
+function refreshEditorOutline() {
+  if (!editor || !current.active) return;
+  const headings = window.FolioEditor.headings(current.content);
+  $('outline-items').replaceChildren(); outlineEntries = []; outlineActiveIndex = -1;
+  const elements = [...$('preview').querySelectorAll('h1,h2,h3,h4,h5,h6')];
+  for (const [index, heading] of headings.entries()) {
+    const button = document.createElement('button'); button.className = 'outline-link'; button.textContent = heading.text;
+    button.dataset.level = heading.level; button.style.setProperty('--indent', `${(heading.level - 1) * 12}px`); button.tabIndex = index ? -1 : 0;
+    const id = `doc-${heading.text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, '').trim().replace(/\s+/g, '-') || index}`;
+    button.onclick = () => { editor.selectRange(heading.offset); setActiveOutline(index); elements[index]?.scrollIntoView({ block: 'center' }); };
+    $('outline-items').append(button); outlineEntries.push({ id, element: elements[index], button, offset: heading.offset });
   }
-  updateTitle(); scheduleStats();
+  $('outline-count').textContent = headings.length ? `${headings.length} ${headings.length === 1 ? 'section' : 'sections'}` : 'No headings';
+  if (!headings.length) { const empty = document.createElement('p'); empty.className = 'sidebar-empty'; empty.textContent = 'Add a heading to build the outline.'; $('outline-items').append(empty); }
+  requestAnimationFrame(updateActiveOutline);
 }
-function syncPreviewEditing() {
-  const editable = mode === 'edit';
-  if (!editable) $('preview').querySelectorAll('[data-empty-edit]').forEach(node => node.remove());
-  // Only generated task checkboxes (tagged with data-task-index) are ever editable;
-  // author-supplied raw HTML checkboxes stay disabled so preview state cannot drift.
-  $('preview').querySelectorAll('input[type="checkbox"]').forEach(checkbox => { checkbox.disabled = !(editable && checkbox.hasAttribute('data-task-index')); });
-  $('preview').querySelectorAll('[data-edit-index]').forEach(block => {
-    block.classList.toggle('preview-editable', editable);
-    if (editable) { block.tabIndex = 0; block.title = 'Click a line to edit Markdown'; }
-    else { block.removeAttribute('tabindex'); block.removeAttribute('title'); }
-  });
-  if (!$('preview').children.length && editable && current.active) {
-    const empty = document.createElement('p'); empty.className = 'empty-edit-line';
-    empty.textContent = 'Start writing…'; empty.dataset.emptyEdit = ''; $('preview').append(empty);
+
+async function mountUnifiedEditor() {
+  if (!current.active) {
+    editor?.destroy(); editor = null; editorDocument = null;
+    $('preview').replaceChildren(); $('source-editor').replaceChildren(); return;
   }
-}
-function cancelInlineEdit() {
-  if (!inlineEdit) return;
-  inlineEdit.original.hidden = false; inlineEdit.wrapper.remove(); inlineEdit = null;
-}
-// Full-source fallback shown only when the preview reports a complexity limit
-// (previewLimitedKind). The parser keeps current.content exact; this editor
-// writes the whole source through the normal changeContent history so
-// undo/redo, dirty tracking, stats, and save all behave as usual.
-let sourceEdit = null;
-function ensureSourceFallback() {
-  let box = $('source-fallback');
-  if (box) return box;
-  box = document.createElement('div');
-  box.id = 'source-fallback';
-  box.className = 'source-fallback';
-  box.hidden = true;
-  const label = document.createElement('label');
-  label.setAttribute('for', 'source-textarea');
-  label.textContent = 'Document source';
-  const hint = document.createElement('p');
-  hint.className = 'source-fallback-hint';
-  hint.textContent = 'Preview is unavailable for this document. Edit the full source here; nothing is truncated.';
-  const textarea = document.createElement('textarea');
-  textarea.id = 'source-textarea';
-  textarea.spellcheck = false;
-  textarea.setAttribute('aria-label', 'Document source');
-  textarea.addEventListener('input', () => {
-    if (!sourceEdit || sourceEdit.textarea !== textarea) return;
-    changeContent(textarea.value, sourceEdit.group);
-    resizeLiveEditor(textarea);
-  });
-  textarea.addEventListener('keydown', event => {
-    if (event.key === 'Tab' && !event.shiftKey) { event.preventDefault(); textarea.setRangeText('  ', textarea.selectionStart, textarea.selectionEnd, 'end'); textarea.dispatchEvent(new Event('input')); }
-  });
-  box.append(label, hint, textarea);
-  $('preview').after(box);
-  return box;
-}
-function syncSourceFallback() {
-  const show = Boolean(current.active && mode === 'edit' && previewLimitedKind !== null);
-  if (!show) {
-    const box = $('source-fallback');
-    if (box) box.hidden = true;
-    sourceEdit = null;
+  if (editorDocument === current && editor) {
+    if (editor.getText() !== current.content) editor.replaceContent(current.content);
+    if (editor.isFallback() && current.content !== fallbackCheckedContent && current.content.length <= 2 * 1024 * 1024) {
+      fallbackCheckedContent = current.content;
+      try {
+        const result = await invoke('render_markdown', { content: current.content, remoteImages: false });
+        if (!/data-preview-limit=/.test((typeof result === 'string' ? result : result.html) || '')) { editor.setFallback(false); refreshEditorOutline(); }
+      } catch {}
+    }
+    if (editorPath !== current.path) { editorPath = current.path; editor.refreshMedia(); }
     return;
   }
-  const box = ensureSourceFallback();
-  box.hidden = false;
-  const textarea = box.querySelector('textarea');
-  if (textarea !== document.activeElement && textarea.value !== current.content) {
-    textarea.value = current.content;
-    resizeLiveEditor(textarea);
-  }
-  if (!sourceEdit || sourceEdit.textarea !== textarea) sourceEdit = { textarea, group: {} };
-}
-function focusSourceFallback() {
-  const textarea = sourceEdit?.textarea;
-  if (!textarea || !textarea.isConnected) return;
-  textarea.focus();
-  try { textarea.setSelectionRange(textarea.value.length, textarea.value.length); } catch {}
-}
-function resizeLiveEditor(textarea) {
-  textarea.style.height = '0px'; textarea.style.height = `${Math.max(32, textarea.scrollHeight)}px`;
-}
-function utf8Length(codePoint) {
-  return codePoint < 0x80 ? 1 : codePoint < 0x800 ? 2 : codePoint < 0x10000 ? 3 : 4;
-}
-// Source positions arrive in byte offsets, but strings are indexed in UTF-16
-// units. Calls are monotonically increasing within a render, so keep a cursor
-// instead of rescanning the document for every inline leaf.
-let offsetCursor = { content: null, byte: 0, units: 0 };
-function byteOffsetToUtf16(byteOffset) {
-  if (offsetCursor.content !== current.content || byteOffset < offsetCursor.byte) {
-    offsetCursor = { content: current.content, byte: 0, units: 0 };
-  }
-  while (offsetCursor.byte < byteOffset && offsetCursor.units < current.content.length) {
-    const codePoint = current.content.codePointAt(offsetCursor.units);
-    offsetCursor.byte += utf8Length(codePoint);
-    offsetCursor.units += codePoint > 0xFFFF ? 2 : 1;
-  }
-  return offsetCursor.units;
-}
-function previewElementForBlock(index) { return $('preview').querySelector(`[data-edit-index="${index}"]`); }
-function previewBlockAtViewportTop() {
-  const top = $('reader-scroll').getBoundingClientRect().top;
-  const elements = [...$('preview').querySelectorAll('[data-edit-index]')];
-  const element = elements.find(block => block.getBoundingClientRect().bottom > top + 8) || elements.at(-1);
-  return element ? Number(element.dataset.editIndex) : -1;
-}
-
-function mappedCharacters(original, nodes) {
-  const walker = document.createTreeWalker(original, NodeFilter.SHOW_TEXT), dom = [];
-  let joined = '';
-  while (walker.nextNode()) {
-    const node = walker.currentNode;
-    if (node.parentElement.closest('.katex,svg,.anchor,input,.footnote-backref')) continue;
-    dom.push({ node, start: joined.length }); joined += node.nodeValue;
-  }
-  const result = []; let search = 0, domIndex = 0;
-  for (const leaf of nodes.filter(node => node.text && ['text', 'code'].includes(node.kind))) {
-    const found = joined.indexOf(leaf.text, search);
-    if (found < 0) continue;
-    search = found + leaf.text.length;
-    const start = byteOffsetToUtf16(leaf.start), end = byteOffsetToUtf16(leaf.end);
-    const raw = current.content.slice(start, end); let rawIndex = 0, visibleIndex = 0;
-    for (const character of leaf.text) {
-      let sourceStart = start + rawIndex, sourceEnd;
-      if (leaf.kind === 'code') { sourceStart = start; sourceEnd = end; }
-      else {
-        if (raw[rawIndex] === '\\' && raw[rawIndex + 1] === character) rawIndex++;
-        if (raw[rawIndex] === '&') {
-          const entity = /^&(?:#x[\da-f]+|#\d+|[a-z]+);/i.exec(raw.slice(rawIndex));
-          if (entity) {
-            const decoder = document.createElement('textarea'); decoder.innerHTML = entity[0];
-            if (decoder.value === character) { rawIndex += entity[0].length; sourceEnd = start + rawIndex; }
-          }
-        }
-        if (sourceEnd === undefined) { rawIndex += character.length; sourceEnd = start + rawIndex; }
+  const documentAtOpen = current, generation = ++renderGeneration;
+  editor?.destroy(); editor = null; cancelMermaidPending();
+  $('preview').replaceChildren(); $('source-editor').replaceChildren();
+  await loadAsset('vendor/editor/editor.js');
+  await loadAsset('vendor/editor/editor.css', true);
+  if (current !== documentAtOpen || generation !== renderGeneration) return;
+  let limited = false;
+  try {
+    const result = await invoke('render_markdown', { content: current.content, remoteImages: false });
+    const html = typeof result === 'string' ? result : result.html;
+    limited = /data-preview-limit=/.test(html || ''); previewBlocks = result.blocks || [];
+  } catch { limited = true; }
+  if (current !== documentAtOpen || generation !== renderGeneration) return;
+  let extensionCache = null, extensionContent = null;
+  editorDocument = current; editorPath = current.path;
+  fallbackCheckedContent = current.content;
+  const editorOptions = {
+    content: current.content, forceSource: limited, richParent: $('preview'), sourceParent: $('source-editor'), scroller: $('reader-scroll'),
+    onChange(content) { if (current !== documentAtOpen) return; current.content = content; previewSnapshot = null; updateTitle(); scheduleStats(); scheduleEditorOutline(); },
+    onPresentation: editorPresentation, message: toast, loadKatex, remoteImages: () => remoteImages, themeRevision: () => diagramThemeRevision,
+    editText: (title, value, apply) => openEditorAction(title, value, apply),
+    editLink: (value, apply, open) => openEditorAction('Link URL', value, apply, open),
+    openLink(href) { const anchor = document.createElement('a'); anchor.setAttribute('href', href); followPreviewLink(anchor); },
+    async renderExtension(source) {
+      if (extensionContent !== current.content) {
+        extensionContent = current.content;
+        extensionCache = invoke('render_markdown', { content: current.content, remoteImages: false });
       }
-      const at = found + visibleIndex;
-      while (domIndex < dom.length && at >= dom[domIndex].start + dom[domIndex].node.length) domIndex++;
-      const entry = domIndex < dom.length && at >= dom[domIndex].start ? dom[domIndex] : null;
-      if (entry) {
-        const offset = at - entry.start, range = document.createRange();
-        range.setStart(entry.node, offset); range.setEnd(entry.node, Math.min(entry.node.length, offset + character.length));
-        const rect = range.getBoundingClientRect();
-        if (rect.width && rect.height) result.push({ node: entry.node, offset, length: character.length, start: sourceStart, end: sourceEnd, rect });
-      }
-      visibleIndex += character.length;
+      const result = await extensionCache;
+      if (current !== documentAtOpen) return '';
+      const parsed = new DOMParser().parseFromString(typeof result === 'string' ? result : result.html || '', 'text/html');
+      const offset = current.content.indexOf(source), line = offset < 0 ? -1 : current.content.slice(0, offset).split('\n').length;
+      const match = [...parsed.body.querySelectorAll('[data-sourcepos]')].find(node => node.dataset.sourcepos.startsWith(`${line}:`));
+      const html = match?.outerHTML || (/^---\n/.test(source) ? '' : null);
+      if (html === null) throw new Error('No safe projection for this extension');
+      return html;
+    },
+    async renderDiagram(source, signal) {
+      if (mermaidSourceTooLarge(source)) return { ok: false };
+      const { result } = await requestMermaidRender(source, signal); return result;
+    },
+    async renderImage(destination, allowRemote) {
+      // Reuse the native renderer's canonical, document-relative resolver and
+      // per-file budgets. Never introduce an arbitrary-file-read command.
+      const escaped = String(destination).replace(/\\/g, '/').replace(/</g, '%3C').replace(/>/g, '%3E').replace(/\n|\r/g, '');
+      const result = await invoke('render_markdown', { content: `![image](<${escaped}>)`, remoteImages: allowRemote });
+      if (current !== documentAtOpen) return { error: 'Image request expired' };
+      const html = typeof result === 'string' ? result : result.html;
+      const parsed = new DOMParser().parseFromString(html || '', 'text/html');
+      const src = parsed.querySelector('img')?.getAttribute('src');
+      if (!src || !/^(?:data:image\/(?:png|jpeg|gif|webp|svg\+xml|avif|bmp|x-icon);base64,|https:\/\/)/i.test(src)) return { error: 'Image unavailable or blocked. Source is preserved.' };
+      return { src };
     }
+  };
+  try {
+    editor = window.FolioEditor.create(editorOptions);
+  } catch {
+    // A rich-projection failure must not leave the reader pane blank. Source
+    // mode has no Markdown projection step, so it can still open the document.
+    $('preview').replaceChildren(); $('source-editor').replaceChildren();
+    try {
+      editor = window.FolioEditor.create({ ...editorOptions, forceSource: true });
+    } catch (fallbackError) {
+      toast('This document could not be opened in the editor. Your file is unchanged.');
+      throw fallbackError;
+    }
+    toast('Rich view unavailable for this document. Showing Markdown source.');
   }
-  return result;
+  $('folder-empty').hidden = true; refreshEditorOutline(); status('');
 }
-function editTarget(target, y) {
-  const blockElement = target.closest('[data-edit-index]');
-  const block = previewBlocks[Number(blockElement?.dataset.editIndex)];
-  if (!block) {
-    if (target.closest('[data-empty-edit]')) return { original: target.closest('[data-empty-edit]'), start: 0, end: 0 };
-    return null;
-  }
-  const nodes = block.nodes || [];
-  let original = target.closest('.mermaid-host,.math-block,.table-scroll,pre')
-    || target.closest('p,h1,h2,h3,h4,h5,h6,li,dt,dd') || blockElement;
-  if (!blockElement.contains(original)) original = blockElement;
-  const metadata = nodes.find(node => node.sourcepos === original.dataset.sourcepos) || block;
-  let start = byteOffsetToUtf16(metadata.start), end = byteOffsetToUtf16(metadata.end);
-  const whole = original.matches('pre,.mermaid-host,.math-block,.table-scroll') || metadata.kind === 'code-block';
-  if (whole) return { original, start, end, code: true };
-  const leaves = nodes.filter(node => node.start >= metadata.start && node.end <= metadata.end);
-  const chars = mappedCharacters(original, leaves);
-  if (!chars.length) return { original, start, end };
-  const nearest = chars.reduce((best, char) => Math.abs(char.rect.top + char.rect.height / 2 - y) < Math.abs(best.rect.top + best.rect.height / 2 - y) ? char : best);
-  const row = chars.filter(char => Math.abs(char.rect.top + char.rect.height / 2 - (nearest.rect.top + nearest.rect.height / 2)) < nearest.rect.height * .55);
-  const first = row[0], last = row.at(-1);
-  const firstIndex = chars.indexOf(first), lastIndex = chars.indexOf(last);
 
-  start = firstIndex === 0 ? start : first.start;
-  end = lastIndex === chars.length - 1 ? end : last.end;
-  const before = document.createRange(); before.selectNodeContents(original); before.setEnd(first.node, first.offset);
-  const after = document.createRange(); after.selectNodeContents(original); after.setStart(last.node, last.offset + last.length);
-  return { original, start, end, before: before.cloneContents(), after: after.cloneContents() };
-}
-function beginInlineEdit(edit) {
-  if (mode !== 'edit' || inlineEdit || !edit) return;
-  const { original, start, end } = edit;
-  const wrapper = document.createElement('div'); wrapper.className = 'live-editor' + (edit.code ? ' live-code' : '');
-  const style = getComputedStyle(original);
-  for (const property of ['fontSize', 'lineHeight', 'fontWeight', 'marginTop', 'marginBottom']) wrapper.style[property] = style[property];
-  const textarea = document.createElement('textarea'); textarea.value = current.content.slice(start, end); textarea.spellcheck = false;
-  textarea.placeholder = 'Start writing…'; textarea.setAttribute('aria-label', edit.code ? 'Edit Markdown block' : 'Edit Markdown line');
-  for (const [fragment, className] of [[edit.before, 'live-before'], [edit.after, 'live-after']]) {
-    if (!fragment?.textContent) continue;
-    const part = document.createElement('div'); part.className = className; part.append(fragment);
-    part.querySelectorAll('[id]').forEach(node => node.removeAttribute('id'));
-    if (className === 'live-before') wrapper.append(part); else edit.afterElement = part;
-  }
-  wrapper.append(textarea); if (edit.afterElement) wrapper.append(edit.afterElement);
-  original.hidden = true; original.after(wrapper);
-  inlineEdit = { ...edit, wrapper, textarea, prefix: current.content.slice(0, start), suffix: current.content.slice(end), group: {} };
-  textarea.addEventListener('input', () => {
-    if (inlineEdit?.textarea !== textarea) return;
-    changeContent(inlineEdit.prefix + textarea.value + inlineEdit.suffix, inlineEdit.group); resizeLiveEditor(textarea);
-  });
-  textarea.addEventListener('keydown', event => {
-    if (event.key === 'Escape' || (event.key === 'Enter' && (event.ctrlKey || event.metaKey))) {
-      event.preventDefault(); event.stopPropagation(); enqueue(commitInlineEdit);
-    } else if (event.key === 'Tab') { event.preventDefault(); textarea.setRangeText('  ', textarea.selectionStart, textarea.selectionEnd, 'end'); textarea.dispatchEvent(new Event('input')); }
-  });
-  textarea.addEventListener('blur', () => {
-    setTimeout(() => { if (inlineEdit?.textarea === textarea && document.activeElement !== textarea) enqueue(commitInlineEdit); }, 0);
-  });
-  textarea.focus(); resizeLiveEditor(textarea); textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-}
-async function commitInlineEdit() {
-  if (!inlineEdit && !sourceEdit) return true;
-  if (sourceEdit && !inlineEdit) { sourceEdit = null; historyGroup = null; await renderPreview(); return true; }
-  cancelInlineEdit(); historyGroup = null; await renderPreview(); return true;
-}
+$('show-markdown').addEventListener('mousedown', event => event.preventDefault());
+$('show-markdown').onclick = () => enqueue(async () => { const next = mode !== 'edit'; await renderPreview(); editor?.setPresentation(next); refreshEditorOutline(); });
+$('lock-document').onclick = () => editor?.setLocked(!editor.isLocked());
+$('source-snapshot').onclick = openSourceSnapshot;
+$('source-snapshot-close').onclick = () => { $('source-dialog').close(); editor?.focus(); };
+$('source-snapshot-copy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('source-snapshot-text').value); $('source-snapshot-status').textContent = 'Snapshot copied.'; }
+  catch { $('source-snapshot-text').focus(); $('source-snapshot-text').select(); document.execCommand('copy'); $('source-snapshot-status').textContent = 'Snapshot selected for copying.'; }
+};
+$('editor-action-cancel').onclick = () => { $('editor-action-dialog').close(); editor?.focus(); };
+for (const id of ['source-dialog', 'editor-action-dialog']) $(id).addEventListener('cancel', event => {
+  event.preventDefault(); $(id).close(); editor?.focus();
+});
+$('format-tools').addEventListener('mousedown', event => { if (event.target.closest('button')) event.preventDefault(); });
+$('format-tools').addEventListener('click', event => { const command = event.target.closest('[data-editor-command]')?.dataset.editorCommand; if (command) editor?.command(command); });

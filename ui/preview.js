@@ -45,11 +45,16 @@ function setActiveOutline(index) {
 }
 function updateActiveOutline() {
   if (!outlineEntries.length) return;
+  if (editor?.isSource()) {
+    const position = editor.getSelection().head;
+    let active = 0; outlineEntries.forEach((entry, index) => { if (entry.offset <= position) active = index; });
+    setActiveOutline(active); return;
+  }
   const line = $('reader-scroll').getBoundingClientRect().top + 88;
   let low = 0, high = outlineEntries.length - 1, active = 0;
   while (low <= high) {
     const middle = (low + high) >> 1;
-    if (outlineEntries[middle].element.getBoundingClientRect().top <= line) {
+    if ((outlineEntries[middle].element?.getBoundingClientRect().top ?? Infinity) <= line) {
       active = middle;
       low = middle + 1;
     } else {
@@ -78,94 +83,8 @@ $('outline-items').addEventListener('keydown', event => {
 });
 
 async function renderPreview(restoreScroll) {
-  if (previewSnapshot?.content === current.content && previewSnapshot.path === current.path) {
-    syncPreviewEditing();
-    syncSourceFallback();
-    if (previewSnapshot.themeRevision !== diagramThemeRevision) await refreshMermaid();
-    if (restoreScroll !== undefined) $('reader-scroll').scrollTop = restoreScroll;
-    status('');
-    return;
-  }
-  const generation = ++renderGeneration;
-  const content = current.content, path = current.path, themeRevision = diagramThemeRevision;
-  const scrollTo = restoreScroll ?? $('reader-scroll').scrollTop;
-  const reusableDiagrams = new Map();
-  for (const host of $('preview').querySelectorAll('.mermaid-host[data-mermaid-source]')) {
-    if (Number(host.dataset.themeRevision) !== themeRevision) continue;
-    const source = host.dataset.mermaidSource;
-    if (!reusableDiagrams.has(source)) reusableDiagrams.set(source, []);
-    reusableDiagrams.get(source).push(host);
-  }
-  try {
-    const result = await invoke('render_markdown', { content, remoteImages });
-    if (generation !== renderGeneration) return;
-    $('preview').innerHTML = typeof result === 'string' ? result : result.html;
-    previewBlocks = Array.isArray(result.blocks) ? result.blocks : [];
-    const limitNode = $('preview').querySelector('[data-preview-limit]');
-    previewLimitedKind = limitNode ? (limitNode.dataset.previewLimit || 'limit') : null;
-    const sourceIndexes = new Map(previewBlocks.map((block, index) => [block.sourcepos, index]).filter(([position]) => position));
-    const elements = [...$('preview').querySelectorAll(':scope > [data-sourcepos]:not(.footnotes), :scope > .footnotes > ol > li[data-sourcepos]')];
-    for (const element of elements) {
-      const index = sourceIndexes.get(element.dataset.sourcepos);
-      if (index !== undefined) element.dataset.editIndex = String(index);
-    }
-
-    if (!sourceIndexes.size && $('preview').children.length === previewBlocks.length) {
-      [...$('preview').children].forEach((element, index) => { element.dataset.editIndex = String(index); });
-    }
-    setupCodeLanguages();
-    setupTables();
-    await renderMath(generation);
-    if (generation !== renderGeneration) return;
-    syncPreviewEditing();
-    await renderDiagrams(generation, reusableDiagrams);
-    if (generation !== renderGeneration) return;
-    if (scrollTo !== undefined) { const container = $('reader-scroll'); container.scrollTop = Math.max(0, Math.min(scrollTo, container.scrollHeight - container.clientHeight)); }
-    $('folder-empty').hidden = true;
-    previewSnapshot = { content, path, themeRevision, limited: previewLimitedKind };
-    syncPreviewEditing();
-    syncSourceFallback();
-    if (themeRevision !== diagramThemeRevision) await refreshMermaid();
-    $('outline-items').replaceChildren();
-    outlineEntries = [];
-    outlineActiveIndex = -1;
-    const headings = $('preview').querySelectorAll('h1,h2,h3,h4,h5,h6');
-    for (const heading of headings) {
-      const level = Number(heading.tagName[1]);
-      const button = document.createElement('button');
-      button.className = 'outline-link';
-      button.textContent = heading.textContent;
-      button.title = heading.textContent;
-      button.dataset.level = String(level);
-      button.style.setProperty('--indent', `${(level - 1) * 12}px`);
-      button.tabIndex = -1;
-      button.onclick = async () => {
-        const id = heading.id;
-        if (mode !== 'read') await setMode('read');
-        document.getElementById(id)?.scrollIntoView({ block: 'start' });
-        setActiveOutline(outlineEntries.findIndex(entry => entry.id === id));
-      };
-      $('outline-items').append(button);
-      outlineEntries.push({ id: heading.id, element: heading, button });
-    }
-    if (outlineEntries.length) {
-      outlineEntries[0].button.tabIndex = 0;
-      $('outline-count').textContent = `${outlineEntries.length} ${outlineEntries.length === 1 ? 'section' : 'sections'}`;
-    } else {
-      $('outline-count').textContent = 'No headings';
-      const empty = document.createElement('div');
-      empty.className = 'sidebar-empty';
-      const title = document.createElement('strong');
-      title.textContent = 'No headings';
-      const hint = document.createElement('span');
-      hint.textContent = 'Add a heading to build the outline.';
-      empty.append(title, hint);
-      $('outline-items').append(empty);
-    }
-    requestAnimationFrame(updateActiveOutline);
-    if (!$('find-bar').hidden) updateFind();
-    status('');
-  } catch (error) { status('Preview unavailable'); toast(error); }
+  await mountUnifiedEditor();
+  if (restoreScroll !== undefined) $('reader-scroll').scrollTop = restoreScroll;
 }
 function setupCodeLanguages() {
   $('preview').querySelectorAll('pre > code[class*="language-"]').forEach(code => {
@@ -248,19 +167,27 @@ function mermaidSourceTooLarge(source) {
     return (source || '').length > MAX_MERMAID_SOURCE_BYTES;
   }
 }
-async function requestMermaidRender(source) {
+async function requestMermaidRender(source, signal) {
   const id = `m${++mermaidBridgeId}`;
   await ensureMermaidBridge();
   let resolveResult;
   const result = new Promise(resolve => { resolveResult = resolve; });
   mermaidPending.set(id, { resolve: resolveResult });
+  const abort = () => {
+    if (!mermaidPending.has(id)) return;
+    mermaidPending.delete(id); resolveResult(null);
+    invoke('mermaid_render_cancel', { id }).catch(() => {});
+  };
+  signal?.addEventListener('abort', abort, { once: true });
+  if (signal?.aborted) abort();
   try {
-    await invoke('mermaid_render_request', { request: { id, source, theme: { variables: mermaidThemeVariables() } } });
+    if (!signal?.aborted) await invoke('mermaid_render_request', { request: { id, source, theme: { variables: mermaidThemeVariables() } } });
   } catch (error) {
     mermaidPending.delete(id);
     throw error;
   }
-  return { id, result: await result };
+  try { return { id, result: await result }; }
+  finally { signal?.removeEventListener('abort', abort); }
 }
 function showMermaidFallback(host, source, offline) {
   const message = document.createElement('p');
@@ -319,6 +246,7 @@ async function renderDiagrams(generation = renderGeneration, reusableDiagrams = 
   }
 }
 async function refreshMermaid() {
+  if (editor) { editor.refreshMedia(); return; }
   if (!current.active || !$('preview').querySelector('.mermaid-host')) return;
   const generation = renderGeneration, themeRevision = diagramThemeRevision;
   for (const host of $('preview').querySelectorAll('.mermaid-host[data-mermaid-source]')) {

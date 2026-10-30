@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 folio_project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-if [[ ! -x "$folio_project_dir/target/release/folio" ]]; then
-  cargo build --release --manifest-path "$folio_project_dir/Cargo.toml"
-fi
+# Always let Cargo decide whether a rebuild is needed; skipping the build when
+# a binary exists would run an app that embeds an older UI.
+cargo build --locked --release --manifest-path "$folio_project_dir/Cargo.toml"
 exec "$folio_project_dir/target/release/folio" "$@"

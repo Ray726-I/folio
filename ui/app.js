@@ -10,10 +10,20 @@ const legacyOutline = preferences.get('outline', null);
 if (preferences.get('outlineWidth', null) === null && typeof legacyOutline === 'number') preferences.set('outlineWidth', legacyOutline);
 let outlineVisible = preferences.get('outlineVisible', typeof legacyOutline === 'boolean' ? legacyOutline : false), toastTimer;
 let wideLayout = preferences.get('wideLayout', false);
+let formatToolbarVisible = preferences.get('formatToolbarVisible', true);
 function filePicker() { const value = preferences.get('filePicker', 'folio'); return value === 'native' ? 'native' : 'folio'; }
+function syncOpenAffordance() {
+  const native = filePicker() === 'native';
+  const open = $('open'), label = native ? 'Open a Markdown file (Ctrl+O)' : 'Open a file or folder (Ctrl+O)';
+  open.title = label; open.setAttribute('aria-label', label);
+  open.querySelector('use').setAttribute('href', native ? '#i-file' : '#i-open');
+  open.querySelector('span').textContent = native ? 'Open file' : 'Open';
+  $('open-folder').hidden = !native;
+}
 function setFilePicker(next) {
   const value = next === 'native' ? 'native' : 'folio';
   preferences.set('filePicker', value);
+  syncOpenAffordance();
   status(value === 'native' ? 'System file picker enabled' : 'Folio file picker enabled');
 }
 function toggleFilePicker() { setFilePicker(filePicker() === 'native' ? 'folio' : 'native'); }
@@ -58,6 +68,7 @@ function showDocument() {
   previewLimitedKind = null; syncSourceFallback();
 }
 function showWelcome() {
+  editor?.destroy(); editor = null; editorDocument = null; cancelMermaidPending();
   $('welcome').hidden = false; $('document-view').hidden = true; $('statusbar').hidden = true;
   $('home').disabled = true;
   $('preview').replaceChildren(); $('folder-empty').hidden = true;
@@ -113,15 +124,9 @@ setupSidebarResize('file-browser', 'folder-divider', 'folder', 250);
 setupSidebarResize('outline', 'outline-divider', 'outlineWidth', 248, 'outline');
 async function setMode(next) {
   if (!current.active) return;
-  await commitInlineEdit();
-  const scroll = $('reader-scroll').scrollTop;
-  mode = next === 'read' ? 'read' : 'edit'; root.dataset.mode = mode;
-  $('reader-scroll').hidden = false;
-  $('read-mode').setAttribute('aria-pressed', String(mode === 'read'));
-  $('edit-mode').setAttribute('aria-pressed', String(mode === 'edit'));
-  await renderPreview(scroll);
-  if (mode === 'edit' && previewLimitedKind !== null) focusSourceFallback();
-  if (mode === 'edit' && !current.content) beginInlineEdit(editTarget($('preview').firstElementChild, 0));
+  editor?.captureSelection?.();
+  await renderPreview();
+  editor?.setPresentation(next === 'edit', true);
   if (!$('find-bar').hidden) updateFind();
 }
 function requestMode(next) { return enqueue(() => setMode(next)); }
@@ -139,10 +144,10 @@ function toggleRemoteImages() {
   preferences.set('remoteImages', remoteImages);
   previewSnapshot = null;
   status(remoteImages ? 'Remote images will load from the network' : 'Remote images are blocked');
-  if (current.active) enqueue(() => renderPreview());
+  if (current.active) editor?.refreshMedia(!remoteImages);
 }
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-  if (selectedTheme === 'system') { updatePreviewPalette(); refreshMermaid(); }
+  if (selectedTheme === 'system') { updatePreviewPalette(); refreshMermaid(); editor?.refreshMedia(); }
 });
 // The outline steps aside for the file tree on narrow screens; give it back when there is room.
 window.matchMedia('(max-width:960px)').addEventListener('change', event => {
@@ -337,7 +342,10 @@ async function openFolderPath(path, confirmed = false) {
   setLineEnding(null);
   mode = 'read'; root.dataset.mode = mode;
   $('reader-scroll').hidden = false;
-  showDocument(); $('preview').replaceChildren(); $('reader-scroll').scrollTop = 0; status('');
+  // Tear down the previous document's editor before showDocument() builds the
+  // outline and folder view, so no stale content or headings survive.
+  await renderPreview();
+  showDocument(); $('reader-scroll').scrollTop = 0; status('');
   $('folder-empty').querySelector('h1').textContent = folderEntries.some(entry => !entry.directory) ? 'Folder opened' : 'No Markdown files';
   $('folder-empty').querySelector('p').textContent = folderEntries.some(entry => !entry.directory) ? 'Choose a Markdown file from the file tree.' : 'This folder has no Markdown files. Open another folder to browse it.';
   const limits = [];
@@ -355,13 +363,14 @@ function requestOpenLocation(path) {
 async function save(saveAs = false, force = false) {
   if (!current.active) return false;
   if (mode === 'edit') await commitInlineEdit();
+  editor?.checkpoint();
   const snapshot = current.content;
   status('Saving…');
   try {
     const saved = await invoke('save_document', { content: snapshot, saveAs, force });
     if (!saved) { status(''); return false; }
     current.path = saved.path; current.name = saved.name; current.saved = snapshot; updateTitle(); $('disk-banner').hidden = true; addRecent(current.path); status('Saved');
-    if (mode === 'read') await renderPreview();
+    await renderPreview();
     return true;
   } catch (error) {
     status('');
@@ -385,7 +394,7 @@ function newDocument(sample = false) {
     const content = sample ? SAMPLE : '';
     current = { path: null, name: sample ? 'Welcome.md' : 'Untitled.md', content, saved: content, active: true };
     setLineEnding(null);
-    showDocument(); $('reader-scroll').scrollTop = 0; await setMode(sample ? 'read' : 'edit');
+    showDocument(); $('reader-scroll').scrollTop = 0; await setMode('read'); if (!sample) editor?.focus();
   });
 }
 function addRecent(path) { const recent = preferences.get('recent', []); preferences.set('recent', [path, ...recent.filter(item => !samePath(item, path))].slice(0, 6)); renderRecent(); }
@@ -412,8 +421,9 @@ function allCommands() {
   if (current.active) commands.splice(2, 0,
     { label: 'Save', icon: 'save', shortcut: 'Ctrl+S', action: () => requestSave() },
     { label: 'Save as…', icon: 'save', shortcut: 'Ctrl+Shift+S', action: () => requestSave(true) },
-    { label: 'Preview document', icon: 'read', action: () => requestMode('read') },
-    { label: 'Edit document', icon: 'edit', action: () => requestMode('edit') },
+    { label: mode === 'edit' ? 'Hide Markdown' : 'Show Markdown', icon: 'edit', shortcut: 'Ctrl+E', action: () => requestMode(mode === 'edit' ? 'read' : 'edit') },
+    { label: editor?.isLocked() ? 'Unlock document' : 'Lock document', icon: 'read', action: () => editor?.setLocked(!editor.isLocked()) },
+    { label: 'Source snapshot', icon: 'file', action: openSourceSnapshot },
     { label: 'Undo', icon: 'edit', shortcut: 'Ctrl+Z', action: () => enqueue(() => undoRedo()) },
     { label: 'Redo', icon: 'edit', shortcut: 'Ctrl+Shift+Z / Ctrl+Y', action: () => enqueue(() => undoRedo(true)) },
     { label: 'Find in document', icon: 'search', shortcut: 'Ctrl+F', action: openFind },
@@ -422,6 +432,7 @@ function allCommands() {
     { label: 'Toggle outline', icon: 'outline', action: () => setOutline(!outlineVisible) },
     { label: 'Toggle focus mode', icon: 'focus', shortcut: 'F11', action: toggleFocus },
     { label: wideLayout ? 'Use centered document width' : 'Use full document width', icon: wideLayout ? 'width-contract' : 'width-expand', action: toggleDocumentWidth },
+    { label: formatToolbarVisible ? 'Hide formatting toolbar' : 'Show formatting toolbar', icon: 'format', action: () => setFormatToolbarVisible(!formatToolbarVisible) },
     { label: 'Zoom in', icon: 'plus', shortcut: 'Ctrl+=', action: () => zoomWindow(.1) },
     { label: 'Zoom out', icon: 'minus', shortcut: 'Ctrl+-', action: () => zoomWindow(-.1) },
     { label: 'Reset window zoom', icon: 'read', shortcut: 'Ctrl+0', action: () => zoomWindow(0, true) },
@@ -473,30 +484,23 @@ $('command-search').addEventListener('keydown', event => {
 for (const id of ['command-dialog']) $(id).addEventListener('click', event => { const bounds = $(id).getBoundingClientRect(); if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) $(id).close(); });
 
 let matches = [], findIndex = -1;
-function openFind() { if (!current.active) return; if (inlineEdit) { enqueue(async () => { await commitInlineEdit(); openFind(); }); return; } $('find-bar').hidden = false; $('find-input').focus(); $('find-input').select(); updateFind(); }
-function clearHighlights() { $('preview').querySelectorAll('mark[data-find]').forEach(mark => mark.replaceWith(document.createTextNode(mark.textContent))); $('preview').normalize(); }
+function openFind() { if (!current.active) return; $('find-bar').hidden = false; $('find-input').focus(); $('find-input').select(); updateFind(); }
+function clearHighlights() {}
 function updateFind() {
-  clearHighlights(); matches = []; findIndex = -1;
-  const query = $('find-input').value.toLocaleLowerCase();
+  matches = []; findIndex = -1;
+  const query = $('find-input').value;
   if (!query) { $('find-result').textContent = ''; return; }
-  {
-    const walker = document.createTreeWalker($('preview'), NodeFilter.SHOW_TEXT), nodes = []; while (walker.nextNode()) { if (!walker.currentNode.parentElement?.closest('.mermaid-host,.katex,textarea,[hidden]')) nodes.push(walker.currentNode); }
-    for (const node of nodes) {
-      const text = node.nodeValue, lower = text.toLocaleLowerCase(); let cursor = 0, position = lower.indexOf(query);
-      if (position === -1) continue;
-      const fragment = document.createDocumentFragment();
-      while (position !== -1 && matches.length < 2000) { fragment.append(document.createTextNode(text.slice(cursor, position))); const mark = document.createElement('mark'); mark.dataset.find = ''; mark.textContent = text.slice(position, position + query.length); fragment.append(mark); matches.push(mark); cursor = position + query.length; position = lower.indexOf(query, cursor); }
-      fragment.append(document.createTextNode(text.slice(cursor))); node.replaceWith(fragment);
-    }
-  }
+  const search = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu'); let match;
+  while ((match = search.exec(current.content)) && matches.length < 2000) matches.push({ from: match.index, to: match.index + match[0].length });
   if (matches.length) nextFind(1); else $('find-result').textContent = 'No matches';
 }
 function nextFind(direction) {
-  if (!matches.length) return; findIndex = (findIndex + direction + matches.length) % matches.length;
-  matches.forEach(mark => mark.classList.remove('find-active')); matches[findIndex].classList.add('find-active'); matches[findIndex].scrollIntoView({ block: 'center' });
+  if (!matches.length) return;
+  findIndex = (findIndex + direction + matches.length) % matches.length;
+  editor?.selectRange(matches[findIndex].from, matches[findIndex].to, false);
   $('find-result').textContent = `${findIndex + 1} / ${matches.length}`;
 }
-function closeFind() { $('find-bar').hidden = true; clearHighlights(); $('reader-scroll').focus(); }
+function closeFind() { $('find-bar').hidden = true; editor?.focus(); }
 function toggleFocus() { document.body.classList.toggle('focus-mode'); }
 function setDocumentWidth(full, persist = true) {
   const anchor = current.active ? previewElementForBlock(previewBlockAtViewportTop()) : null;
@@ -513,19 +517,21 @@ function setDocumentWidth(full, persist = true) {
   if (persist) preferences.set('wideLayout', wideLayout);
 }
 function toggleDocumentWidth() { setDocumentWidth(!wideLayout); }
+function setFormatToolbarVisible(visible, persist = true) {
+  formatToolbarVisible = visible !== false;
+  $('format-tools').hidden = !formatToolbarVisible;
+  const button = $('format-toggle');
+  button.setAttribute('aria-pressed', String(formatToolbarVisible));
+  button.setAttribute('aria-expanded', String(formatToolbarVisible));
+  const label = formatToolbarVisible ? 'Hide formatting toolbar' : 'Show formatting toolbar';
+  button.setAttribute('aria-label', label);
+  button.title = label;
+  if (persist) preferences.set('formatToolbarVisible', formatToolbarVisible);
+}
 
-$('preview').addEventListener('change', event => {
-  const checkbox = event.target.closest('input[type="checkbox"][data-task-index]');
-  if (!checkbox || mode !== 'edit') return;
-  const taskIndex = Number(checkbox.dataset.taskIndex), checked = checkbox.checked;
-  enqueue(async () => {
-    await commitInlineEdit();
-    changeContent(await invoke('set_task_checked', { content: current.content, taskIndex, checked }));
-    await renderPreview();
-  });
-});
 $('home').onclick = goHome;
 $('open').onclick = $('welcome-open').onclick = openEntry;
+$('open-folder').onclick = openFolderEntry;
 $('open-parent').onclick = () => pickerListing?.parent && browseTo(pickerListing.parent).catch(toast);
 $('open-go').onclick = () => browseTo($('open-path').value.trim()).catch(toast);
 $('open-path').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); browseTo($('open-path').value.trim()).catch(toast); } };
@@ -541,74 +547,36 @@ $('folder-close').onclick = () => setFolderVisible(false);
 $('folder-toggle').onclick = () => setFolderVisible(!folderVisible);
 $('folder-refresh').onclick = () => activeFolder && enqueue(async () => { const listing = await invoke('open_folder', { path: activeFolder.path }); activeFolder = { path: listing.path, name: listing.name }; folderEntries = listing.entries; renderFolderEntries(); });
 $('new').onclick = () => newDocument(); $('sample').onclick = () => newDocument(true);
-$('read-mode').onclick = () => requestMode('read'); $('edit-mode').onclick = () => requestMode('edit'); $('save').onclick = () => requestSave();
+$('save').onclick = () => requestSave();
 $('palette-open').onclick = () => openCommands(); $('outline-toggle').onclick = () => setOutline(!outlineVisible); $('outline-close').onclick = () => setOutline(false);
 $('width-toggle').onclick = toggleDocumentWidth;
+$('format-toggle').onclick = () => setFormatToolbarVisible(!formatToolbarVisible);
 $('zoom-in').onclick = () => zoomWindow(.1); $('zoom-out').onclick = () => zoomWindow(-.1); $('zoom-reset').onclick = () => zoomWindow(0, true);
 $('reload').onclick = () => requestOpen(current.path); $('dismiss-disk').onclick = () => { $('disk-banner').hidden = true; };
 $('find-input').oninput = updateFind; $('find-next').onclick = () => nextFind(1); $('find-previous').onclick = () => nextFind(-1); $('find-close').onclick = closeFind;
 $('find-input').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); nextFind(event.shiftKey ? -1 : 1); } };
 function followPreviewLink(anchor) {
   const href = anchor.getAttribute('href'); if (!href) return;
-  if (href.startsWith('#')) { let id; try { id = decodeURIComponent(href.slice(1)); } catch { return; } document.getElementById(id)?.scrollIntoView({ block: 'start' }); }
+  if (href.startsWith('#')) {
+    let id; try { id = decodeURIComponent(href.slice(1)); } catch { return; }
+    const heading = outlineEntries.find(entry => entry.id === id || entry.id === `doc-${id}`);
+    if (heading) { editor?.selectRange(heading.offset); heading.element?.scrollIntoView({ block: 'start' }); }
+    else document.getElementById(id)?.scrollIntoView({ block: 'start' });
+  }
   else if (/^(https?:|mailto:)/i.test(href)) invoke('open_link', { url: href }).catch(toast);
   else enqueue(async () => { const path = await invoke('resolve_document_link', { link: href }); await openPath(path); });
 }
-$('preview').addEventListener('click', event => {
-  const anchor = event.target.closest('a');
-  if (mode === 'edit') {
-    if (anchor) event.preventDefault();
-    if (event.target.closest('input,button,textarea')) return;
-    if (inlineEdit || busy) return;
-    beginInlineEdit(editTarget(event.target, event.clientY));
-    return;
-  }
-  if (!anchor) return;
-  event.preventDefault();
-  followPreviewLink(anchor);
-});
-$('preview').addEventListener('auxclick', event => {
-  if (event.button !== 1) return;
-  const anchor = event.target.closest('a');
-  if (!anchor) return;
-  event.preventDefault();
-  if (mode === 'read') followPreviewLink(anchor);
-});
-$('preview').addEventListener('dragstart', event => { if (event.target.closest('a')) event.preventDefault(); });
-document.addEventListener('pointerdown', event => {
-  if (!inlineEdit || event.target === inlineEdit.textarea || event.target.closest('dialog,#find-bar,#source-fallback')) return;
-  const checkbox = event.target.closest('input[type="checkbox"][data-task-index]');
-  if (checkbox) {
-    event.preventDefault();
-    const taskIndex = Number(checkbox.dataset.taskIndex), checked = !checkbox.checked;
-    enqueue(async () => {
-      await commitInlineEdit();
-      changeContent(await invoke('set_task_checked', { content: current.content, taskIndex, checked }));
-      await renderPreview();
-    });
-    return;
-  }
-  if (event.target.closest('#preview') && !event.target.closest('input,button')) {
-    event.preventDefault();
-    const x = event.clientX, y = event.clientY;
-    enqueue(async () => { await commitInlineEdit(); const target = document.elementFromPoint(x, y); if (target?.closest('#preview')) beginInlineEdit(editTarget(target, y)); });
-  } else enqueue(commitInlineEdit);
-});
-$('preview').addEventListener('keydown', event => {
-  if (mode === 'edit' && event.key === 'Enter' && !event.target.matches('textarea,input')) {
-    event.preventDefault(); beginInlineEdit(editTarget(event.target, event.target.getBoundingClientRect().top + 10));
-  }
-});
 document.addEventListener('keydown', event => {
   const control = event.ctrlKey || event.metaKey;
   if (control && event.shiftKey && event.key.toLowerCase() === 'p') { event.preventDefault(); $('command-dialog').open ? $('command-dialog').close() : openCommands(); return; }
-  if ($('command-dialog').open || $('confirm-dialog').open || $('open-dialog').open) return;
+  if (event.defaultPrevented) return;
+  if ($('command-dialog').open || $('confirm-dialog').open || $('open-dialog').open || $('source-dialog').open || $('editor-action-dialog').open) return;
   if (event.key === 'Escape') { if (!$('find-bar').hidden) closeFind(); else document.body.classList.remove('focus-mode'); return; }
   if (event.key === 'F11') { event.preventDefault(); if (current.active) toggleFocus(); return; }
   if (!control) return;
   const key = event.key.toLowerCase();
   if (key === 'z' || key === 'y') {
-    if (event.target.matches('input')) return;
+    if (event.target.matches('input,textarea')) return;
     event.preventDefault(); enqueue(() => undoRedo(key === 'y' || event.shiftKey));
   }
   else if (event.code === 'Equal' || key === '+' || key === '=') { event.preventDefault(); event.shiftKey ? zoomText(1) : zoomWindow(.1); }
@@ -626,7 +594,7 @@ async function requestClose() { return enqueue(async () => { if (await allowDisc
 
 const SAMPLE = `# A quiet place for your words
 
-Folio opens **individual Markdown files**. Read comfortably, switch to editing when you need to, and save right back to disk.
+Folio opens **individual Markdown files**. Read comfortably, edit directly, and save right back to disk. Use **Show Markdown** for local syntax, **Lock** to protect against edits, and **Source** to inspect the exact Markdown.
 
 ## Make yourself at home
 
@@ -640,7 +608,7 @@ Use the search button in the header, or **Ctrl+Shift+P**, to open the command wi
 | Action | Shortcut |
 | :--- | :--- |
 | Open a file or folder | Ctrl+O |
-| Read or edit | Ctrl+E |
+| Show or hide Markdown | Ctrl+E |
 | Save | Ctrl+S |
 | Zoom the whole app | Ctrl+= / Ctrl+- |
 | Change document text size | Ctrl+Shift+= / Ctrl+Shift+- |
@@ -666,7 +634,8 @@ Your files stay yours. This sample is just a starting point.[^1]
 `;
 
 async function start() {
-  zoomText(0); zoomWindow(0); renderRecent(); setDocumentWidth(wideLayout, false);
+  zoomText(0); zoomWindow(0); renderRecent(); setDocumentWidth(wideLayout, false); setFormatToolbarVisible(formatToolbarVisible, false);
+  syncOpenAffordance();
   if (!window.__TAURI__) { toast('Open Folio from your app menu to enable file access.'); return; }
   await listen('request-close', requestClose);
   await listen('open-files', event => { for (const path of event.payload) requestOpenLocation(path); });

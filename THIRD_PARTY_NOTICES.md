@@ -28,3 +28,9 @@ reading, and code stacks use these local files, with system fonts as fallbacks.
 The JavaScript bundles and font binaries are distributed without modification.
 Rust and development-only npm dependencies are listed in `Cargo.lock` and
 `package-lock.json`; their source distributions contain their respective licenses.
+# Unified editor dependencies
+
+The offline editor bundle uses pinned ProseMirror, CodeMirror, Markdown-it,
+Lezer, diff and their dependencies. Exact package versions and bundled license
+texts are generated into `ui/vendor/editor/NOTICE.txt` by
+`npm run build:editor`; source and the lockfile are included in this repository.

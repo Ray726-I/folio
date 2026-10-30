@@ -2,6 +2,12 @@
   "name": "folio-ui-checks",
   "private": true,
   "scripts": {
+    "build:editor": "node scripts/build-editor.cjs",
+    "check:editor-bundle": "node scripts/build-editor.cjs --check",
+    "test:editor:unit": "node tests/editor-model.cjs && node tests/editor-ledger.cjs && node tests/editor-source-ledger-regression.cjs && node tests/editor-source-edits.cjs && node tests/editor-task-boundaries.cjs && node tests/editor-parse-budget.cjs",
+    "test:editor:browser": "node tests/unified-editor.cjs && node tests/editor-shell-regressions.cjs && node tests/editor-dialog-focus.cjs && node tests/editor-cut-safety.cjs && node tests/editor-history-regressions.cjs && node tests/editor-roundtrip-regressions.cjs && node tests/editor-typing-regressions.cjs && node tests/editor-empty-paragraphs.cjs && node tests/editor-table-keyboard.cjs && node tests/editor-selection-regressions.cjs && node tests/editor-extension-selection.cjs && node tests/editor-source-heading-click.cjs && node tests/editor-source-smoothness.cjs && node tests/editor-interval-replacement.cjs && node tests/live-editor.cjs",
+    "test:editor": "npm run test:editor:unit && npm run test:editor:browser",
+    "test:native-editor": "bash tests/native-editor-keyboard.sh",
     "check:bundles": "node scripts/check-bundles.cjs",
     "test:paths": "node --test tests/paths.test.cjs",
     "test:lazy": "node tests/lazy-assets.cjs",
@@ -12,6 +18,25 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.12.4",
+    "esbuild": "0.28.2",
     "playwright": "1.62.1"
+  },
+  "dependencies": {
+    "@codemirror/commands": "6.11.1",
+    "@codemirror/lang-markdown": "6.5.2",
+    "@codemirror/language": "6.13.1",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.15",
+    "@lezer/markdown": "1.8.1",
+    "markdown-it": "15.0.3",
+    "prosemirror-commands": "1.7.2",
+    "prosemirror-inputrules": "1.5.1",
+    "prosemirror-keymap": "1.2.3",
+    "prosemirror-markdown": "1.13.9",
+    "prosemirror-model": "1.25.12",
+    "prosemirror-schema-list": "1.5.1",
+    "prosemirror-state": "1.4.4",
+    "prosemirror-tables": "1.8.5",
+    "prosemirror-view": "1.42.8"
   }
 }

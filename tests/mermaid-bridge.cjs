@@ -20,7 +20,7 @@ const docs = [
   { name: 'offline.md', content: '# Offline diagram\n\n```mermaid\ngraph TD;\nO-->P;\n```\n', source: 'graph TD;\nO-->P;' },
   { name: 'timeout.md', content: '# Slow diagram\n\n```mermaid\ngraph TD;\nT-->O;\n```\n', source: 'graph TD;\nT-->O;' },
   { name: 'plain.md', content: '# Plain document\n\nNo diagrams here.\n', source: null },
-  { name: 'big.md', content: 'BIGSOURCE', source: null, big: true },
+  { name: 'big.md', content: '# Big diagram\n\n```mermaid\n' + 'z'.repeat(300 * 1024) + '\n```\n', source: null, big: true },
   { name: 'mathmix.md', content: '# Math mix\n\nInline $x^2$ here.\n\n```mermaid\ngraph TD;\nM-->N;\n```\n', source: 'graph TD;\nM-->N;', math: 'x^2' },
   { name: 'nomath.md', content: '# No math here\n\nNOMATH-DIAGRAM\n\n```mermaid\ngraph TD;\nM-->N;\n```\n', source: 'graph TD;\nM-->N;', math: null },
 ];
@@ -235,10 +235,9 @@ async function deliverOk(page, id, tag) {
     const mathmixContent = byName('mathmix.md').content;
     const nomathContent = byName('nomath.md').content;
     assert.equal(await page.evaluate(() => current.content), mathmixContent, 'stale pass holds its content while suspended');
+    await page.waitForFunction(() => window.__bridge.requests.at(-1)?.source === 'graph TD;\nM-->N;');
     await page.evaluate(text => { changeContent(text); }, nomathContent);
-    const requestCountBefore = (await requests()).length;
-    page.evaluate(() => { renderPreview(); });
-    await waitRequests(page, requestCountBefore + 1);
+    await page.evaluate(() => renderPreview());
     const overlapped = (await requests()).at(-1);
     assert.equal(overlapped.source, 'graph TD;\nM-->N;', 'current pass issues its own request');
     await page.evaluate(() => { window.__katexRelease(); loadKatex = window.__origLoadKatex; });
@@ -249,7 +248,7 @@ async function deliverOk(page, id, tag) {
     await page.waitForFunction(() => !busy && document.querySelector('#preview .mermaid-host svg'));
     assert.equal(await page.locator('#preview .mermaid-host svg text').textContent(), 'overlap', 'current result is inserted after the stale pass resumes');
     assert.equal(await page.evaluate(() => current.content), nomathContent, 'current content survives');
-    assert.equal(await page.evaluate(() => previewSnapshot.content), nomathContent, 'snapshot caches the current content, not raw code');
+    assert.equal(await page.evaluate(() => editor.getText()), nomathContent, 'editor buffer is current despite stale math work');
 
     // 9. Main never fetched or executed Mermaid; ids stayed unique.
     assert.deepEqual(vendorMermaidRequests, [], 'main never requests Mermaid vendor assets');

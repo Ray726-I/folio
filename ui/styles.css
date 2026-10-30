@@ -67,6 +67,69 @@
   color-scheme:light
 }
 
+/* The agreed unified editor uses the existing Folio typography and controls. */
+.editor-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:4px; padding:8px var(--gutter); border-bottom:1px solid var(--line); background:var(--bg); }
+.editor-toolbar .button { min-height:32px; }
+.editor-note { padding:9px var(--gutter); color:var(--muted); background:var(--hover); border-bottom:1px solid var(--line); font-size:12px; }
+.table-tools { position:relative; font-size:12px; }
+.table-tools summary { cursor:pointer; padding:6px 10px; }
+.table-tools>div { position:absolute; top:100%; right:0; z-index:10; display:grid; gap:5px; padding:10px; min-width:140px; border:1px solid var(--line); border-radius:8px; background:var(--panel); box-shadow:0 8px 20px #0002; }
+.ProseMirror { outline:none; white-space:pre-wrap; overflow-wrap:break-word; min-height:50vh; }
+.ProseMirror>:first-child { margin-top:0; }
+.markdown .ProseMirror table { display:table; width:100%; max-width:none; table-layout:auto; margin:0; }
+.markdown .ProseMirror .tableWrapper { overflow-x:auto; margin:1.4em 0; }
+.markdown .ProseMirror td,.markdown .ProseMirror th { min-width:5em; overflow-wrap:anywhere; vertical-align:top; }
+.markdown .ProseMirror td>p,.markdown .ProseMirror th>p { margin:0; }
+.markdown .ProseMirror .selectedCell:after { background:var(--selection); opacity:.6; }
+.markdown .task-item { list-style:none; position:relative; }
+.markdown .task-item>input { position:absolute; left:-1.5em; top:.6em; width:16px; height:16px; cursor:pointer; accent-color:var(--accent); }
+.markdown .task-item>input:disabled { cursor:default; }
+.image-widget { display:block; margin:1em 0; padding:14px; border:1px dashed var(--line); border-radius:8px; font:13px/1.6 var(--font-ui); color:var(--muted); }
+.image-widget>span { display:block; }
+.image-widget .button { margin-top:10px; }
+.image-widget img { max-height:80vh; object-fit:contain; }
+.image-caption { color:var(--fg); font-weight:600; }
+.math-inline { display:inline-flex; align-items:center; gap:2px; vertical-align:middle; }
+.math-block { display:block; text-align:center; margin:1.3em 0; }
+.math-formula { cursor:text; }
+.math-edit { font:11px var(--font-ui); line-height:1; padding:2px 4px; color:var(--muted); background:transparent; border:0; border-radius:4px; opacity:.45; }
+.math-edit:hover,.math-edit:focus-visible { opacity:1; color:var(--fg); background:var(--hover); }
+.math-error,.source-inline { color:var(--red); }
+.code-container pre { white-space:pre-wrap; }
+.code-container details>summary { cursor:pointer; font:12px var(--font-ui); color:var(--muted); margin-top:8px; }
+.source-block { font-size:.75em; white-space:pre-wrap; }
+.extension-block>details>summary { color:var(--muted); cursor:pointer; font:11px var(--font-ui); padding:6px 0; }
+.extension-preview:empty { display:none; }
+.source-dialog { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:12px; width:min(820px,92vw); padding:20px; }
+.source-dialog::backdrop { background:#0007; }
+.source-dialog-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.source-dialog h2 { margin:0 0 12px; font-size:18px; }
+.source-dialog p { color:var(--muted); font-size:12px; }
+.source-dialog textarea { display:block; width:100%; box-sizing:border-box; min-height:160px; max-height:65vh; margin:12px 0; padding:14px; border:1px solid var(--line); border-radius:7px; color:var(--fg); background:var(--bg); font:13px/1.6 var(--font-mono); resize:vertical; }
+#source-snapshot-text { height:55vh; }
+#source-editor .cm-editor { font:inherit; background:transparent; color:inherit; min-height:50vh; }
+#source-editor .cm-focused { outline:none; }
+#source-editor .cm-content { font-family:var(--font-reading); caret-color:var(--fg); padding:0; }
+#source-editor .cm-scroller { overflow:visible; line-height:1.7; font:inherit; }
+#source-editor .cm-line { padding:0; }
+/* Vertical margin on a .cm-line is invisible to CodeMirror's height map, which
+   skews y-to-position hit testing for every line below it. Use padding on the
+   heading's own line box instead; it keeps the same rhythm but is measured. */
+#source-editor .cm-line.source-heading { margin:0; padding:.5em 0; }
+#source-editor .cm-cursor,#source-editor .cm-dropCursor { border-left-color:var(--fg); }
+#source-editor .cm-selectionBackground { background:var(--selection); }
+#source-editor .cm-focused .cm-selectionBackground { background:color-mix(in srgb,var(--accent) 32%,var(--selection)); }
+#source-editor img.cm-widgetBuffer { display:inline; width:0; height:1em; margin:0; border:0; border-radius:0; max-width:none; vertical-align:baseline; }
+.header-end .button { white-space:nowrap; }
+.source-heading { font-weight:750; line-height:1.3; margin:0; }
+.source-heading-1 { font-size:2em; }.source-heading-2 { font-size:1.5em; }.source-heading-3 { font-size:1.3em; }
+.source-code-line { font-family:var(--font-mono); font-size:.8em; background:color-mix(in srgb,var(--fg) 5%,transparent); }
+.source-quote-line { border-left:3px solid color-mix(in srgb,var(--accent) 45%,var(--line)); padding-left:14px !important; color:var(--muted); }
+.source-strongemphasis { font-weight:750; }.source-emphasis { font-style:italic; }.source-strikethrough { text-decoration:line-through; }.source-inlinecode { font-family:var(--font-mono); color:var(--accent); }.source-link { color:var(--accent); }
+.source-table-preview { font-size:.9em; }
+.header-end .button[aria-pressed="true"] { background:var(--selection); color:var(--fg); }
+@media(max-width:760px) { .header-end { gap:3px; }.header-end .button { font-size:11px; padding:5px 7px; }.editor-toolbar { padding:6px 12px; }.editor-toolbar .button { min-height:36px; font-size:11px; } }
+
 @media(prefers-color-scheme:dark) {
   :root[data-theme="system"] {
     --bg:#242424;
@@ -75,6 +138,8 @@
     --panel:#383838;
     --accent:#78aeed;
     --selection:#3f608f;
+    --selection-ink:#fff;
+    --selection-wash:#57779d;
     --green:#8fce80;
     --red:#f38b82;
     --yellow:#e9c46a;
@@ -91,6 +156,8 @@
   --panel:#383838;
   --accent:#78aeed;
   --selection:#3f608f;
+  --selection-ink:#fff;
+  --selection-wash:#57779d;
   --green:#8fce80;
   --red:#f38b82;
   --yellow:#e9c46a;
@@ -105,7 +172,9 @@
   --surface:#353d4b;
   --panel:#3b4252;
   --accent:#88c0d0;
-  --selection:#434c5e;
+  --selection:#4c566a;
+  --selection-ink:#fff;
+  --selection-wash:#4472ab;
   --green:#a3be8c;
   --red:#bf616a;
   --yellow:#ebcb8b;
@@ -120,7 +189,9 @@
   --surface:#181825;
   --panel:#313244;
   --accent:#cba6f7;
-  --selection:#45475a;
+  --selection:#585b70;
+  --selection-ink:#fff;
+  --selection-wash:#7d699d;
   --green:#a6e3a1;
   --red:#f38ba8;
   --yellow:#f9e2af;
@@ -135,7 +206,9 @@
   --surface:#1f1d2e;
   --panel:#26233a;
   --accent:#c4a7e7;
-  --selection:#403d52;
+  --selection:#524f67;
+  --selection-ink:#fff;
+  --selection-wash:#7f6d99;
   --green:#9ccfd8;
   --red:#eb6f92;
   --yellow:#f6c177;
@@ -1034,8 +1107,45 @@ body.focus-mode .markdown {
   padding-top:60px
 }
 
+/* Text caret follows the theme foreground so it stays luminous on dark
+   surfaces (the VS Code / Obsidian / Typora pattern: light caret, distinct
+   accent-tinted selection). CodeMirror draws its own caret layer, themed
+   alongside the source editor above. */
+input,textarea,[contenteditable="true"],.ProseMirror,.cm-content {
+  caret-color:var(--fg)
+}
+
+.ProseMirror-hideselection {
+  caret-color:transparent
+}
+
+.ProseMirror-selectednode {
+  outline-color:var(--accent)
+}
+
 ::selection {
   background:var(--selection)
+}
+
+/* Rich presentation selection (Show Markdown OFF, #preview): a luminous
+   blue wash with bright selected text, following the VS Code / Obsidian
+   pattern of a hue-distinct selection over a dark surface. Dark themes tune
+   the wash per palette via --selection-wash; light themes and custom palettes
+   fall back to the accent mix, and light themes leave --selection-ink
+   undefined so the currentcolor fallback preserves their existing
+   selected-text colors exactly. */
+#preview ::selection {
+  background:var(--selection-wash,color-mix(in srgb,var(--accent) 45%,var(--bg)));
+  color:var(--selection-ink,currentcolor)
+}
+
+#preview .ProseMirror .selectedCell:after {
+  background:var(--selection-wash,color-mix(in srgb,var(--accent) 45%,var(--bg)));
+  opacity:.8
+}
+
+li.ProseMirror-selectednode:after {
+  border-color:var(--accent)
 }
 
 @media(max-width:750px) {

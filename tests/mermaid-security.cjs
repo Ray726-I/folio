@@ -295,6 +295,21 @@ async function requestDiagram(page, request) {
     });
     assert.ok(sequence.result.svg && sequence.result.svg.includes('Hello'), 'ordinary sequence diagram must render text');
 
+    // The native renderer is hidden at 1x1; Gantt must not inherit that width.
+    await page.setViewportSize({ width: 1, height: 1 });
+    const gantt = await requestDiagram(page, {
+      id: 'mermaid-gantt-small-viewport',
+      source: 'gantt\n title Project Schedule\n dateFormat YYYY-MM-DD\n section Work\n Research :a1, 2026-01-01, 5d\n Build :after a1, 4d',
+      theme: { variables: { background: '#242424', darkMode: true } }
+    });
+    const ganttGeometry = await page.evaluate(svg => {
+      const root = new DOMParser().parseFromString(svg, 'image/svg+xml').documentElement;
+      return { width: Number(root.getAttribute('viewBox').split(/\s+/)[2]), text: root.textContent };
+    }, gantt.result.svg);
+    assert.ok(ganttGeometry.width >= 600, 'Gantt must have usable width even in the hidden 1px renderer');
+    assert.ok(ganttGeometry.text.includes('Research') && ganttGeometry.text.includes('Build'), 'Gantt task labels survive sanitization');
+    await page.setViewportSize({ width: 1280, height: 720 });
+
     const pie = await requestDiagram(page, {
       id: 'mermaid-pie',
       source: 'pie title Pets\n "Dogs": 3\n "Cats": 2',
