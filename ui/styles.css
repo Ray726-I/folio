@@ -138,6 +138,9 @@
 #source-editor .cm-focused { outline:none; }
 #source-editor .cm-content { font-family:var(--font-reading); caret-color:var(--fg); padding:0; }
 #source-editor .cm-scroller { overflow:visible; line-height:1.7; font:inherit; }
+/* CodeMirror remeasures wrapped/virtualized lines as the outer reader scrolls.
+   Smooth-scroll animations fight those corrections and can stall wheel input. */
+html[data-mode="edit"] .reader-scroll { scroll-behavior:auto; }
 #source-editor .cm-line { padding:0; }
 /* Vertical margin on a .cm-line is invisible to CodeMirror's height map, which
    skews y-to-position hit testing for every line below it. Use padding on the
@@ -2148,6 +2151,7 @@ body {
 
 .headerbar {
   grid-template-columns:auto minmax(0,1fr) auto;
+  position:relative;
   min-height:44px;
   padding:0 10px;
   gap:8px;
@@ -2158,6 +2162,8 @@ body {
 .header-start,.header-end {
   gap:5px
 }
+.header-start { grid-column:1; }
+.header-end { grid-column:3; }
 
 .header-divider {
   width:1px;
@@ -2324,7 +2330,12 @@ body {
 }
 
 .window-title {
-  max-width:100%;
+  position:absolute;
+  left:50%;
+  top:50%;
+  transform:translate(-50%,-50%);
+  width:max-content;
+  max-width:max(0px, calc(100% - 2 * var(--header-side-reserve, 0px)));
   font-size:13px;
   font-weight:600;
   line-height:1.25;
@@ -2988,12 +2999,6 @@ dialog {
 
 /* Responsive ------------------------------------------------------------- */
 
-@media(max-width:1100px) {
-  .window-title {
-    max-width:100%
-  }
-}
-
 @media(max-width:960px) {
   .sidebar-head {
     min-height:48px;
@@ -3261,6 +3266,19 @@ dialog {
   outline-offset:1px;
 }
 #view-switch .view-switch-icon { display:none; }
+html[data-compact-modes] #view-switch button span { display:none; }
+html[data-compact-modes] #view-switch .view-switch-icon { display:block; }
+html[data-compact-modes] #view-switch button { min-width:30px; padding:0 7px; }
+/* Keep the status available to assistive technology without taking header space. */
+html[data-compact-saved] .save-state:not([data-state="error"]) {
+  position:absolute;
+  width:1px;
+  height:1px;
+  padding:0;
+  overflow:hidden;
+  clip-path:inset(50%);
+  white-space:nowrap;
+}
 
 /* ── Readable save state ─────────────────────────────────────────────────
    A concise visible indicator next to Save: Saved (quiet), Edited

@@ -301,6 +301,7 @@ export function createSourceEditor(parent, options) {
       syncing = false;
     },
     revealSelection: scheduleReveal,
+    revealOffset(offset) { view.dispatch({ effects: EditorView.scrollIntoView(offset, { y: 'start', yMargin: 50 }) }); },
     setLocked(locked) { view.dispatch({ effects: permission.reconfigure([EditorState.readOnly.of(locked), EditorView.editable.of(!locked)]) }); },
     setTransitionLocked() {},
     focus() { view.focus(); },

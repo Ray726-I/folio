@@ -7,7 +7,8 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
   try {
     const { page } = session;
     await page.locator('.math-block .katex').waitFor();
-    await page.locator('.math-block .math-edit').click();
+    assert.equal(await page.locator('.math-block .math-edit').count(), 0, 'formula has no pencil icon');
+    await page.locator('.math-block .math-formula').click();
     const input = page.locator('.math-block textarea');
     await input.waitFor({ timeout: 4000 });
     assert.equal(await page.locator('#view-formatted').getAttribute('aria-pressed'), 'true');
@@ -18,12 +19,13 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
     assert.equal(await page.locator('#view-formatted').getAttribute('aria-pressed'), 'true');
     await page.keyboard.press('Control+z');
     await page.waitForFunction(text => current.content === text, source);
-    await page.locator('.math-inline .math-edit').click();
+    await page.locator('.math-inline .math-formula').focus();
+    await page.keyboard.press('Enter');
     await page.locator('.math-inline textarea').fill('a-b');
     await page.locator('.math-inline button', { hasText: 'Apply' }).click();
     await page.waitForFunction(() => current.content.includes('\\(a-b\\)'));
     await page.locator('#lock-document').click();
-    assert.equal(await page.locator('.math-inline .math-edit').isDisabled(), true);
+    assert.equal(await page.locator('.math-inline .math-formula').getAttribute('aria-disabled'), 'true');
     assert.deepEqual(session.errors, []);
     console.log('PASS: formula source edits locally in Formatted mode with exact source and undo.');
   } finally { await session.close(); bundle.cleanup(); }

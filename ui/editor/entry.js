@@ -78,7 +78,7 @@ function headingFromRawBlock(raw) {
 }
 export function create(options) {
   let content = options.content, locked = false, transitionLocked = Boolean(options.transitionLocked), showMarkdown = false, sourceEditor = null, richEditor = null;
-  let history = [], future = [], groupTime = 0, groupSelection = null, sourceSelection = { anchor: 0, head: 0 };
+  let history = [], future = [], groupTime = 0, groupSelection = null, sourceSelection = { anchor: 0, head: 0 }, presentationRevision = 0;
   let forceSource = options.forceSource || content.length > MAX_RICH_LENGTH;
   let sourceOrigin = false;
   const noteSourceOrigin = event => {
@@ -187,12 +187,32 @@ export function create(options) {
     else { ensureRich(); richEditor.setDocument(content, target, { logical }); }
   }
   function presentation(next, focus = false) {
-    if (!showMarkdown && !forceSource) richEditor?.captureSelection?.();
+    const currentPresentation = ++presentationRevision;
     const wasSource = showMarkdown || forceSource;
-    const saved = selection(), scroller = options.scroller, top = scroller.scrollTop;
+    const changingView = wasSource !== (Boolean(next) || forceSource);
+    const scroller = options.scroller, top = scroller.scrollTop;
     const previousView = showMarkdown || forceSource ? sourceEditor?.view : richEditor?.view;
     let previousY = null;
     try { previousY = previousView?.coordsAtPos(previousView.state.selection.main?.head ?? previousView.state.selection.head)?.top; } catch {}
+    const viewport = scroller.getBoundingClientRect();
+    const caretVisible = previousY !== null && previousY >= viewport.top && previousY <= viewport.bottom;
+    let viewportAnchor = null;
+    // Anchor to what the reader is looking at, even if the caret happens to
+    // be visible near a viewport edge. Its relative position changes as the
+    // two projections wrap and render blocks differently.
+    if (changingView && previousView) {
+      const contentRect = previousView.dom.getBoundingClientRect();
+      const point = { x: Math.max(contentRect.left + 8, Math.min(contentRect.right - 8, (contentRect.left + contentRect.right) / 2)), y: viewport.top + Math.min(50, viewport.height / 4) };
+      try {
+        const pos = wasSource ? previousView.posAtCoords(point) : richEditor.sourceAtCoords({ left: point.x, top: point.y });
+        if (pos != null) {
+          const rect = wasSource ? previousView.coordsAtPos(pos) : richEditor.coordsAtSource(pos);
+          if (rect) viewportAnchor = { pos, y: rect.top };
+        }
+      } catch {}
+    }
+    if (!wasSource) richEditor?.captureSelection?.();
+    const saved = selection();
     showMarkdown = Boolean(next); sourceSelection = saved;
     options.richParent.hidden = showMarkdown || forceSource;
     options.sourceParent.hidden = !showMarkdown && !forceSource;
@@ -201,14 +221,56 @@ export function create(options) {
     options.onPresentation(showMarkdown, locked, forceSource);
     setScrollInstant(scroller, top);
     sourceEditor?.view.requestMeasure();
-    if (showMarkdown || forceSource) sourceEditor?.revealSelection();
-    if (focus) (showMarkdown || forceSource ? sourceEditor : richEditor).focus();
-    const viewport = scroller.getBoundingClientRect();
-    if (previousY !== null && previousY >= viewport.top && previousY <= viewport.bottom) requestAnimationFrame(() => {
-      if (disposed) return;
+    if ((showMarkdown || forceSource) && !viewportAnchor) sourceEditor?.revealSelection();
+    if (focus) {
+      if (viewportAnchor && !caretVisible) {
+        const view = showMarkdown || forceSource ? sourceEditor.view : richEditor.view;
+        (view.contentDOM || view.dom).focus({ preventScroll: true });
+      } else (showMarkdown || forceSource ? sourceEditor : richEditor).focus();
+    }
+    if (viewportAnchor && (showMarkdown || forceSource)) sourceEditor.revealOffset(viewportAnchor.pos);
+    let userScrolled = false;
+    const stopRestoring = () => { userScrolled = true; };
+    if (viewportAnchor) {
+      scroller.addEventListener('wheel', stopRestoring, { once: true, passive: true });
+      scroller.addEventListener('touchstart', stopRestoring, { once: true, passive: true });
+      scroller.addEventListener('pointerdown', stopRestoring, { once: true, passive: true });
+      document.addEventListener('keydown', stopRestoring, { once: true, capture: true });
+      document.addEventListener('pointerdown', stopRestoring, { once: true, capture: true });
+      document.addEventListener('input', stopRestoring, { once: true, capture: true });
+      setTimeout(() => {
+        scroller.removeEventListener('wheel', stopRestoring);
+        scroller.removeEventListener('touchstart', stopRestoring);
+        scroller.removeEventListener('pointerdown', stopRestoring);
+        document.removeEventListener('keydown', stopRestoring, true);
+        document.removeEventListener('pointerdown', stopRestoring, true);
+        document.removeEventListener('input', stopRestoring, true);
+      }, 500);
+    }
+    const restore = (remaining = 12) => {
+      if (disposed || userScrolled || currentPresentation !== presentationRevision) return;
       const activeView = showMarkdown || forceSource ? sourceEditor?.view : richEditor?.view;
-      try { const y = activeView.coordsAtPos(activeView.state.selection.main?.head ?? activeView.state.selection.head)?.top; if (y !== undefined) setScrollInstant(scroller, scroller.scrollTop + y - previousY); } catch {}
-    });
+      try {
+        let coords = null;
+        try { coords = viewportAnchor ? (showMarkdown || forceSource ? activeView.coordsAtPos(viewportAnchor.pos) : richEditor.coordsAtSource(viewportAnchor.pos))
+          : activeView.coordsAtPos(activeView.state.selection.main?.head ?? activeView.state.selection.head); } catch {}
+        if (!coords && viewportAnchor && (showMarkdown || forceSource)) {
+          coords = { top: activeView.documentTop + activeView.lineBlockAt(viewportAnchor.pos).top };
+        }
+        const targetY = viewportAnchor ? viewportAnchor.y : previousY;
+        if (coords) setScrollInstant(scroller, scroller.scrollTop + coords.top - targetY);
+      } catch {}
+      if (remaining > 0 && viewportAnchor) requestAnimationFrame(() => restore(remaining - 1));
+    };
+    if (changingView && (caretVisible || viewportAnchor)) {
+      requestAnimationFrame(() => restore());
+      // CodeMirror may finish measuring wrapped, virtualized lines after the
+      // first frame; refine once its estimated heights have settled.
+      if (viewportAnchor && (showMarkdown || forceSource)) {
+        setTimeout(() => restore(0), 150);
+        setTimeout(() => restore(0), 400);
+      }
+    }
   }
   function undo(redo = false) {
     if (isLocked()) return false;

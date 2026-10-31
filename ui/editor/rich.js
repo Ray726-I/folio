@@ -26,6 +26,37 @@ const rawTaskTokenizer = new MarkdownIt({ html: true, linkify: false, typographe
 const RAW_TASK_LINE = /^(?:[ \t]*>[ \t]?)*[ \t]*(?:[-+*]|\d{1,9}[.)])[ \t]+\[([ xX])\](?=[ \t]|$)/;
 const RAW_TASK_MARKER = /^[ xX]$/;
 
+// A wheel gesture belongs to wherever it started. Track that for the whole
+// gesture so a pointer that drifts over the formula source mid-scroll does not
+// suddenly hand the page over to the textarea (and vice versa).
+const WHEEL_GESTURE_GAP = 200;
+let wheelGestureTarget = null, wheelGestureScroller = null, wheelGestureTime = -Infinity;
+if (typeof document !== 'undefined') document.addEventListener('wheel', event => {
+  const now = performance.now();
+  if (now - wheelGestureTime > WHEEL_GESTURE_GAP) {
+    wheelGestureTarget = event.target;
+    wheelGestureScroller = scrollableAncestor(event.target);
+  }
+  wheelGestureTime = now;
+}, { capture: true, passive: true });
+
+// Engines treat a textarea as a scroll container even when it has no range, so
+// a wheel over it is swallowed instead of reaching the reader. Find the reader
+// the way the engine would and move it ourselves in that case.
+function scrollableAncestor(element) {
+  for (let node = element.parentElement; node; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY;
+    if ((overflow === 'auto' || overflow === 'scroll') && node.scrollHeight > node.clientHeight) return node;
+  }
+  return null;
+}
+function scrollElementBy(node, top, left) {
+  const nextTop = Math.max(0, Math.min(node.scrollHeight - node.clientHeight, node.scrollTop + top));
+  const nextLeft = Math.max(0, Math.min(node.scrollWidth - node.clientWidth, node.scrollLeft + left));
+  try { node.scrollTo({ top: nextTop, left: nextLeft, behavior: 'instant' }); }
+  catch { node.scrollTop = nextTop; node.scrollLeft = nextLeft; }
+}
+
 // Return the source offset of each GFM task marker in `source`, in document
 // order. A null result means the source could not be inspected safely; callers
 // must then leave every checkbox disabled rather than guessing a position.
@@ -495,9 +526,10 @@ export function createRichEditor(parent, options) {
   function mathView(node, editor, getPos) {
     const dom = document.createElement(node.isInline ? 'span' : 'div'); dom.className = node.isInline ? 'math-inline' : 'math-block'; dom.contentEditable = 'false';
     const formula = document.createElement('span'); formula.className = 'math-formula'; formula.title = 'Click to edit formula';
+    formula.setAttribute('role', 'button'); formula.setAttribute('aria-label', 'Edit formula'); formula.tabIndex = 0;
     const panel = document.createElement('span'); panel.className = 'math-local-editor'; panel.hidden = true;
     const input = document.createElement('textarea'); input.setAttribute('aria-label', 'Formula source'); input.rows = node.isInline ? 2 : 4;
-    const cancel = button('Cancel', () => { panel.hidden = true; edit.focus(); });
+    const cancel = button('Cancel', () => { panel.hidden = true; formula.focus(); });
     const apply = button('Apply', () => {
       if (options.isLocked()) return;
       let pos; try { pos = getPos(); } catch { return; }
@@ -519,25 +551,57 @@ export function createRichEditor(parent, options) {
       const result = replaceLogicalSelection(input.value, 'command', { from, to, all: false, collapsed: false });
       if (result.committed) { panel.hidden = true; editor.focus(); }
     });
+    // Wheel gestures over the formula source belong to that textarea only while
+    // it can actually move. At either edge, or when the gesture began
+    // elsewhere, the delta continues on the page's own scroller instead.
+    input.addEventListener('wheel', event => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (input.disabled) return;
+      // Wheel deltas arrive in pixels, lines or pages depending on the device.
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? input.clientHeight : 1;
+      const deltaX = (event.shiftKey ? event.deltaY : event.deltaX) * unit, deltaY = event.shiftKey ? 0 : event.deltaY * unit;
+      if (wheelGestureTarget && wheelGestureTarget !== input && !input.contains(wheelGestureTarget)) {
+        // The gesture is not ours. Continue it on whatever it started on so the
+        // page does not jump back to the formula just because the pointer
+        // drifted across it.
+        if (!wheelGestureScroller) return;
+        event.preventDefault(); event.stopPropagation();
+        scrollElementBy(wheelGestureScroller, deltaY, deltaX);
+        return;
+      }
+      const maximumTop = Math.max(0, input.scrollHeight - input.clientHeight), maximumLeft = Math.max(0, input.scrollWidth - input.clientWidth);
+      const canScrollX = deltaX !== 0 && maximumLeft > 0 && (deltaX < 0 ? input.scrollLeft > 0 : input.scrollLeft < maximumLeft - 0.5);
+      const canScrollY = deltaY !== 0 && maximumTop > 0 && (deltaY < 0 ? input.scrollTop > 0 : input.scrollTop < maximumTop - 0.5);
+      if (!canScrollX && !canScrollY) {
+        const reader = scrollableAncestor(input);
+        if (!reader) return;
+        event.preventDefault(); event.stopPropagation();
+        scrollElementBy(reader, deltaY, deltaX);
+        return;
+      }
+      event.preventDefault(); event.stopPropagation();
+      if (canScrollY) input.scrollTop = Math.max(0, Math.min(maximumTop, input.scrollTop + deltaY));
+      if (canScrollX) input.scrollLeft = Math.max(0, Math.min(maximumLeft, input.scrollLeft + deltaX));
+    }, { passive: false });
     panel.append(input, apply, cancel);
-    const edit = button('✎', () => {
+    const toggleEditor = () => {
       if (options.isLocked()) return;
-      if (!panel.hidden) { panel.hidden = true; return; }
+      if (!panel.hidden) { panel.hidden = true; render(); return; }
       input.value = node.attrs.tex; panel.hidden = false; input.focus();
-    });
-    edit.classList.add('math-edit'); edit.setAttribute('aria-label', 'Edit formula'); edit.title = 'Edit formula';
-    formula.addEventListener('mousedown', event => { if (event.button !== 0) return; event.preventDefault(); if (!options.isLocked()) edit.click(); });
-    dom.append(formula, edit, panel); let generation = 0;
+    };
+    formula.addEventListener('mousedown', event => { if (event.button !== 0) return; event.preventDefault(); toggleEditor(); });
+    formula.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleEditor(); } });
+    dom.append(formula, panel); let generation = 0;
     const render = async () => {
       const tex = panel.hidden ? node.attrs.tex : input.value;
       const current = ++generation; formula.textContent = tex; formula.classList.remove('math-error');
       try { const katex = await options.loadKatex(); if (current !== generation) return; katex.render(tex, formula, { displayMode: !node.isInline, throwOnError: true, trust: false, strict: 'warn' }); }
       catch { if (current === generation) { formula.textContent = tex; formula.classList.add('math-error'); formula.title = 'Formula could not be rendered. Its source is preserved.'; } }
-      edit.disabled = options.isLocked();
+      formula.setAttribute('aria-disabled', String(options.isLocked()));
     };
     input.addEventListener('input', render);
     cancel.addEventListener('click', render);
-    render(); const refresh = () => { edit.disabled = options.isLocked(); input.disabled = options.isLocked(); apply.disabled = options.isLocked(); }; refreshers.add(refresh);
+    render(); const refresh = () => { formula.setAttribute('aria-disabled', String(options.isLocked())); input.disabled = options.isLocked(); apply.disabled = options.isLocked(); }; refreshers.add(refresh);
     return { dom, update(next) { if (next.type !== node.type) return false; node = next; render(); return true; }, stopEvent: () => true, ignoreMutation: () => true, destroy() { generation++; refreshers.delete(refresh); } };
   }
   function imageView(node, editorView, getPos) {
@@ -584,6 +648,10 @@ export function createRichEditor(parent, options) {
     const highlight = document.createElement('pre'); highlight.className = 'code-highlight'; highlight.setAttribute('aria-hidden', 'true');
     const highlightCode = document.createElement('code'); highlight.append(highlightCode);
     const pre = document.createElement('pre'); pre.className = 'code-surface';
+    // The highlighted projection sits behind the editable scroller. Keep its
+    // horizontal offset in sync so hidden source glyphs and visible tokens
+    // continue to represent the same part of a long line.
+    pre.addEventListener('scroll', () => { highlight.scrollLeft = pre.scrollLeft; }, { passive: true });
     const code = document.createElement('code'); pre.append(code);
     const details = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'Diagram source'; details.append(summary, pre);
     // Opening or focusing the source is an explicit editing intent. A later
@@ -631,6 +699,7 @@ export function createRichEditor(parent, options) {
           };
           if (source) copyTokens(source, copy);
           highlightCode.replaceChildren(copy);
+          highlight.scrollLeft = pre.scrollLeft;
           dom.classList.toggle('code-highlighted', highlightCode.textContent === sourceText && highlightCode.childNodes.length > 0);
         } catch { if (current === highlightGeneration) { highlightCode.replaceChildren(); dom.classList.remove('code-highlighted'); } }
       }, 60);
@@ -1791,6 +1860,13 @@ export function createRichEditor(parent, options) {
       captureDOMSelection();
     },
     selection: () => sourceSelection(view.state),
+    sourceAtCoords(coords) {
+      const hit = view.posAtCoords(coords);
+      return hit ? richToSource(model, hit.pos) : null;
+    },
+    coordsAtSource(offset) {
+      return view.coordsAtPos(sourceToRich(model, offset));
+    },
     setDocument(content, selection, meta = {}) {
       if (content !== model.source) {
         revision++; bookmark = null;

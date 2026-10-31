@@ -164,14 +164,21 @@ async function mountUnifiedEditor() {
       if (extensionContent !== snapshot || extensionRemote !== allowedRemote) {
         extensionContent = snapshot;
         extensionRemote = allowedRemote;
-        extensionCache = invoke('render_markdown', { content: snapshot, remoteImages: allowedRemote });
+        extensionCache = invoke('render_markdown', { content: snapshot, remoteImages: allowedRemote }).then(result => {
+          const parsed = new DOMParser().parseFromString(typeof result === 'string' ? result : result.html || '', 'text/html');
+          const byLine = new Map();
+          for (const element of parsed.body.querySelectorAll('[data-sourcepos]')) {
+            const line = Number.parseInt(element.dataset.sourcepos, 10);
+            if (!byLine.has(line)) byLine.set(line, element);
+          }
+          return byLine;
+        });
       }
-      const result = await extensionCache;
+      const byLine = await extensionCache;
       if (current !== documentAtOpen || (remoteImages === true) !== allowedRemote) throw new Error('Extension render expired');
       if (current.content !== snapshot) return editorOptions.renderExtension(source);
-      const parsed = new DOMParser().parseFromString(typeof result === 'string' ? result : result.html || '', 'text/html');
       const offset = snapshot.indexOf(source), line = offset < 0 ? -1 : snapshot.slice(0, offset).split('\n').length;
-      const match = [...parsed.body.querySelectorAll('[data-sourcepos]')].find(node => node.dataset.sourcepos.startsWith(`${line}:`));
+      const match = byLine.get(line);
       if (match?.matches('h1,h2,h3,h4,h5,h6')) match.dataset.folioOutlineRevision = String(revision);
       let html = match?.outerHTML;
       if (html === undefined && /^\s*</.test(source) && !/^---\n/.test(source)) {
