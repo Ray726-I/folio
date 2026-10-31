@@ -80,9 +80,10 @@
       <div id="document-location" class="subtitle">Markdown, one file at a time</div>
     </div>
     <div class="header-end">
-      <button id="show-markdown" class="icon-button document-control" aria-pressed="false" aria-label="Show Markdown near the cursor (Ctrl+E)" title="Show Markdown near the cursor (Ctrl+E)" hidden>
-        <svg class="icon" aria-hidden="true"><use href="#i-edit"/></svg>
-      </button>
+      <div id="view-switch" class="segmented document-control" role="group" aria-label="View as Formatted or Markdown (Ctrl+E to switch)" hidden>
+        <button id="view-formatted" aria-pressed="true" title="Formatted view (Ctrl+E)" aria-label="Formatted view (Ctrl+E)"><svg class="icon view-switch-icon" aria-hidden="true"><use href="#i-read"/></svg><span>Formatted</span></button>
+        <button id="show-markdown" aria-pressed="false" title="Markdown source (Ctrl+E)" aria-label="Show Markdown source (Ctrl+E)"><svg class="icon view-switch-icon" aria-hidden="true"><use href="#i-code"/></svg><span>Markdown</span></button>
+      </div>
       <button id="lock-document" class="icon-button document-control" aria-pressed="false" aria-label="Protect against accidental edits" title="Protect against accidental edits" hidden>
         <svg class="icon" aria-hidden="true"><use href="#i-unlock"/></svg>
       </button>
@@ -106,6 +107,7 @@
         </div>
       </div>
       <span class="header-divider" aria-hidden="true"></span>
+      <span id="save-state" class="save-state document-control" role="status" hidden></span>
       <button id="save" class="icon-button document-control" title="Save (Ctrl+S)" aria-label="Save" hidden>
         <svg class="icon" aria-hidden="true"><use href="#i-save"/></svg>
       </button>

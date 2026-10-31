@@ -107,7 +107,7 @@ async function geometry(page) {
       return editor.getText().slice(Math.min(selection.anchor, selection.head), Math.max(selection.anchor, selection.head));
     });
     assert.ok(linkRevealed.includes('<kbd>here</kbd>'), `link click reveals the exact pair source, got ${JSON.stringify(linkRevealed)}`);
-    await page.locator('#show-markdown').click();
+    await page.locator('#view-formatted').click();
     await page.waitForFunction(() => !editor.isSource());
     await page.waitForTimeout(400);
     // A mouse drag across the rendered keys selects text, and Control+C
@@ -270,7 +270,7 @@ async function geometry(page) {
     assert.ok((await page.evaluate(() => current.content)).includes('XPress') || (await page.evaluate(() => current.content)).includes('X'), 'source edit applies to the exact Markdown');
     await page.keyboard.press('Control+z');
     assert.equal(await page.evaluate(() => current.content), source, 'source undo restores the exact document');
-    await page.locator('#show-markdown').click();
+    await page.locator('#view-formatted').click();
     await page.waitForFunction(() => !editor.isSource());
     await page.waitForTimeout(500);
     assert.equal(await page.locator('#preview .source-block').count(), 0, 'returning to reading shows no source disclosure');

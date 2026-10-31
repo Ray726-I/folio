@@ -51,7 +51,7 @@ const source = [
     await page.locator('#show-markdown').click();
     await page.locator('#source-editor .cm-content').waitFor({ state: 'visible' });
     assert.ok((await text()).includes('const extra = 1;'));
-    await page.locator('#show-markdown').click();
+    await page.locator('#view-formatted').click();
     await js.locator('.code-highlight span').first().waitFor();
 
     // Mermaid keeps its diagram treatment and has no code highlight layer.

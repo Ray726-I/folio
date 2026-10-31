@@ -20,7 +20,7 @@ const original = '# Title\n\nFirst __bold__ and *em* &amp; \\*literal\\*.\n\nSec
     await page.locator('#show-markdown').click();
     await page.waitForFunction(() => !busy && mode === 'edit');
     await page.evaluate(() => editor.selectRange(current.content.indexOf('After the table.')));
-    await page.locator('#show-markdown').click();
+    await page.locator('#view-formatted').click();
     await page.waitForFunction(() => !busy && mode === 'read');
     await page.keyboard.type('Z');
     assert.equal(await page.evaluate(() => current.content), changed.replace('After the table.', 'ZAfter the table.'),

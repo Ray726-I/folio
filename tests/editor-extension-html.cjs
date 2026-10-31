@@ -26,7 +26,8 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
       };
     });
     assert.equal(state.unavailable, false, 'a sanitized raw HTML block must not render as unavailable');
-    assert.equal(state.text.trim(), 'Visible safe HTML text', 'safe HTML text must be visible');
+    assert.ok(state.text.includes('Visible safe HTML text'), 'safe HTML text must be visible');
+    assert.match(state.text, /Load image/, 'a blocked author HTML image offers explicit consent');
     assert.match(state.html, /<div class="note">/);
     assert.equal(state.hasScript, false, 'scripts must be stripped from author HTML');
     assert.equal(state.hasRemoteImage, false, 'remote images must stay blocked by default');

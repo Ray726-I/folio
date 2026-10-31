@@ -126,9 +126,20 @@ export function create(options) {
     };
   }
   const shared = { ...options, reserveImage, isLocked, isUserLocked, undo: redo => undo(redo) };
+  // Match the native renderer's authority normalization: browsers ignore
+  // embedded tabs/newlines, trim control/space edges, and treat backslashes in
+  // special-scheme URLs as slashes. Missing one of these forms would let the
+  // preview paint a placeholder but deny that image a working per-image Load.
+  function remoteImageDestination(value) {
+    const normalized = String(value || '')
+      .replace(/[\t\n\r]/g, '')
+      .replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, '');
+    const slashed = normalized.replace(/\\/g, '/').toLowerCase();
+    return slashed.startsWith('//') || slashed.startsWith('http:') || slashed.startsWith('https:') || normalized.startsWith('\\');
+  }
   async function resolveImage(destination, allow) {
     const key = String(destination || ''), epoch = mediaEpoch;
-    const remote = /^(?:[a-z][a-z\d+.-]*:)?[/\\]{2}/i.test(key) || /^https?:/i.test(key);
+    const remote = remoteImageDestination(key);
     if (allow) consent.add(key);
     if (remote && !options.remoteImages() && !consent.has(key)) {
       let domain = 'remote host'; try { domain = new URL(key.startsWith('//') ? `https:${key}` : key).hostname; } catch {}

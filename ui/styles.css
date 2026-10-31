@@ -2147,7 +2147,7 @@ body {
 /* Header ------------------------------------------------------------------ */
 
 .headerbar {
-  grid-template-columns:minmax(0,1fr) minmax(0,2.2fr) minmax(0,1fr);
+  grid-template-columns:auto minmax(0,1fr) auto;
   min-height:44px;
   padding:0 10px;
   gap:8px;
@@ -3234,4 +3234,113 @@ dialog {
   white-space:pre-wrap;
   overflow-wrap:anywhere;
   tab-size:4
+}
+
+/* ── View switch: Formatted / Markdown segments ──────────────────────────
+   Text labels replace the single cryptic icon so the two presentations are
+   visible before they are chosen. Both segments are explicit: clicking the
+   already-active segment is a quiet no-op and never switches away.
+   Ctrl+E remains the keyboard toggle for both directions. */
+#view-switch {
+  flex:none;
+}
+#view-switch button {
+  width:auto;
+  height:28px;
+  min-height:0;
+  padding:0 12px;
+  font-size:12px;
+  font-weight:600;
+  white-space:nowrap;
+}
+#view-switch button[aria-pressed="true"] {
+  font-weight:700;
+}
+#view-switch button:focus-visible {
+  outline:2px solid var(--accent);
+  outline-offset:1px;
+}
+#view-switch .view-switch-icon { display:none; }
+
+/* ── Readable save state ─────────────────────────────────────────────────
+   A concise visible indicator next to Save: Saved (quiet), Edited
+   (calm emphasis, meaning unsaved changes),
+   Saving… (transient), Save failed (red, persistent until the next save).
+   The short Edited label keeps the footprint near the old Saved width;
+   its accessible name and tooltip still announce "Unsaved changes". */
+.save-state {
+  flex:none;
+  /* Keep the status close to its divider without shifting the controls. */
+  width:40px;
+  max-width:40px;
+  text-align:start;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:11px;
+  font-weight:500;
+  letter-spacing:.01em;
+  color:var(--muted);
+}
+.save-state[data-state="dirty"] {
+  color:var(--fg);
+  font-weight:600;
+}
+.save-state[data-state="error"] {
+  color:var(--red);
+  font-weight:600;
+  width:64px;
+  max-width:64px;
+}
+.math-local-editor:not([hidden]) {
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-top:8px;
+  align-items:center;
+}
+.math-local-editor textarea {
+  flex:1 0 100%;
+  box-sizing:border-box;
+  width:100%;
+  min-width:12rem;
+  padding:8px;
+  color:var(--fg);
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:5px;
+  font:inherit;
+  resize:vertical;
+}
+#save.is-dirty {
+  opacity:1;
+  color:var(--accent);
+  background:color-mix(in srgb,var(--accent) 12%,var(--surface));
+}
+#save.is-dirty:hover {
+  background:color-mix(in srgb,var(--accent) 18%,var(--surface));
+}
+
+@media(max-width:640px) {
+  #view-switch button span { display:none; }
+  #view-switch .view-switch-icon { display:block; }
+  #view-switch button {
+    height:26px;
+    min-width:30px;
+    padding:0 7px;
+    font-size:11.5px;
+  }
+  /* Narrow headers keep a readable save state: compact rather than hidden,
+     so Saved / Edited / Save failed stay visible at a glance with the same
+     live status for assistive technology. The same compact width keeps the
+     footprint stable on small screens too. */
+  .save-state {
+    font-size:10.5px;
+  }
+}
+@media(pointer:coarse) {
+  #view-switch button {
+    min-width:44px;
+    min-height:44px;
+  }
 }

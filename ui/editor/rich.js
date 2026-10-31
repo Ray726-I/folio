@@ -7,6 +7,7 @@ import { splitListItem, sinkListItem, liftListItem, wrapInList } from 'prosemirr
 import { fixTables, goToNextCell, addRowAfter, addColumnAfter, deleteRow, deleteColumn, deleteTable, TableView, CellSelection, isInTable, cellAround, nextCell } from 'prosemirror-tables';
 import { inputRules, wrappingInputRule, textblockTypeInputRule, InputRule } from 'prosemirror-inputrules';
 import MarkdownIt from 'markdown-it';
+import { decodeHTML, decodeHTMLAttribute } from 'entities';
 import { schema, parseSource, updateSource, sourceToRich, richToSource, sourceMapping, richMapping, INLINE_HTML_SPAN_TAGS } from './model.js';
 import { buildLedger, applySourcePatches } from './source-ledger.js';
 import { tryTextEdits } from './source-edits.js';
@@ -85,6 +86,112 @@ function button(label, action) {
   const button = document.createElement('button'); button.type = 'button'; button.className = 'button small'; button.textContent = label;
   button.addEventListener('mousedown', event => event.preventDefault());
   button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); action(); }); return button;
+}
+// Raw author HTML must never be handed to DOMParser: an inert document can
+// still start image/iframe/style resource loads in some webviews. This small
+// scanner only reads tag structure from the string and never constructs a
+// browsing context. It deliberately keeps raw-text element bodies opaque and
+// drops comments/declarations, so hidden markup cannot masquerade as images.
+const HTML_RAW_TEXT_TAGS = new Set(['script', 'style', 'textarea', 'title', 'xmp', 'iframe', 'noembed', 'noframes', 'plaintext']);
+const HTML_VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
+function scanHtmlTokens(source) {
+  const text = String(source || ''), lower = text.toLowerCase(), tokens = [];
+  const isSpace = character => character === ' ' || character === '\t' || character === '\n' || character === '\r' || character === '\f';
+  let index = 0;
+  while (index < text.length) {
+    const open = text.indexOf('<', index);
+    if (open < 0) { tokens.push({ type: 'text', value: text.slice(index) }); break; }
+    if (open > index) tokens.push({ type: 'text', value: text.slice(index, open) });
+    index = open;
+    if (text.startsWith('<!--', index)) {
+      const end = text.indexOf('-->', index + 4);
+      index = end < 0 ? text.length : end + 3;
+      continue;
+    }
+    if (text.startsWith('<![CDATA[', index)) {
+      const end = text.indexOf(']]>', index + 9);
+      index = end < 0 ? text.length : end + 3;
+      continue;
+    }
+    if (text.startsWith('<!', index) || text.startsWith('<?', index)) {
+      const end = text.indexOf('>', index + 2);
+      index = end < 0 ? text.length : end + 1;
+      continue;
+    }
+    if (text[index + 1] === '/') {
+      let cursor = index + 2;
+      while (cursor < text.length && isSpace(text[cursor])) cursor++;
+      const start = cursor;
+      while (cursor < text.length && /[A-Za-z0-9:_-]/.test(text[cursor])) cursor++;
+      const name = lower.slice(start, cursor);
+      const end = text.indexOf('>', cursor);
+      index = end < 0 ? text.length : end + 1;
+      if (name) tokens.push({ type: 'end', name });
+      continue;
+    }
+    if (!/[A-Za-z]/.test(text[index + 1] || '')) { index++; continue; }
+    let cursor = index + 1;
+    const nameStart = cursor;
+    while (cursor < text.length && /[A-Za-z0-9:_-]/.test(text[cursor])) cursor++;
+    const name = lower.slice(nameStart, cursor);
+    const attrs = new Map();
+    let selfClosing = false;
+    while (cursor < text.length) {
+      while (cursor < text.length && isSpace(text[cursor])) cursor++;
+      if (cursor >= text.length) break;
+      if (text[cursor] === '>') { cursor++; break; }
+      if (text[cursor] === '/') { selfClosing = true; cursor++; continue; }
+      const attributeStart = cursor;
+      while (cursor < text.length && !isSpace(text[cursor]) && !/[=>/]/.test(text[cursor])) cursor++;
+      if (cursor === attributeStart) { cursor++; continue; }
+      const attribute = lower.slice(attributeStart, cursor);
+      while (cursor < text.length && isSpace(text[cursor])) cursor++;
+      let value = '';
+      if (text[cursor] === '=') {
+        cursor++;
+        while (cursor < text.length && isSpace(text[cursor])) cursor++;
+        const quote = text[cursor];
+        if (quote === '"' || quote === "'") {
+          cursor++;
+          const valueStart = cursor;
+          while (cursor < text.length && text[cursor] !== quote) cursor++;
+          value = text.slice(valueStart, cursor);
+          if (cursor < text.length) cursor++;
+        } else {
+          const valueStart = cursor;
+          while (cursor < text.length && !isSpace(text[cursor]) && text[cursor] !== '>') cursor++;
+          value = text.slice(valueStart, cursor);
+        }
+      } else if (cursor < text.length && text[cursor] !== '>') {
+        // HTML boolean attribute. Leave the cursor on the next delimiter.
+      }
+      if (!attrs.has(attribute)) attrs.set(attribute, decodeHTMLAttribute(value));
+    }
+    const tag = { type: 'start', name, attrs, selfClosing: selfClosing || HTML_VOID_TAGS.has(name) };
+    tokens.push(tag);
+    index = cursor;
+    if (HTML_RAW_TEXT_TAGS.has(name) && !tag.selfClosing) {
+      if (name === 'plaintext') {
+        if (index < text.length) tokens.push({ type: 'text', value: text.slice(index) });
+        index = text.length;
+        break;
+      }
+      const close = lower.indexOf(`</${name}`, index);
+      if (close < 0) {
+        if (index < text.length) tokens.push({ type: 'text', value: text.slice(index) });
+        index = text.length;
+        break;
+      }
+      if (close > index) tokens.push({ type: 'text', value: text.slice(index, close) });
+      index = close;
+    }
+  }
+  return tokens;
+}
+const IMAGE_IDENTITY_ATTRIBUTES = ['alt', 'title', 'width', 'height', 'class'];
+function imageFingerprint(attrs) {
+  const value = name => attrs instanceof Map ? (attrs.get(name) ?? '') : (attrs.getAttribute?.(name) ?? '');
+  return IMAGE_IDENTITY_ATTRIBUTES.map(name => `${name}=${value(name)}`).join('\u0000');
 }
 function selectionAt(doc, anchor, head = anchor) {
   const a = Math.max(0, Math.min(anchor, doc.content.size)), h = Math.max(0, Math.min(head, doc.content.size));
@@ -388,23 +495,49 @@ export function createRichEditor(parent, options) {
   function mathView(node, editor, getPos) {
     const dom = document.createElement(node.isInline ? 'span' : 'div'); dom.className = node.isInline ? 'math-inline' : 'math-block'; dom.contentEditable = 'false';
     const formula = document.createElement('span'); formula.className = 'math-formula'; formula.title = 'Click to edit formula';
+    const panel = document.createElement('span'); panel.className = 'math-local-editor'; panel.hidden = true;
+    const input = document.createElement('textarea'); input.setAttribute('aria-label', 'Formula source'); input.rows = node.isInline ? 2 : 4;
+    const cancel = button('Cancel', () => { panel.hidden = true; edit.focus(); });
+    const apply = button('Apply', () => {
+      if (options.isLocked()) return;
+      let pos; try { pos = getPos(); } catch { return; }
+      let segment = null;
+      editor.state.doc.forEach((child, offset, index) => { if (pos >= offset && pos < offset + child.nodeSize) segment = model.segments[index]; });
+      if (!segment) { options.message('Could not safely locate this formula in the source.'); return; }
+      const source = model.source.slice(segment.from, segment.to), tex = node.attrs.tex;
+      const open = node.attrs.delimiter === '\\(' ? '\\(' : node.attrs.delimiter === '\\[' ? '\\[' : node.isInline ? '$' : '$$';
+      const close = open === '\\(' ? '\\)' : open === '\\[' ? '\\]' : open;
+      const start = source.indexOf(open), end = source.lastIndexOf(close);
+      const exactInline = open + tex + close;
+      const inlineStart = node.isInline ? source.indexOf(exactInline) : -1;
+      const inner = node.isInline ? (inlineStart < 0 ? -1 : inlineStart + open.length) : source.indexOf(tex, Math.max(0, start + open.length));
+      if (start < 0 || end < start || inner < 0 || inner + tex.length > end ||
+          (node.isInline ? source.indexOf(exactInline, inlineStart + 1) >= 0 : source.indexOf(tex, inner + 1) >= 0)) {
+        options.message('Could not safely locate this formula in the source.'); return;
+      }
+      const from = segment.from + inner, to = from + tex.length;
+      const result = replaceLogicalSelection(input.value, 'command', { from, to, all: false, collapsed: false });
+      if (result.committed) { panel.hidden = true; editor.focus(); }
+    });
+    panel.append(input, apply, cancel);
     const edit = button('✎', () => {
       if (options.isLocked()) return;
-      let pos = null;
-      try { pos = getPos(); } catch { pos = null; }
-      if (pos != null) revealAtomSource(pos, node.attrs.tex);
-      else revealCurrentSelection();
+      if (!panel.hidden) { panel.hidden = true; return; }
+      input.value = node.attrs.tex; panel.hidden = false; input.focus();
     });
     edit.classList.add('math-edit'); edit.setAttribute('aria-label', 'Edit formula'); edit.title = 'Edit formula';
     formula.addEventListener('mousedown', event => { if (event.button !== 0) return; event.preventDefault(); if (!options.isLocked()) edit.click(); });
-    dom.append(formula, edit); let generation = 0;
+    dom.append(formula, edit, panel); let generation = 0;
     const render = async () => {
-      const current = ++generation; formula.textContent = node.attrs.tex; formula.classList.remove('math-error');
-      try { const katex = await options.loadKatex(); if (current !== generation) return; katex.render(node.attrs.tex, formula, { displayMode: !node.isInline, throwOnError: true, trust: false, strict: 'warn' }); }
-      catch { if (current === generation) { formula.textContent = node.attrs.tex; formula.classList.add('math-error'); formula.title = 'Formula could not be rendered. Its source is preserved.'; } }
+      const tex = panel.hidden ? node.attrs.tex : input.value;
+      const current = ++generation; formula.textContent = tex; formula.classList.remove('math-error');
+      try { const katex = await options.loadKatex(); if (current !== generation) return; katex.render(tex, formula, { displayMode: !node.isInline, throwOnError: true, trust: false, strict: 'warn' }); }
+      catch { if (current === generation) { formula.textContent = tex; formula.classList.add('math-error'); formula.title = 'Formula could not be rendered. Its source is preserved.'; } }
       edit.disabled = options.isLocked();
     };
-    render(); const refresh = () => { edit.disabled = options.isLocked(); }; refreshers.add(refresh);
+    input.addEventListener('input', render);
+    cancel.addEventListener('click', render);
+    render(); const refresh = () => { edit.disabled = options.isLocked(); input.disabled = options.isLocked(); apply.disabled = options.isLocked(); }; refreshers.add(refresh);
     return { dom, update(next) { if (next.type !== node.type) return false; node = next; render(); return true; }, stopEvent: () => true, ignoreMutation: () => true, destroy() { generation++; refreshers.delete(refresh); } };
   }
   function imageView(node, editorView, getPos) {
@@ -453,7 +586,14 @@ export function createRichEditor(parent, options) {
     const pre = document.createElement('pre'); pre.className = 'code-surface';
     const code = document.createElement('code'); pre.append(code);
     const details = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'Diagram source'; details.append(summary, pre);
-    let generation = 0, source = null, theme = null, abortController = null;
+    // Opening or focusing the source is an explicit editing intent. A later
+    // successful render may close source that it opened automatically for an
+    // error, but it must never close the editor out from under the user.
+    let sourceTouched = false, sourceAutoOpened = false;
+    summary.addEventListener('click', () => { sourceTouched = true; });
+    details.addEventListener('focusin', () => { sourceTouched = true; });
+    details.addEventListener('toggle', () => { if (!details.open) sourceAutoOpened = false; });
+    let generation = 0, source = null, theme = null, abortController = null, renderTimer = 0;
     let highlightGeneration = 0, highlightTimer = 0, highlightedSource = null, highlightedLanguage = null;
     dom.addEventListener('focusin', () => dom.classList.add('code-editing'));
     dom.addEventListener('focusout', () => requestAnimationFrame(() => { if (!dom.contains(document.activeElement)) dom.classList.remove('code-editing'); }));
@@ -498,8 +638,8 @@ export function createRichEditor(parent, options) {
     const render = async () => {
       const language = node.attrs.params.trim().split(/\s/)[0]; dom.dataset.language = language;
       if (language === 'math') {
-        clearHighlight(); abortController?.abort(); source = null; theme = null;
-        dom.classList.remove('mermaid-host'); delete dom.dataset.mermaidSource;
+        clearHighlight(); clearTimeout(renderTimer); renderTimer = 0; abortController?.abort(); source = null; theme = null;
+        dom.classList.remove('mermaid-host'); delete dom.dataset.mermaidSource; delete dom.dataset.diagramState;
         summary.textContent = 'Math source';
         if (pre.parentNode !== details) details.append(summary, pre);
         if (!drawing.isConnected || !details.isConnected) dom.replaceChildren(drawing, details);
@@ -517,8 +657,8 @@ export function createRichEditor(parent, options) {
         return;
       }
       if (language !== 'mermaid') {
-        generation++; abortController?.abort(); source = null; theme = null;
-        dom.classList.remove('mermaid-host'); delete dom.dataset.mermaidSource;
+        generation++; clearTimeout(renderTimer); renderTimer = 0; abortController?.abort(); source = null; theme = null;
+        dom.classList.remove('mermaid-host'); delete dom.dataset.mermaidSource; delete dom.dataset.diagramState;
         code.className = /^[a-z0-9_+#.-]+$/i.test(language) ? `language-${language}` : '';
         if (pre.parentNode !== dom || highlight.nextSibling !== pre) dom.replaceChildren(highlight, pre);
         scheduleHighlight(language);
@@ -529,21 +669,51 @@ export function createRichEditor(parent, options) {
       dom.classList.add('mermaid-host'); dom.dataset.mermaidSource = node.textContent;
       if (pre.parentNode !== details) details.append(summary, pre);
       if (!drawing.isConnected || !details.isConnected) dom.replaceChildren(drawing, details);
-      if (source === node.textContent && theme === options.themeRevision()) return;
-      drawing.className = '';
-      source = node.textContent; theme = options.themeRevision(); const current = ++generation;
-      dom.dataset.themeRevision = String(theme);
-      abortController?.abort(); abortController = new AbortController();
-      drawing.replaceChildren(); drawing.textContent = 'Rendering diagram…';
-      try {
-        const outcome = await options.renderDiagram(source, abortController.signal);
+      const text = node.textContent, nextTheme = options.themeRevision();
+      if (source === text && theme === nextTheme) return;
+      // A keystroke changes the exact source, so any render still in flight is
+      // stale. Invalidate it immediately, but debounce the next render and keep
+      // the previous SVG visible: the diagram should update after typing
+      // settles, not flash through a placeholder on every character.
+      generation++; clearTimeout(renderTimer); abortController?.abort(); abortController = null;
+      source = text; theme = nextTheme; dom.dataset.themeRevision = String(theme);
+      dom.dataset.diagramState = 'rendering';
+      const current = generation, hadDiagram = Boolean(drawing.querySelector('svg'));
+      drawing.classList.remove('mermaid-error');
+      code.className = '';
+      if (!hadDiagram) drawing.textContent = 'Rendering diagram…';
+      renderTimer = setTimeout(async () => {
+        renderTimer = 0;
         if (current !== generation || !dom.isConnected) return;
-        if (outcome?.ok && outcome.sanitized && outcome.svg) { drawing.innerHTML = outcome.svg; details.open = false; }
-        else { drawing.textContent = outcome?.error?.code === 'unsupported_external_images' ? 'This diagram needs external images, which are blocked while rendering offline.' : 'Mermaid diagram could not be rendered.'; drawing.className = 'mermaid-error'; code.className = 'mermaid-source'; details.open = true; }
-      } catch { if (current === generation) { drawing.textContent = 'Mermaid diagram could not be rendered.'; drawing.className = 'mermaid-error'; details.open = true; } }
+        abortController = new AbortController();
+        try {
+          const outcome = await options.renderDiagram(text, abortController.signal);
+          if (current !== generation || !dom.isConnected) return;
+          if (outcome?.ok && outcome.sanitized && outcome.svg) {
+            drawing.className = ''; drawing.innerHTML = outcome.svg; code.className = '';
+            dom.dataset.diagramState = 'rendered';
+            // Only an error-opened source auto-collapses, and only when the
+            // user has not opened or focused it since. A user-opened source
+            // stays open for the whole editing session.
+            if (sourceAutoOpened && !sourceTouched && !details.contains(document.activeElement)) details.open = false;
+            sourceAutoOpened = false;
+          } else {
+            drawing.textContent = outcome?.error?.code === 'unsupported_external_images' ? 'This diagram needs external images, which are blocked while rendering offline.' : 'Mermaid diagram could not be rendered.';
+            drawing.className = 'mermaid-error'; code.className = 'mermaid-source';
+            dom.dataset.diagramState = 'error';
+            if (!details.open) { sourceAutoOpened = true; details.open = true; }
+          }
+        } catch {
+          if (current !== generation || !dom.isConnected) return;
+          drawing.textContent = 'Mermaid diagram could not be rendered.';
+          drawing.className = 'mermaid-error'; code.className = 'mermaid-source';
+          dom.dataset.diagramState = 'error';
+          if (!details.open) { sourceAutoOpened = true; details.open = true; }
+        }
+      }, hadDiagram ? 120 : 0);
     };
     render(); refreshers.add(render);
-    return { dom, contentDOM: code, update(next) { if (next.type !== node.type) return false; node = next; render(); return true; }, ignoreMutation: mutation => mutation.type === 'attributes' || !pre.contains(mutation.target), destroy() { generation++; clearTimeout(highlightTimer); highlightGeneration++; abortController?.abort(); refreshers.delete(render); } };
+    return { dom, contentDOM: code, update(next) { if (next.type !== node.type) return false; node = next; render(); return true; }, ignoreMutation: mutation => mutation.type === 'attributes' || !pre.contains(mutation.target), destroy() { generation++; clearTimeout(renderTimer); clearTimeout(highlightTimer); highlightGeneration++; abortController?.abort(); refreshers.delete(render); } };
   }
   // Reading selections may start, cross and end inside a rendered projection
   // or inline element. ProseMirror maps any DOM position inside an atom to
@@ -592,13 +762,92 @@ export function createRichEditor(parent, options) {
     setSelectionGuarded(false);
     try { view?.domObserver.flush(); } catch {}
   }
-  function copyGuardedSelection(event) {
+  function selectionIncludesRenderedAtom() {
+    try {
+      const selection = view?.state?.selection;
+      if (!selection || selection.empty) return false;
+      let found = false;
+      view.state.doc.nodesBetween(selection.from, selection.to, node => {
+        if (node.type.name === 'raw_block' || node.type.name === 'raw_inline') { found = true; return false; }
+      });
+      return found;
+    } catch { return false; }
+  }
+  // Clipboard text for a reading range that covers rendered projections. Clone
+  // the DOM range instead of using the ProseMirror serializer (which would emit
+  // literal Markdown for raw atoms) and strip editor-only actions/backing
+  // layers so a selection never copies both rendered text and its source.
+  // Attaching the clone offscreen keeps innerText's block line breaks.
+  function cleanedRangeText(range) {
+    if (!range || range.collapsed) return null;
+    const fragment = range.cloneContents();
+    if (!fragment || !fragment.childNodes.length) return null;
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;left:-100000px;top:0;width:720px;pointer-events:none;';
+    host.append(fragment);
+    host.querySelectorAll('.extension-actions, button, input, [aria-hidden="true"]').forEach(node => node.remove());
+    document.body.append(host);
+    try {
+      const text = host.innerText ?? host.textContent ?? '';
+      return text || null;
+    } finally { host.remove(); }
+  }
+  function renderedDomText(node, pos) {
+    let dom = null;
+    try { dom = view.nodeDOM(pos); } catch {}
+    if (!dom || typeof dom.cloneNode !== 'function') return node.textContent;
+    const clone = dom.cloneNode(true);
+    clone.querySelectorAll('.extension-actions, button, input, [aria-hidden="true"]').forEach(child => child.remove());
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;left:-100000px;top:0;width:720px;pointer-events:none;';
+    host.append(clone);
+    document.body.append(host);
+    try { return host.innerText ?? host.textContent ?? node.textContent; }
+    finally { host.remove(); }
+  }
+  // Keyboard selections can cover an atom without the browser's native range
+  // covering its rendered DOM. Mirror textBetween but substitute the rendered
+  // projection for stored source, so copy never emits literal Markdown.
+  function renderedSelectionText(from, to) {
+    let text = '', first = true;
+    try {
+      view.state.doc.nodesBetween(from, to, (node, pos) => {
+        if (node.type.name === 'raw_block') {
+          const nodeText = renderedDomText(node, pos);
+          if (first) first = false; else text += '\n\n';
+          text += nodeText;
+          return false;
+        }
+        const nodeText = node.isText ? node.text.slice(Math.max(from, pos) - pos, to - pos)
+          : !node.isLeaf ? ''
+          : node.type.name === 'hard_break' ? '\n'
+          : node.type.name === 'raw_inline' ? renderedDomText(node, pos)
+          : node.type.spec.leafText ? node.type.spec.leafText(node) : '';
+        if (node.isBlock && (node.isLeaf && nodeText || node.isTextblock)) {
+          if (first) first = false; else text += '\n\n';
+        }
+        text += nodeText;
+      }, 0);
+    } catch { return null; }
+    return text || null;
+  }
+  function copyRenderedSelection(event) {
     const data = event.clipboardData;
-    if (!data || !renderedRangeActive()) return false;
-    const text = window.getSelection()?.toString() ?? '';
-    if (!text) return false;
+    if (!data) return false;
+    // A live mouse/pointer range is authoritative for partial readings,
+    // including selections that start or end inside a projection. Keyboard
+    // selections over an atom need the state-aware text builder instead.
+    let text = null;
+    if (renderedRangeActive()) {
+      try { text = cleanedRangeText(window.getSelection().getRangeAt(0)); } catch {}
+    }
+    if (text === null && selectionIncludesRenderedAtom()) {
+      const selection = view.state.selection;
+      text = renderedSelectionText(selection.from, selection.to);
+    }
+    if (text === null) return false;
     event.preventDefault();
-    try { data.setData('text/plain', text); } catch {}
+    try { data.setData('text/plain', text); } catch { return false; }
     return true;
   }
   // Text-shaped reading paint via the CSS Custom Highlights API. The real DOM
@@ -742,43 +991,49 @@ export function createRichEditor(parent, options) {
   // previous code-chip rendering, which is always safe to display.
   const INLINE_HTML_ELEMENTS = new Set(INLINE_HTML_SPAN_TAGS);
   function renderInlineHtml(source) {
-    let host;
-    try {
-      const parsed = new DOMParser().parseFromString(`<div>${source}</div>`, 'text/html');
-      host = parsed.body.firstElementChild;
-      if (!host || host.tagName !== 'DIV' || host.nextElementSibling) return null;
-      // The merged pair is exactly one element; surrounding text would mean
-      // the tokenizer and this renderer disagree, so refuse loudly.
-      if ([...host.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.nodeValue.trim() !== '')) return null;
-      const root = host.firstElementChild;
-      // Only a complete open..close pair renders as a real element. A lone
-      // tag falls back to the literal chip below, exactly as before.
-      if (!root || !new RegExp(`</${root.tagName}\\s*>\\s*$`, 'i').test(source)) return null;
-    } catch { return null; }
+    // Build directly from the token stream, never from a parsed document. Only
+    // allowlisted elements get created, so an inner <img>/<iframe>/<style> is
+    // rejected before any resource-bearing node can exist.
     const fragment = document.createDocumentFragment();
-    const clean = (from, to) => {
-      for (const child of [...from.childNodes]) {
-        if (child.nodeType === Node.TEXT_NODE) to.append(document.createTextNode(child.nodeValue));
-        else if (child.nodeType === Node.ELEMENT_NODE) {
-          const tag = child.tagName.toLowerCase();
-          if (!INLINE_HTML_ELEMENTS.has(tag)) return false;
-          const element = document.createElement(tag);
-          if (tag === 'a') {
-            const href = child.getAttribute('href');
-            // Same destination policy as Markdown links: relative document
-            // links keep working, script/data/file targets never do.
-            if (href && safeDestination(href)) element.setAttribute('href', href);
-          }
-          // Every other attribute is dropped: no handlers, no styles, and no
-          // forged editor markers can ride along.
-          if (!clean(child, element)) return false;
-          to.append(element);
+    const stack = [];
+    let root = null;
+    for (const token of scanHtmlTokens(source)) {
+      if (token.type === 'text') {
+        const value = decodeHTML(token.value);
+        const parent = stack[stack.length - 1];
+        if (parent) parent.append(document.createTextNode(value));
+        else {
+          // The merged pair must be exactly one element; surrounding prose
+          // means the tokenizer and this renderer disagree, so refuse.
+          if (value.trim() !== '') return null;
+          if (value) fragment.append(document.createTextNode(value));
         }
-        // Comments and processing instructions are dropped silently.
+        continue;
       }
-      return true;
-    };
-    if (!clean(host, fragment) || !fragment.childNodes.length) return null;
+      if (token.type === 'start') {
+        if (!INLINE_HTML_ELEMENTS.has(token.name)) return null;
+        const element = document.createElement(token.name);
+        if (token.name === 'a') {
+          const href = token.attrs.get('href');
+          // Same destination policy as Markdown links: relative document links
+          // keep working, script/data/file targets never do.
+          if (href && safeDestination(href)) element.setAttribute('href', href);
+        }
+        // Every other attribute is dropped: no handlers, no styles, and no
+        // forged editor markers can ride along.
+        if (!stack.length) {
+          if (root) return null;
+          root = element;
+          fragment.append(element);
+        } else stack[stack.length - 1].append(element);
+        if (!token.selfClosing) stack.push(element);
+        continue;
+      }
+      if (!stack.length) return null;
+      const open = stack.pop();
+      if (open.tagName.toLowerCase() !== token.name) return null;
+    }
+    if (stack.length || !root) return null;
     return fragment;
   }
   function rawInlineView(node, editor, getPos) {
@@ -844,6 +1099,94 @@ export function createRichEditor(parent, options) {
     const refresh = () => syncEditability();
     refreshers.add(refresh);
     return { dom, update(next) { if (next.type !== node.type) return false; node = next; render(); return true; }, ignoreMutation: () => true, destroy() { refreshers.delete(refresh); } };
+  }
+  // The native sanitizer replaces a blocked remote author-HTML image source
+  // with an opaque local placeholder, so the projection carries no destination
+  // that could drive per-image consent. Recover the exact destinations from the
+  // raw block itself and pair them positionally with the sanitized images. The
+  // URL is never written to the projection before the user asks to load it; a
+  // count mismatch means the mapping is not provable, so every image stays
+  // inert rather than guessing.
+  function remoteImageDestination(value) {
+    const normalized = String(value || '')
+      .replace(/[\t\n\r]/g, '')
+      .replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, '');
+    const slashed = normalized.replace(/\\/g, '/').toLowerCase();
+    return slashed.startsWith('//') || slashed.startsWith('http:') || slashed.startsWith('https:') || normalized.startsWith('\\');
+  }
+  function authorImageSources(source, projection) {
+    const rendered = [...projection.querySelectorAll('img')];
+    if (!rendered.length) return [];
+    const sourceImages = [];
+    for (const token of scanHtmlTokens(source)) {
+      if (token.type !== 'start' || token.name !== 'img') continue;
+      const destination = token.attrs.get('src') || '';
+      sourceImages.push({
+        destination,
+        remote: remoteImageDestination(destination),
+        fingerprint: imageFingerprint(token.attrs)
+      });
+    }
+    if (!sourceImages.length) return [];
+    // Pair by surviving identity (alt/title/dimensions/class), never by count.
+    // A sanitizer that removes or reorders an image then leaves either side
+    // without a unique match; only unique-on-both-sides identities may be
+    // trusted, otherwise the control fails closed instead of guessing a URL.
+    const sourceCounts = new Map();
+    for (const image of sourceImages) sourceCounts.set(image.fingerprint, (sourceCounts.get(image.fingerprint) || 0) + 1);
+    const renderedByIdentity = new Map();
+    for (const image of rendered) {
+      const fingerprint = imageFingerprint(image);
+      const matches = renderedByIdentity.get(fingerprint) || [];
+      matches.push(image);
+      renderedByIdentity.set(fingerprint, matches);
+    }
+    return sourceImages.flatMap(image => {
+      if (!image.remote || sourceCounts.get(image.fingerprint) !== 1) return [];
+      const matches = renderedByIdentity.get(image.fingerprint);
+      return matches?.length === 1 ? [{ image: matches[0], destination: image.destination }] : [];
+    });
+  }
+  function offerExtensionImageLoad(image, destination, stale) {
+    if (stale() || !image.isConnected) return;
+    if (image.nextElementSibling?.classList?.contains('extension-image-load')) return;
+    const controls = document.createElement('span');
+    controls.className = 'extension-image-load';
+    const load = button('Load image', async () => {
+      load.disabled = true;
+      try {
+        const result = await options.resolveImage(destination, true);
+        if (stale() || !image.isConnected) return;
+        if (!result.src) { load.disabled = false; return; }
+        image.referrerPolicy = 'no-referrer';
+        image.src = result.src;
+        controls.remove();
+      } catch { load.disabled = false; }
+    });
+    load.setAttribute('aria-label', 'Load image');
+    load.title = 'Load remote image';
+    controls.append(load);
+    image.after(controls);
+  }
+  async function mountAuthorImages(source, projection, stale) {
+    for (const entry of authorImageSources(source, projection)) {
+      // A permitted projection already carries the exact destination. Do not
+      // ask the native renderer again; only blocked placeholders need consent.
+      if (entry.image.getAttribute('src') === entry.destination) continue;
+      try {
+        const result = await options.resolveImage(entry.destination, false);
+        if (stale() || !entry.image.isConnected) return;
+        if (result.src === entry.destination) {
+          entry.image.referrerPolicy = 'no-referrer';
+          entry.image.src = result.src;
+        } else if (result.blocked || (result.src && /^data:image\/svg\+xml;base64,/.test(result.src))) {
+          offerExtensionImageLoad(entry.image, entry.destination, stale);
+        } else if (result.src) {
+          entry.image.referrerPolicy = 'no-referrer';
+          entry.image.src = result.src;
+        }
+      } catch {}
+    }
   }
   function rawView(node, editor, getPos) {
     const dom = document.createElement('section'); dom.className = 'extension-block';
@@ -992,7 +1335,10 @@ export function createRichEditor(parent, options) {
       invalidateTasks();
       try {
         const html = await options.renderExtension(source);
-        if (generation === current && source === node.textContent && dom.isConnected) { projection.innerHTML = html; mountedSource = source; syncTaskControls(); }
+        if (generation === current && source === node.textContent && dom.isConnected) {
+          projection.innerHTML = html; mountedSource = source; syncTaskControls();
+          void mountAuthorImages(source, projection, () => generation !== current || !dom.isConnected);
+        }
       }
       catch { if (current === generation) projection.textContent = 'Rendered view unavailable. Use Edit source to inspect the exact Markdown.'; }
     };
@@ -1390,12 +1736,12 @@ export function createRichEditor(parent, options) {
         // A reading range touching a projection copies the rendered text under
         // the highlight. The editor's serializer would emit literal source
         // for the atom, so the native range is served here instead.
-        return copyGuardedSelection(event);
+        return copyRenderedSelection(event);
       },
       cut(editor, event) {
         // Cutting a reading range must never mutate the document: serve the
         // rendered text as a copy and keep the Markdown intact.
-        if (copyGuardedSelection(event)) return true;
+        if (copyRenderedSelection(event)) return true;
         const range = logicalRange(editor.state);
         if (!range || range.collapsed || !event.clipboardData) return false;
         const text = model.source.slice(range.from, range.to);

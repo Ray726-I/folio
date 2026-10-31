@@ -8,7 +8,7 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.locator('#show-markdown').click();
     await page.waitForFunction(() => !busy && mode === 'edit');
     await page.evaluate(() => editor.selectRange(4)); // inside the entity spelling
-    await page.locator('#show-markdown').click();
+    await page.locator('#view-formatted').click();
     await page.waitForFunction(() => !busy && mode === 'read');
     await page.locator('#show-markdown').click();
     await page.waitForFunction(() => !busy && mode === 'edit');
@@ -18,7 +18,7 @@ const { openEditor } = require('./editor-browser.cjs');
       const start = current.content.indexOf('**bold**');
       editor.selectRange(start, start + 8);
     });
-    await page.locator('#show-markdown').click();
+    await page.locator('#view-formatted').click();
     await page.waitForFunction(() => !busy && mode === 'read');
     await page.keyboard.type('X');
     assert.equal(await page.evaluate(() => current.content), 'A &amp; B\n\nA X B\n',

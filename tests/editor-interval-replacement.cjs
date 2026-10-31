@@ -59,7 +59,7 @@ async function showSource(page) {
 }
 async function showRich(page) {
   if (await page.evaluate(() => mode) === 'read') return;
-  await page.locator('#show-markdown').click();
+  await page.locator('#view-formatted').click();
   await page.waitForFunction(() => !busy && mode === 'read');
 }
 async function selectSource(page, anchor, head = anchor) {

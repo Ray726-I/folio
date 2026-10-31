@@ -110,10 +110,15 @@ let errors = [];
   await page.locator('#outline-close').click();
   const initialRenderCalls = await page.evaluate(() => window.nativeCalls.filter(call => call.command === 'render_markdown').length);
   await page.evaluate(() => { window.initialHeading = document.querySelector('#preview h1'); });
-  for (const button of ['#show-markdown', '#show-markdown', '#show-markdown', '#show-markdown']) {
+  // Explicit segments: switching both ways reuses the rendered preview,
+  // and re-clicking the active segment is a quiet no-op that changes nothing.
+  await page.locator('#show-markdown').click();
+  await page.waitForFunction(() => !busy);
+  for (const button of ['#show-markdown', '#show-markdown', '#view-formatted', '#view-formatted']) {
     await page.locator(button).click();
     await page.waitForFunction(() => !busy);
   }
+  assert.equal(await page.locator('#view-formatted').getAttribute('aria-pressed'), 'true', 'explicit segments must end back in the formatted view');
   assert.equal(await page.evaluate(() => window.nativeCalls.filter(call => call.command === 'render_markdown').length), initialRenderCalls, 'unchanged mode switches should reuse the rendered preview');
   assert(await page.evaluate(() => window.initialHeading === document.querySelector('#preview h1')), 'unchanged mode switches should preserve the preview DOM');
 

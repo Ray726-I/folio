@@ -37,8 +37,10 @@ const fixture = process.env.FOLIO_FIXTURE || path.resolve('target/debug/examples
   try {
     await page.goto(pathToFileURL(path.resolve('ui/index.html')).href);
     await page.waitForFunction(() => typeof busy !== 'undefined' && !busy);
-    assert.equal(await page.locator('#show-markdown').count(), 1, 'one Show Markdown toggle replaces preview/edit');
+    assert.equal(await page.locator('#show-markdown').count(), 1, 'explicit Markdown segment is present');
+    assert.equal(await page.locator('#view-formatted').count(), 1, 'explicit Formatted segment is present');
     await page.locator('#preview .ProseMirror').waitFor();
+    assert.equal(await page.locator('#view-formatted').getAttribute('aria-pressed'), 'true');
     assert.equal(await page.locator('#show-markdown').getAttribute('aria-pressed'), 'false');
     assert.equal(await page.evaluate(() => current.content), source, 'opening preserves exact Markdown');
     await page.locator('#preview h1').click();
@@ -61,7 +63,7 @@ const fixture = process.env.FOLIO_FIXTURE || path.resolve('target/debug/examples
     assert.equal(await page.evaluate(() => current.content), beforeToggle, 'toggle does not rewrite source');
     await page.keyboard.type('Y');
     assert.ok((await page.evaluate(() => current.content)).includes('Y'));
-    await page.locator('#show-markdown').click();
+    await page.locator('#view-formatted').click();
     assert.ok((await page.locator('#preview td').first().innerText()).includes('Y'), 'source caret maps back to the same cell');
     await page.locator('#view-menu-button').click();
     await page.locator('#source-snapshot').click();

@@ -38,7 +38,7 @@ const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n
     await page.keyboard.press('Control+a'); await page.keyboard.press('Delete');
     assert.equal(await text(), '', 'Select All/Delete must not leave protected table shells');
     await page.keyboard.press('Control+z'); assert.equal(await text(), beforeStructure);
-    await page.locator('#show-markdown').click();
+    await page.locator('#view-formatted').click();
     // Links edit in place: clicking a link reveals its Markdown source in the
     // same buffer, with the URL selected for direct typing. No modal.
     await page.locator('#preview a').first().click();
@@ -54,25 +54,20 @@ const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n
     await page.keyboard.type('https://example.com/changed');
     assert.ok((await text()).includes('https://example.com/changed'));
     assert.equal(await page.evaluate(() => editor.isSource()), true, 'link URL edit stays in the shared buffer');
-    await page.locator('#show-markdown').click();
+    await page.locator('#view-formatted').click();
     assert.equal(await page.locator('#preview a').first().textContent(), 'route');
     assert.ok((await page.locator('#preview a').first().getAttribute('href')).includes('https://example.com/changed'));
-    // Math edits in place: the Edit affordance reveals TeX source in the same
-    // buffer, with the formula selected. No modal.
+    // Math edits locally without switching the document to Markdown.
     const beforeMath = await text();
     await page.locator('#preview .math-block .math-edit').click();
-    await page.locator('#source-editor .cm-content').waitFor({ state: 'visible' });
-    assert.equal(await page.evaluate(() => editor.isSource()), true, 'math edit reveals Markdown source in the same buffer');
+    const mathInput = page.locator('#preview .math-block textarea');
+    await mathInput.waitFor({ state: 'visible' });
+    assert.equal(await page.evaluate(() => editor.isSource()), false, 'math edit stays in formatted mode');
     assert.equal(await page.locator('#editor-action-dialog').evaluate(node => node.open), false, 'math editing uses in-buffer source, not a modal');
-    const mathSelection = await page.evaluate(() => editor.getSelection());
-    const mathSelected = await page.evaluate(selection => {
-      const value = editor.getText();
-      return value.slice(Math.min(selection.anchor, selection.head), Math.max(selection.anchor, selection.head));
-    }, mathSelection);
-    assert.ok(mathSelected.includes('x^2'), `math TeX is selected in source, got ${JSON.stringify(mathSelected)}`);
-    await page.keyboard.type('\\frac{1}{');
+    assert.ok((await mathInput.inputValue()).includes('x^2'));
+    await mathInput.fill('\\frac{1}{');
+    await page.locator('#preview .math-block button', { hasText: 'Apply' }).click();
     assert.ok((await text()).includes('\\frac{1}{'));
-    await page.locator('#show-markdown').click();
     await page.locator('#preview .math-error').waitFor();
     assert.ok((await text()).includes('\\frac{1}{'));
     await page.keyboard.press('Control+z'); assert.equal(await text(), beforeMath);
@@ -87,7 +82,7 @@ const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n
       return value.slice(Math.min(selection.anchor, selection.head), Math.max(selection.anchor, selection.head));
     }, imageSelection);
     assert.ok(imageSelected.includes('https://example.com/tracker.png'), `image source is selected in source, got ${JSON.stringify(imageSelected)}`);
-    await page.locator('#show-markdown').click();
+    await page.locator('#view-formatted').click();
     assert.ok((await text()).includes('https://example.com/tracker.png'));
 
     // No requests on view/hover/focus. A deliberate Load remains possible

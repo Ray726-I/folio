@@ -114,7 +114,7 @@ async function highlightState(page) {
     const inSource = await highlightState(page);
     assert.equal(inSource.registered, false, 'source presentation clears the registry');
     assert.equal(inSource.painted, false, 'source presentation removes the paint class');
-    await page.locator('#show-markdown').click();
+    await page.locator('#view-formatted').click();
     await page.waitForFunction(() => !editor.isSource());
     await page.waitForTimeout(400);
 

@@ -41,6 +41,19 @@ function setFilePicker(next) {
 function toggleFilePicker() { setFilePicker(filePicker() === 'native' ? 'folio' : 'native'); }
 let nativePickActive = false;
 const dirty = () => current.content !== current.saved;
+// Persistent save indicator state: null when it should mirror dirty/clean,
+// 'saving' while a save is in flight, or { error } after a rejected save
+// until the next save attempt. Rendered visibly by updateTitle().
+let saveStatus = null;
+function saveState() {
+  if (!current.active) return { text: '', state: 'idle' };
+  if (saveStatus === 'saving') return { text: 'Saving…', state: 'saving' };
+  if (saveStatus && saveStatus.error) return { text: 'Save failed', state: 'error' };
+  // Compact dirty label: the short "Edited" keeps the indicator footprint
+  // near the old Saved width so no wide gap is reserved. The full
+  // "Unsaved changes" meaning lives in the accessible name and tooltip.
+  return dirty() ? { text: 'Edited', state: 'dirty' } : { text: 'Saved', state: 'saved' };
+}
 function commandError(error) {
   if (error && typeof error === 'object') return { code: error.code || 'error', message: error.message || String(error) };
   const message = String(error ?? 'Unknown error');
@@ -56,7 +69,22 @@ function updateTitle() {
   $('document-location').textContent = current.path ? dirname(current.path) : activeFolder?.path || (current.active ? 'Unsaved document' : 'Markdown files and folders');
   $('document-location').title = current.path || activeFolder?.path || '';
   $('dirty-dot').hidden = !dirty();
-  $('save').classList.toggle('is-dirty', dirty());
+  const saveButton = $('save'), isDirty = dirty();
+  saveButton.classList.toggle('is-dirty', isDirty);
+  const saveLabel = !current.active ? 'Save (Ctrl+S)'
+    : isDirty ? `Save (Ctrl+S) — unsaved changes in ${current.name}` : 'Save (Ctrl+S) — all changes saved';
+  saveButton.setAttribute('aria-label', saveLabel);
+  saveButton.title = saveLabel;
+  const state = saveState(), saveStateElement = $('save-state');
+  saveStateElement.textContent = state.text;
+  saveStateElement.dataset.state = state.state;
+  // The short "Edited" label still announces the full meaning to assistive
+  // technology and hover, so nothing is lost by staying compact.
+  const accessibleText = state.state === 'dirty' ? 'Unsaved changes' : state.text;
+  const stateTitle = state.state === 'error' && saveStatus?.error ? saveStatus.error
+    : state.state === 'dirty' ? 'Unsaved changes' : '';
+  saveStateElement.title = stateTitle;
+  saveStateElement.setAttribute('aria-label', state.state === 'error' && saveStatus?.error ? `Save failed: ${saveStatus.error}` : `Save state: ${accessibleText || 'no document'}`);
   invoke('set_title', { name, dirty: dirty() }).catch(() => {});
 }
 function updateStats() {
@@ -76,7 +104,7 @@ function showDocument() {
   document.querySelectorAll('.document-control').forEach(control => { control.hidden = !current.active; });
   setFormatToolbarVisible(formatToolbarVisible, false);
   if (!current.active) editorPresentation(false, false, false);
-  resetHistory(); $('disk-banner').hidden = true; updateTitle(); updateStats(); setOutline(outlineVisible);
+  resetHistory(); $('disk-banner').hidden = true; saveStatus = null; updateTitle(); updateStats(); setOutline(outlineVisible);
   $('folder-empty').hidden = current.active || !activeFolder;
   renderFolderEntries();
   previewLimitedKind = null; syncSourceFallback();
@@ -92,7 +120,7 @@ function showWelcome() {
   document.body.classList.remove('focus-mode');
   document.querySelectorAll('.document-control').forEach(control => { control.hidden = true; });
   setFormatToolbarVisible(formatToolbarVisible, false); editorPresentation(false, false, false);
-  updateTitle(); updateStats();
+  saveStatus = null; updateTitle(); updateStats();
   previewLimitedKind = null; syncSourceFallback();
 }
 function goHome() {
@@ -465,17 +493,20 @@ async function save(saveAs = false, force = false) {
   if (mode === 'edit') await commitInlineEdit();
   editor?.checkpoint();
   const snapshot = current.content;
-  status('Saving…');
+  status('Saving…'); saveStatus = 'saving'; updateTitle();
   try {
     const saved = await invoke('save_document', { content: snapshot, saveAs, force });
-    if (!saved) { status(''); return false; }
-    current.path = saved.path; current.name = saved.name; current.saved = snapshot; updateTitle(); $('disk-banner').hidden = true; addRecent(current.path); status('Saved');
+    if (!saved) { saveStatus = null; status(''); updateTitle(); return false; }
+    current.path = saved.path; current.name = saved.name; current.saved = snapshot; saveStatus = null; updateTitle(); $('disk-banner').hidden = true; addRecent(current.path); status('Saved');
     await renderPreview();
     return true;
   } catch (error) {
     status('');
     const failure = commandError(error);
-    if (failure.code !== 'file_changed') throw new Error(failure.message);
+    if (failure.code !== 'file_changed') { saveStatus = { error: failure.message }; updateTitle(); throw new Error(failure.message); }
+    // The conflict is unresolved while the dialog is open: report unsaved
+    // changes, never Saving… or Saved, until the user picks an outcome.
+    saveStatus = null; updateTitle();
     const choice = await ask('This file changed on disk', 'Another app changed this file. Reload the disk version, or overwrite it with your current document.', [
       { label: 'Cancel', value: 'cancel' }, { label: 'Reload', value: 'reload' }, { label: 'Overwrite', value: 'overwrite', style: 'destructive' }
     ]);
@@ -529,7 +560,7 @@ function allCommands() {
   if (current.active) commands.splice(2, 0,
     { label: 'Save', icon: 'save', shortcut: 'Ctrl+S', action: () => requestSave() },
     { label: 'Save as…', icon: 'save', shortcut: 'Ctrl+Shift+S', action: () => requestSave(true) },
-    { label: mode === 'edit' ? 'Hide Markdown' : 'Show Markdown', icon: 'edit', shortcut: 'Ctrl+E', action: () => requestMode(mode === 'edit' ? 'read' : 'edit') },
+    { label: mode === 'edit' ? 'Show formatted view' : 'Show Markdown source', icon: 'edit', shortcut: 'Ctrl+E', action: () => requestMode(mode === 'edit' ? 'read' : 'edit') },
     { label: editor?.isLocked() ? 'Unlock document' : 'Lock document', icon: 'read', action: () => editor?.setLocked(!editor.isLocked()) },
     { label: 'Source snapshot', icon: 'file', action: openSourceSnapshot },
     { label: 'Undo', icon: 'edit', shortcut: 'Ctrl+Z', action: () => enqueue(() => undoRedo()) },
@@ -794,7 +825,7 @@ async function requestClose() { return enqueue(async () => { if (await allowDisc
 
 const SAMPLE = `# A quiet place for your words
 
-Folio opens **individual Markdown files**. Read comfortably, edit directly, and save right back to disk. Use **Show Markdown** for local syntax, **Lock** to protect against edits, and **Source** to inspect the exact Markdown.
+Folio opens **individual Markdown files**. Read comfortably, edit directly, and save right back to disk. Use the **Formatted** / **Markdown** switch for local syntax, **Lock** to protect against edits, and **Source** to inspect the exact Markdown.
 
 ## Make yourself at home
 
@@ -808,7 +839,7 @@ Use the search button in the header, or **Ctrl+Shift+P**, to open the command wi
 | Action | Shortcut |
 | :--- | :--- |
 | Open a file or folder | Ctrl+O |
-| Show or hide Markdown | Ctrl+E |
+| Switch Formatted / Markdown | Ctrl+E |
 | Save | Ctrl+S |
 | Zoom the whole app | Ctrl+= / Ctrl+- |
 | Change document text size | Ctrl+Shift+= / Ctrl+Shift+- |

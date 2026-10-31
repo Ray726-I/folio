@@ -22,9 +22,16 @@ function previewElementForBlock() { return $('preview').querySelector('h1,h2,p')
 
 function editorPresentation(show, locked, fallback) {
   mode = show ? 'edit' : 'read'; root.dataset.mode = mode;
+  const formattedButton = $('view-formatted');
+  if (formattedButton) {
+    formattedButton.setAttribute('aria-pressed', String(!show));
+    const formattedLabel = show ? 'Show formatted view (Ctrl+E)' : 'Formatted view (Ctrl+E)';
+    formattedButton.setAttribute('aria-label', formattedLabel);
+    formattedButton.title = formattedLabel;
+  }
   const showButton = $('show-markdown');
   showButton.setAttribute('aria-pressed', String(show));
-  const showLabel = show ? 'Hide Markdown (Ctrl+E)' : 'Show Markdown near the cursor (Ctrl+E)';
+  const showLabel = show ? 'Markdown source (Ctrl+E)' : 'Show Markdown source (Ctrl+E)';
   showButton.setAttribute('aria-label', showLabel);
   showButton.title = showLabel;
   const lockButton = $('lock-document');
@@ -250,8 +257,23 @@ async function mountUnifiedEditor() {
   $('folder-empty').hidden = true; refreshEditorOutline(); status('');
 }
 
-$('show-markdown').addEventListener('mousedown', event => event.preventDefault());
-$('show-markdown').onclick = () => enqueue(async () => { const next = mode !== 'edit'; await renderPreview(); editor?.setPresentation(next); refreshEditorOutline(); });
+function switchPresentation(show) {
+  return enqueue(async () => { await renderPreview(); editor?.setPresentation(show); refreshEditorOutline(); });
+}
+$('view-switch').addEventListener('mousedown', event => { if (event.target.closest('button')) event.preventDefault(); });
+$('view-switch').addEventListener('keydown', event => {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  const segments = [...$('view-switch').querySelectorAll('button')];
+  if (!segments.length) return;
+  event.preventDefault();
+  const current = segments.indexOf(document.activeElement);
+  const next = event.key === 'Home' ? 0
+    : event.key === 'End' ? segments.length - 1
+    : (current + (event.key === 'ArrowRight' ? 1 : -1) + segments.length) % segments.length;
+  segments[next].focus();
+});
+$('show-markdown').onclick = () => { if (mode !== 'edit') switchPresentation(true); };
+$('view-formatted').onclick = () => { if (mode !== 'read') switchPresentation(false); };
 $('lock-document').onclick = () => editor?.setLocked(!editor.isLocked());
 $('source-snapshot').onclick = openSourceSnapshot;
 $('source-snapshot-close').onclick = () => { $('source-dialog').close(); editor?.focus(); };

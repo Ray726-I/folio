@@ -16,19 +16,34 @@ function escapedAt(line, index) {
   return slashes % 2 === 1;
 }
 
+// A table's Lezer node starts after any blockquote marker on its first line
+// but includes the markers on later lines, so absolute line anchors are the
+// only reliable way to map a rendered cell back to source. Keep each line's
+// exact source start and a marker-free copy used to build the preview.
+function tableSourceLines(state, from, to) {
+  const first = state.doc.lineAt(from).number, last = state.doc.lineAt(to).number;
+  const lines = [];
+  for (let number = first; number <= last; number++) {
+    const line = state.doc.line(number);
+    const marker = /^(?:[ \t]*>[ \t]?)+/.exec(line.text);
+    const prefix = marker ? marker[0].length : 0;
+    lines.push({ from: line.from + prefix, text: line.text.slice(prefix) });
+  }
+  return lines;
+}
+
 // Map a rendered table cell back to the first non-padding character of its
-// Markdown cell, supporting both leading-pipe and pipe-less table rows.
-function tableCellOffset(text, from, rowIndex, column) {
-  const lines = text.split('\n'), sourceRow = rowIndex ? rowIndex + 1 : 0;
-  let offset = from;
-  for (let i = 0; i < sourceRow && i < lines.length; i++) offset += lines[i].length + 1;
-  const line = lines[sourceRow] || '', pipes = [];
-  for (let i = 0; i < line.length; i++) if (line[i] === '|' && !escapedAt(line, i)) pipes.push(i);
+// Markdown cell, supporting leading-pipe, pipe-less and blockquoted rows.
+function tableCellOffset(lines, rowIndex, column) {
+  const line = lines[rowIndex ? rowIndex + 1 : 0];
+  if (!line) return 0;
+  const pipes = [];
+  for (let i = 0; i < line.text.length; i++) if (line.text[i] === '|' && !escapedAt(line.text, i)) pipes.push(i);
   let start = 0;
-  if (/^\s*\|/.test(line)) start = pipes[column] === undefined ? 0 : pipes[column] + 1;
+  if (/^\s*\|/.test(line.text)) start = pipes[column] === undefined ? 0 : pipes[column] + 1;
   else if (column > 0) start = pipes[column - 1] === undefined ? 0 : pipes[column - 1] + 1;
-  while (start < line.length && (line[start] === ' ' || line[start] === '\t')) start++;
-  return offset + Math.min(start, line.length);
+  while (start < line.text.length && (line.text[start] === ' ' || line.text[start] === '\t')) start++;
+  return line.from + Math.min(start, line.text.length);
 }
 
 function scrollInstant(scroller, top) {
@@ -60,7 +75,13 @@ function revealBounds(scroller, bounds, margin = SCROLL_MARGIN) {
 }
 
 class TablePreview extends WidgetType {
-  constructor(text, from, selectCell) { super(); this.text = text; this.from = from; this.selectCell = selectCell; }
+  constructor(lines, selectCell) {
+    super();
+    this.lines = lines;
+    this.text = lines.map(line => line.text).join('\n');
+    this.from = lines[0]?.from ?? 0;
+    this.selectCell = selectCell;
+  }
   eq(other) { return this.text === other.text && this.from === other.from; }
   // Nearest cell to a point inside the table, using the same row/column
   // indexing as the direct-hit path below. Borders, spacing gaps and cell
@@ -113,7 +134,7 @@ class TablePreview extends WidgetType {
       // Revealing the source replaces the compact widget with taller Markdown
       // lines. Hand the clicked row's screen position to the shared reveal so
       // the selection update and row anchoring land in the same frame.
-      this.selectCell(tableCellOffset(this.text, this.from, rowIndex, column), anchor.getBoundingClientRect().top);
+      this.selectCell(tableCellOffset(this.lines, rowIndex, column), anchor.getBoundingClientRect().top);
     });
     return wrapper;
   }
@@ -130,7 +151,13 @@ function sourceDecorations(state, selectCell) {
   syntaxTree(state).iterate({ enter(node) {
     const { from, to, name } = node;
     if (name === 'Table') {
-      if (!revealed(from, to)) ranges.push(Decoration.replace({ block: true, widget: new TablePreview(state.doc.sliceString(from, to), from, selectCell) }).range(from, to));
+      if (!revealed(from, to)) {
+        // A blockquote table's Lezer node starts after the first quote marker.
+        // Replace from the physical line start so the marker cannot remain as
+        // a stray `>` next to the rendered preview.
+        const previewFrom = state.doc.lineAt(from).from;
+        ranges.push(Decoration.replace({ block: true, widget: new TablePreview(tableSourceLines(state, from, to), selectCell) }).range(previewFrom, to));
+      }
       return false;
     }
     const heading = /^ATXHeading([1-6])$/.exec(name);

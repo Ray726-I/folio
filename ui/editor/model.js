@@ -13,8 +13,8 @@ let nodes = commonSchema.spec.nodes
   .update('list_item', { ...commonSchema.spec.nodes.get('list_item'), attrs: { checked: { default: null } } })
   .addToEnd('raw_block', { content: 'text*', group: 'block', code: true, marks: '', defining: true, attrs: { kind: { default: 'Markdown extension' } }, toDOM: () => ['pre', { class: 'source-block', 'data-source-fallback': '' }, 0] })
   .addToEnd('raw_inline', { inline: true, group: 'inline', atom: true, attrs: { source: {} }, toDOM: node => ['code', { class: 'source-inline' }, node.attrs.source] })
-  .addToEnd('math_inline', { inline: true, group: 'inline', atom: true, attrs: { tex: {} }, toDOM: node => ['span', { class: 'math-source' }, `$${node.attrs.tex}$`] })
-  .addToEnd('math_block', { group: 'block', atom: true, attrs: { tex: {} }, toDOM: node => ['div', { class: 'math-source' }, `$$\n${node.attrs.tex}\n$$`] });
+  .addToEnd('math_inline', { inline: true, group: 'inline', atom: true, attrs: { tex: {}, delimiter: { default: '$' } }, toDOM: node => ['span', { class: 'math-source' }, node.attrs.delimiter === '\\(' ? `\\(${node.attrs.tex}\\)` : `$${node.attrs.tex}$`] })
+  .addToEnd('math_block', { group: 'block', atom: true, attrs: { tex: {}, delimiter: { default: '$$' } }, toDOM: node => ['div', { class: 'math-source' }, node.attrs.delimiter === '\\[' ? `\\[\n${node.attrs.tex}\n\\]` : `$$\n${node.attrs.tex}\n$$`] });
 nodes = nodes.append(tableNodes({ tableGroup: 'block', cellContent: 'block+', cellAttributes: { align: { default: null, getFromDOM: dom => dom.style.textAlign || null, setDOMAttr(value, attrs) { if (value) attrs.style = `text-align:${value}`; } } } }));
 const links = commonSchema.spec.marks.get('link');
 export const schema = new Schema({ nodes, marks: commonSchema.spec.marks.update('link', { ...links, toDOM(node) {
@@ -46,17 +46,34 @@ tokenizer.block.ruler.before('fence', 'folio_frontmatter', (state, start, end, s
 });
 tokenizer.block.ruler.before('fence', 'folio_math', (state, start, end, silent) => {
   const line = state.src.slice(state.bMarks[start] + state.tShift[start], state.eMarks[start]);
-  if (!line.startsWith('$$') || line.startsWith('$$$')) return false;
+  const bracket = line.startsWith('\\[');
+  if (!bracket && (!line.startsWith('$$') || line.startsWith('$$$'))) return false;
+  const close = bracket ? '\\]' : '$$';
   let next = start, tex = '';
-  if (line.length > 3 && line.endsWith('$$')) tex = line.slice(2, -2);
+  if (line.length > 3 && line.endsWith(close)) tex = line.slice(2, -2);
   else {
     next++;
-    while (next < end && state.src.slice(state.bMarks[next] + state.tShift[next], state.eMarks[next]).trim() !== '$$') next++;
+    while (next < end && state.src.slice(state.bMarks[next] + state.tShift[next], state.eMarks[next]).trim() !== close) next++;
     if (next === end) return false;
     tex = (line.slice(2) + '\n' + state.getLines(start + 1, next, state.blkIndent, false)).trim();
   }
-  if (!silent) { const token = state.push('math_block', '', 0); token.content = tex; token.map = [start, next + 1]; state.line = next + 1; }
+  if (!silent) { const token = state.push('math_block', '', 0); token.content = tex; token.meta = { delimiter: bracket ? '\\[' : '$$' }; token.map = [start, next + 1]; state.line = next + 1; }
   return true;
+});
+tokenizer.inline.ruler.before('escape', 'folio_tex_math', (state, silent) => {
+  const from = state.pos;
+  if (state.src.slice(from, from + 2) !== '\\(') return false;
+  let to = from + 2;
+  for (; to < state.posMax; to++) {
+    if (state.src[to] === '\n') return false;
+    if (state.src[to] === '\\') {
+      if (state.src[to + 1] === ')') break;
+      to++;
+    }
+  }
+  if (to >= state.posMax || to === from + 2) return false;
+  if (!silent) { const token = state.push('math_inline', '', 0); token.content = state.src.slice(from + 2, to); token.meta = { delimiter: '\\(' }; }
+  state.pos = to + 2; return true;
 });
 tokenizer.inline.ruler.after('escape', 'folio_math', (state, silent) => {
   const from = state.pos;
@@ -178,8 +195,8 @@ export const parser = new MarkdownParser(schema, tokenizer, {
   th: { block: 'table_header', getAttrs: tableAttrs }, td: { block: 'table_cell', getAttrs: tableAttrs },
   s: { mark: 'strike' }, raw_block: { block: 'raw_block', noCloseToken: true }, html_block: { block: 'raw_block', noCloseToken: true },
   html_inline: { node: 'raw_inline', getAttrs: token => ({ source: token.content }) },
-  math_inline: { node: 'math_inline', getAttrs: token => ({ tex: token.content }) },
-  math_block: { node: 'math_block', getAttrs: token => ({ tex: token.content }) }
+  math_inline: { node: 'math_inline', getAttrs: token => ({ tex: token.content, delimiter: token.meta?.delimiter || '$' }) },
+  math_block: { node: 'math_block', getAttrs: token => ({ tex: token.content, delimiter: token.meta?.delimiter || '$$' }) }
 });
 
 const serializerNodes = {
@@ -187,8 +204,8 @@ const serializerNodes = {
   list_item(state, node) { if (node.attrs.checked !== null) state.write(node.attrs.checked ? '[x] ' : '[ ] '); state.renderContent(node); },
   raw_block(state, node) { state.write(node.textContent); state.closeBlock(node); },
   raw_inline(state, node) { state.write(node.attrs.source); },
-  math_inline(state, node) { state.write(`$${node.attrs.tex}$`); },
-  math_block(state, node) { state.write(`$$\n${node.attrs.tex}\n$$`); state.closeBlock(node); },
+  math_inline(state, node) { state.write(node.attrs.delimiter === '\\(' ? `\\(${node.attrs.tex}\\)` : `$${node.attrs.tex}$`); },
+  math_block(state, node) { state.write(node.attrs.delimiter === '\\[' ? `\\[\n${node.attrs.tex}\n\\]` : `$$\n${node.attrs.tex}\n$$`); state.closeBlock(node); },
   table(state, node) {
     const rows = [];
     node.forEach(row => {

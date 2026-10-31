@@ -52,7 +52,7 @@ async function selectSourceRange(page, offset) {
 async function toggleMarkdown(page) {
   await page.locator('#show-markdown').click();
   await page.locator('#source-editor .cm-content').waitFor({ state: 'visible' });
-  await page.locator('#show-markdown').click();
+  await page.locator('#view-formatted').click();
   await page.waitForFunction(() => !document.getElementById('preview').hidden && document.querySelector('#preview .ProseMirror'));
 }
 

@@ -151,7 +151,7 @@ function waitForRichFindVisible(page, needle) {
     assert.deepEqual(source.selection, { anchor: source.from, head: source.to },
       'find selection must stay exact when moving to Markdown');
 
-    await page.locator('#show-markdown').click();
+    await page.locator('#view-formatted').click();
     await page.waitForFunction(() => !busy && mode === 'read');
     const back = await richFindState(page, FIND);
     assert.equal(back.locked, false);

@@ -118,7 +118,7 @@ const selection = page => page.evaluate(() => editor.getSelection());
       const expected = await page.evaluate(() => current.content.indexOf('Paragraph 350'));
       assert.deepEqual(await selection(page), { anchor: expected, head: expected + 'Paragraph 350'.length });
 
-      await page.locator('#show-markdown').click();
+      await page.locator('#view-formatted').click();
       await page.waitForFunction(() => mode === 'read');
       await page.locator('#show-markdown').click();
       await sourceMode(page);
