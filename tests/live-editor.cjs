@@ -59,7 +59,7 @@ const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n
     assert.ok((await page.locator('#preview a').first().getAttribute('href')).includes('https://example.com/changed'));
     // Math edits locally without switching the document to Markdown.
     const beforeMath = await text();
-    await page.locator('#preview .math-block .math-formula').click();
+    await page.locator('#preview .math-block .math-formula').dblclick();
     const mathInput = page.locator('#preview .math-block textarea');
     await mathInput.waitFor({ state: 'visible' });
     assert.equal(await page.evaluate(() => editor.isSource()), false, 'math edit stays in formatted mode');

@@ -8,7 +8,11 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
     const { page } = session;
     await page.locator('.math-block .katex').waitFor();
     assert.equal(await page.locator('.math-block .math-edit').count(), 0, 'formula has no pencil icon');
-    await page.locator('.math-block .math-formula').click();
+    const blockFormula = page.locator('.math-block .math-formula');
+    await blockFormula.click();
+    assert.equal(await page.locator('.math-block textarea').isVisible(), false, 'one click must not open the formula editor');
+    assert.equal(await page.locator('.math-block').evaluate(node => node.classList.contains('ProseMirror-selectednode')), true, 'one click selects the formula atom');
+    await blockFormula.dblclick();
     const input = page.locator('.math-block textarea');
     await input.waitFor({ timeout: 4000 });
     assert.equal(await page.locator('#view-formatted').getAttribute('aria-pressed'), 'true');

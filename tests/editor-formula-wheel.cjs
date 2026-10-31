@@ -14,7 +14,7 @@ const source = `# Formula\n\n${filler}\n\\[\n${formula}\n\\]\n\n${filler}\n`;
   try {
     const { page } = session;
     await page.locator('.math-block .katex').waitFor();
-    await page.locator('.math-block .math-formula').click();
+    await page.locator('.math-block .math-formula').dblclick();
     const input = page.locator('.math-block textarea');
     await input.waitFor({ timeout: 4000 });
 

@@ -525,8 +525,8 @@ export function createRichEditor(parent, options) {
   }
   function mathView(node, editor, getPos) {
     const dom = document.createElement(node.isInline ? 'span' : 'div'); dom.className = node.isInline ? 'math-inline' : 'math-block'; dom.contentEditable = 'false';
-    const formula = document.createElement('span'); formula.className = 'math-formula'; formula.title = 'Click to edit formula';
-    formula.setAttribute('role', 'button'); formula.setAttribute('aria-label', 'Edit formula'); formula.tabIndex = 0;
+    const formula = document.createElement('span'); formula.className = 'math-formula'; formula.title = 'Double-click to edit formula';
+    formula.setAttribute('role', 'button'); formula.setAttribute('aria-label', 'Edit formula (double-click, or press Enter)'); formula.tabIndex = 0;
     const panel = document.createElement('span'); panel.className = 'math-local-editor'; panel.hidden = true;
     const input = document.createElement('textarea'); input.setAttribute('aria-label', 'Formula source'); input.rows = node.isInline ? 2 : 4;
     const cancel = button('Cancel', () => { panel.hidden = true; formula.focus(); });
@@ -589,7 +589,22 @@ export function createRichEditor(parent, options) {
       if (!panel.hidden) { panel.hidden = true; render(); return; }
       input.value = node.attrs.tex; panel.hidden = false; input.focus();
     };
-    formula.addEventListener('mousedown', event => { if (event.button !== 0) return; event.preventDefault(); toggleEditor(); });
+    // One click selects the formula so a run of formulas can be selected
+    // (shift-click, drag) without every click opening its editor. Editing is
+    // the deliberate gesture: double-click, or Enter/Space on a focused formula.
+    formula.addEventListener('dblclick', event => { if (event.button !== 0) return; event.preventDefault(); event.stopPropagation(); toggleEditor(); });
+    // Shift-click on a formula extends the selection *through* it. Letting the
+    // editor resolve the click on its own lands the head on the atom boundary,
+    // which excludes the formula the pointer is actually over.
+    formula.addEventListener('mousedown', event => {
+      if (event.button !== 0 || !event.shiftKey) return;
+      let pos; try { pos = getPos(); } catch { return; }
+      if (pos == null) return;
+      event.preventDefault(); event.stopPropagation();
+      const { state } = editor;
+      const from = Math.min(state.selection.from, pos), to = Math.max(state.selection.to, pos + node.nodeSize);
+      editor.dispatch(state.tr.setSelection(TextSelection.create(state.doc, from, to)));
+    });
     formula.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleEditor(); } });
     dom.append(formula, panel); let generation = 0;
     const render = async () => {
@@ -602,7 +617,13 @@ export function createRichEditor(parent, options) {
     input.addEventListener('input', render);
     cancel.addEventListener('click', render);
     render(); const refresh = () => { formula.setAttribute('aria-disabled', String(options.isLocked())); input.disabled = options.isLocked(); apply.disabled = options.isLocked(); }; refreshers.add(refresh);
-    return { dom, update(next) { if (next.type !== node.type) return false; node = next; render(); return true; }, stopEvent: () => true, ignoreMutation: () => true, destroy() { generation++; refreshers.delete(refresh); } };
+    return { dom, update(next) { if (next.type !== node.type) return false; if (next.sameMarkup(node) && next.textContent === node.textContent) { node = next; return true; } node = next; render(); return true; }, stopEvent: event => {
+      // The local editor's own controls keep their events; pointer events on
+      // the formula itself must reach the editor so a single click selects the
+      // atom (and a double-click can then open the source editor).
+      if (event.target?.closest?.('.math-local-editor')) return true;
+      return !['mousedown', 'mouseup', 'click', 'dblclick'].includes(event.type);
+    }, ignoreMutation: () => true, destroy() { generation++; refreshers.delete(refresh); } };
   }
   function imageView(node, editorView, getPos) {
     const dom = document.createElement('span'); dom.className = 'image-widget'; dom.contentEditable = 'false'; let generation = 0;
@@ -782,7 +803,7 @@ export function createRichEditor(parent, options) {
       }, hadDiagram ? 120 : 0);
     };
     render(); refreshers.add(render);
-    return { dom, contentDOM: code, update(next) { if (next.type !== node.type) return false; node = next; render(); return true; }, ignoreMutation: mutation => mutation.type === 'attributes' || !pre.contains(mutation.target), destroy() { generation++; clearTimeout(renderTimer); clearTimeout(highlightTimer); highlightGeneration++; abortController?.abort(); refreshers.delete(render); } };
+    return { dom, contentDOM: code, update(next) { if (next.type !== node.type) return false; if (next.sameMarkup(node) && next.textContent === node.textContent) { node = next; return true; } node = next; render(); return true; }, ignoreMutation: mutation => mutation.type === 'attributes' || !pre.contains(mutation.target), destroy() { generation++; clearTimeout(renderTimer); clearTimeout(highlightTimer); highlightGeneration++; abortController?.abort(); refreshers.delete(render); } };
   }
   // Reading selections may start, cross and end inside a rendered projection
   // or inline element. ProseMirror maps any DOM position inside an atom to
@@ -1427,7 +1448,7 @@ export function createRichEditor(parent, options) {
     // explicit source presentation via the edit action above; task checkboxes
     // are the one bounded exception, because their whole state is one marker
     // character in the exact raw slice.
-    return { dom, update(next) { if (next.type !== node.type) return false; if (next.textContent !== node.textContent) { generation++; invalidateTasks(); } node = next; Promise.resolve().then(render); return true; }, ignoreMutation: () => true, stopEvent: event => event.target.closest?.('button, input[type="checkbox"]') != null, destroy() { generation++; removeListeners(); } };
+    return { dom, update(next) { if (next.type !== node.type) return false; const same = next.sameMarkup(node) && next.textContent === node.textContent; if (!same) { generation++; invalidateTasks(); } node = next; if (!same) Promise.resolve().then(render); return true; }, ignoreMutation: () => true, stopEvent: event => event.target.closest?.('button, input[type="checkbox"]') != null, destroy() { generation++; removeListeners(); } };
   }
   const safeDestination = value => {
     const destination = String(value || '');
