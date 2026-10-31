@@ -12,4 +12,7 @@
 *.root
 .DS_Store
 Thumbs.db
+.superpowers/
+__pycache__/
+tests/__pycache__/
 
