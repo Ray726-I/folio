@@ -11,7 +11,10 @@ use serde::Serialize;
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 use tauri::{Emitter, Manager};
@@ -33,6 +36,10 @@ struct AppState {
     renderer_creation: Mutex<()>,
     renderer_recycling: Mutex<bool>,
     renderer_handoff: Mutex<()>,
+    /// Set once the main window has been shown, either by the frontend calling
+    /// `ready` or by the startup fallback. Test-and-set keeps `ready`
+    /// idempotent and the fallback from re-showing a visible window.
+    shown: AtomicBool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -269,7 +276,7 @@ struct Bootstrap {
     platform: &'static str,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn bootstrap(
     webview: tauri::Webview,
     state: tauri::State<'_, Arc<AppState>>,
@@ -485,29 +492,96 @@ fn save_document(
 #[derive(Serialize)]
 struct RenderedMarkdown {
     html: String,
-    blocks: Vec<markdown::EditBlock>,
 }
 
-#[tauri::command(async)]
-fn render_markdown(
+#[tauri::command]
+async fn render_markdown(
     content: String,
     remote_images: bool,
     webview: tauri::Webview,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<RenderedMarkdown, String> {
     renderer::ensure_main(webview.label())?;
+    let state = Arc::clone(&state);
     let path = state
         .document
         .lock()
         .unwrap()
         .as_ref()
         .map(|document| document.path.clone());
-    let (html, blocks) = markdown::render_with_blocks(
-        &content,
-        path.as_deref().and_then(Path::parent),
-        remote_images,
-    );
-    Ok(RenderedMarkdown { html, blocks })
+    // Comrak, syntect, ammonia, and base64 encoding are all synchronous; keep
+    // them off the async runtime so the renderer stays responsive.
+    tauri::async_runtime::spawn_blocking(move || {
+        let html = match markdown::render_with_blocks_checked(
+            &content,
+            path.as_deref().and_then(Path::parent),
+            remote_images,
+            &markdown::DEFAULT_RENDER_LIMITS,
+            false,
+        ) {
+            Ok((html, _)) => html,
+            Err(error) => markdown::preview_limit_html(&error),
+        };
+        Ok(RenderedMarkdown { html })
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[derive(Serialize)]
+struct HighlightedCode {
+    html: String,
+}
+
+const MAX_HIGHLIGHT_CODE_BYTES: usize = 1024 * 1024;
+
+/// Highlight one fenced code block directly, without rendering Markdown, so a
+/// keystroke inside a fence does not cost a whole document render.
+#[tauri::command(async)]
+fn highlight_code(
+    code: String,
+    language: Option<String>,
+    webview: tauri::Webview,
+) -> Result<HighlightedCode, String> {
+    renderer::ensure_main(webview.label())?;
+    if code.len() > MAX_HIGHLIGHT_CODE_BYTES {
+        return Err(format!(
+            "This code block is larger than the {} MiB highlighting limit.",
+            MAX_HIGHLIGHT_CODE_BYTES / (1024 * 1024)
+        ));
+    }
+    Ok(HighlightedCode {
+        html: markdown::highlight_code(&code, language.as_deref()),
+    })
+}
+
+#[derive(Serialize)]
+struct PreviewCheck {
+    limited: Option<String>,
+}
+
+#[tauri::command(async)]
+fn preview_check(content: String, webview: tauri::Webview) -> Result<PreviewCheck, String> {
+    renderer::ensure_main(webview.label())?;
+    let limited = markdown::preview_check(&content, &markdown::DEFAULT_RENDER_LIMITS)
+        .map(|error| error.kind.as_str().to_string());
+    Ok(PreviewCheck { limited })
+}
+
+/// Show the main window once the frontend says it is ready. Idempotent: later
+/// calls (or the startup fallback) cannot re-show or race the first one.
+#[tauri::command]
+fn ready(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    if window.label() != renderer::MAIN_LABEL {
+        return Ok(());
+    }
+    if !state.shown.swap(true, Ordering::SeqCst) {
+        window.show().map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1430,7 +1504,7 @@ fn main() {
             std::thread::spawn(move || {
                 let mut previous = theme::current();
                 loop {
-                    std::thread::sleep(Duration::from_secs(2));
+                    std::thread::sleep(Duration::from_secs(10));
                     let current = theme::current();
                     if current != previous {
                         let _ = handle.emit_to(renderer::MAIN_LABEL, "system-theme", &current);
@@ -1465,8 +1539,21 @@ fn main() {
             .inner_size(1120.0, 800.0)
             .min_inner_size(600.0, 440.0)
             .decorations(true)
+            .visible(false)
             .on_navigation(is_app_navigation)
             .build()?;
+            // A frontend that never calls `ready` (a crash during boot, a broken
+            // bundle) must not leave the app permanently invisible.
+            let fallback = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(2));
+                let state = fallback.state::<Arc<AppState>>();
+                if !state.shown.swap(true, Ordering::SeqCst) {
+                    if let Some(window) = fallback.get_webview_window(renderer::MAIN_LABEL) {
+                        let _ = window.show();
+                    }
+                }
+            });
             #[cfg(debug_assertions)]
             if std::env::var_os("FOLIO_NATIVE_PROBE").is_some() {
                 println!("FOLIO_NATIVE_PROBE starting");
@@ -1509,6 +1596,9 @@ fn main() {
             new_document,
             save_document,
             render_markdown,
+            highlight_code,
+            preview_check,
+            ready,
             set_window_zoom,
             document_changed,
             set_title,

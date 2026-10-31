@@ -139,6 +139,14 @@ async function openEditor(source, viewport = { width: 1180, height: 900 }) {
         return null;
       }
       if (command === 'render_markdown') return window.realRender(args);
+      if (command === 'highlight_code') {
+        const fence = '```' + (args.language || '') + '\n' + args.code + '\n```\n';
+        const result = await window.realRender({ content: fence, remoteImages: false });
+        const html = typeof result === 'string' ? result : result?.html || '';
+        const parsed = new DOMParser().parseFromString(html, 'text/html');
+        const node = parsed.querySelector('pre code');
+        return { html: node ? node.innerHTML : '' };
+      }
       if (command === 'save_document') { window.savedContent = args.content; return { path: '/tmp/test.md', name: 'test.md' }; }
       if (command === 'mermaid_render_request') {
         queueMicrotask(() => { for (const callback of window.listeners['mermaid-render-result'] || []) callback({ payload: { id: args.request.id, ok: true, sanitized: true, svg: '<svg xmlns="http://www.w3.org/2000/svg"><text>diagram</text></svg>' } }); });

@@ -15,7 +15,8 @@ const small = '# Small again\n\nBack under the limit.\n';
       window.__TAURI__ = { core: { invoke: async (command, args = {}) => {
         if (command === 'bootstrap') return { paths: [], platform: 'linux', theme: null };
         if (command === 'open_document') return { path: '/tmp/doc.md', name: 'doc.md', content: window.docContent, lineEnding: 'LF' };
-        if (command === 'render_markdown') return { html: args.content.includes('LIMIT') ? '<div data-preview-limit="nodes">Complexity limit</div>' : '<p>Safe render</p>', blocks: [] };
+        if (command === 'preview_check') return { limited: args.content.includes('LIMIT') ? 'nodes' : null };
+        if (command === 'render_markdown') return { html: '<p>Safe render</p>' };
         if (command === 'save_document') { window.savedContent = args.content; return { path: '/tmp/doc.md', name: 'doc.md' }; }
         return null;
       } }, event: { listen: async () => () => {} }, webview: { getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) } };

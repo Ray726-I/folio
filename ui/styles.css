@@ -653,9 +653,13 @@ kbd {
 .reader-scroll {
   flex:1;
   overflow:auto;
-  scroll-behavior:smooth;
   scrollbar-gutter:stable
 }
+
+/* Static placeholder while the bundled editor loads and mounts its first
+   document, so the reader pane is never blank. No animation by design. */
+#preview.is-mounting { min-height:40vh; display:grid; place-items:center }
+#preview.is-mounting::after { content:'Opening…'; color:var(--muted); font-size:.9rem; letter-spacing:.01em }
 
 .markdown {
   max-width:var(--reading-width);

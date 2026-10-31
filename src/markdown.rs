@@ -8,8 +8,9 @@ use comrak::{
 };
 use std::{
     borrow::Cow,
-    collections::{HashMap, HashSet},
+    collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque},
     fmt,
+    hash::{Hash, Hasher},
     path::Path,
     sync::{Arc, LazyLock, Mutex},
 };
@@ -21,7 +22,6 @@ mod images;
 #[path = "markdown/limits.rs"]
 mod limits;
 
-use images::ImageCache;
 use limits::{preflight, LineIndex};
 pub use limits::{PreviewLimitError, PreviewLimitKind, RenderLimits, DEFAULT_RENDER_LIMITS};
 
@@ -100,6 +100,32 @@ fn check_node_budget<'a>(
         ));
     }
     Ok(count)
+}
+
+/// Cheaply probe whether [`render_with_blocks_checked`] would reject `source`
+/// for a structural budget reason.
+///
+/// This runs the same preflight scan (source bytes, line count, blockquote
+/// nesting depth), parses the source with the same options used by the renderer
+/// (`markdown_options()`, `render.r#unsafe = true`, `render.sourcepos = true`),
+/// and then checks the AST node budget. It returns the first failure, or `None`
+/// when the document is within those budgets.
+///
+/// It deliberately does *not* render HTML, sanitize output, resolve images, or
+/// build edit blocks. That makes it a cheap approximation of the render budget:
+/// it covers source size, line count, nesting depth, and AST node count, but it
+/// does not predict the HTML-byte or image-byte limits that only rendering can
+/// discover.
+pub fn preview_check(source: &str, limits: &RenderLimits) -> Option<PreviewLimitError> {
+    if let Err(error) = preflight(source, limits) {
+        return Some(error);
+    }
+    let mut options = markdown_options();
+    options.render.r#unsafe = true;
+    options.render.sourcepos = true;
+    let arena = Arena::new();
+    let root = parse_document(&arena, source, &options);
+    check_node_budget(root, limits).err()
 }
 
 #[allow(dead_code)] // used by unit tests and the editor fixture
@@ -213,6 +239,112 @@ pub fn set_task_checked_with_limits(
 }
 
 static SYNTAXES: LazyLock<SyntectAdapter> = LazyLock::new(|| SyntectAdapter::new(None));
+
+/// Fences larger than this are highlighted on every render instead of being
+/// cached. The cap keeps one huge fence from evicting the whole cache and from
+/// pinning an unbounded amount of highlighted HTML in memory.
+const MAX_HIGHLIGHT_BYTES: usize = 64 * 1024;
+const MAX_HIGHLIGHT_CACHE_ENTRIES: usize = 256;
+const MAX_HIGHLIGHT_CACHE_BYTES: usize = 8 * 1024 * 1024;
+
+/// Cache key: the requested language (empty when absent) plus a hash of the
+/// code. The rendered HTML depends on nothing else: the theme is fixed in
+/// [`SYNTAXES`]. A hash collision could in principle serve the wrong
+/// highlighting, but the key is never used for security decisions.
+type HighlightKey = (String, u64);
+
+#[derive(Default)]
+struct HighlightCache {
+    entries: HashMap<HighlightKey, Arc<str>>,
+    /// Insertion order, so the oldest entry is evicted first.
+    order: VecDeque<HighlightKey>,
+    bytes: usize,
+}
+
+impl HighlightCache {
+    fn insert(&mut self, key: HighlightKey, html: String) {
+        let bytes = html.len();
+        if bytes > MAX_HIGHLIGHT_CACHE_BYTES {
+            return;
+        }
+        let html: Arc<str> = Arc::from(html);
+        if let Some(previous) = self.entries.insert(key.clone(), html) {
+            self.bytes = self.bytes.saturating_sub(previous.len()) + bytes;
+            return;
+        }
+        self.bytes += bytes;
+        self.order.push_back(key);
+        while self.entries.len() > MAX_HIGHLIGHT_CACHE_ENTRIES
+            || self.bytes > MAX_HIGHLIGHT_CACHE_BYTES
+        {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(evicted) = self.entries.remove(&oldest) {
+                self.bytes = self.bytes.saturating_sub(evicted.len());
+            }
+        }
+    }
+}
+
+static HIGHLIGHT_CACHE: LazyLock<Mutex<HighlightCache>> =
+    LazyLock::new(|| Mutex::new(HighlightCache::default()));
+
+fn highlight_key(lang: Option<&str>, code: &str) -> HighlightKey {
+    let mut hasher = DefaultHasher::new();
+    code.hash(&mut hasher);
+    (lang.unwrap_or_default().to_owned(), hasher.finish())
+}
+
+fn write_highlighted_uncached(lang: Option<&str>, code: &str) -> String {
+    let mut html = String::new();
+    if SYNTAXES.write_highlighted(&mut html, lang, code).is_err() {
+        return code.to_owned();
+    }
+    html
+}
+
+/// Highlight `code` as `lang` and return the inner code HTML. Results are
+/// reused from a bounded process-wide cache; fences over [`MAX_HIGHLIGHT_BYTES`]
+/// are highlighted uncached, as before. The output is deterministic: the theme
+/// is fixed in [`SYNTAXES`] and only `lang` and `code` affect it.
+pub(crate) fn highlight_html(lang: Option<&str>, code: &str) -> String {
+    if code.len() > MAX_HIGHLIGHT_BYTES {
+        return write_highlighted_uncached(lang, code);
+    }
+    let key = highlight_key(lang, code);
+    if let Some(html) = HIGHLIGHT_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .entries
+        .get(&key)
+    {
+        return html.to_string();
+    }
+    let html = write_highlighted_uncached(lang, code);
+    HIGHLIGHT_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(key, html.clone());
+    html
+}
+
+/// Highlight one fenced code block without parsing Markdown, sanitizing a
+/// whole document, or touching images.
+pub fn highlight_code(code: &str, lang: Option<&str>) -> String {
+    let mut html = highlight_html(lang, code);
+    strip_trailing_newline(&mut html);
+    html
+}
+
+/// Remove exactly one trailing newline, if there is one. The rendered code
+/// element is newline-terminated; the editor mirrors that terminator itself.
+fn strip_trailing_newline(html: &mut String) {
+    if html.ends_with('\n') {
+        html.pop();
+    }
+}
+
 struct SourceHighlighter;
 impl SyntaxHighlighterAdapter for SourceHighlighter {
     fn write_highlighted(
@@ -221,7 +353,7 @@ impl SyntaxHighlighterAdapter for SourceHighlighter {
         lang: Option<&str>,
         code: &str,
     ) -> std::fmt::Result {
-        SYNTAXES.write_highlighted(output, lang, code)
+        output.write_str(&highlight_html(lang, code))
     }
     fn write_pre_tag(
         &self,
@@ -327,7 +459,10 @@ fn patch_task_items(html: &str, task_indices: &HashMap<String, usize>) -> String
 /// Render Markdown using Folio's default privacy posture (remote images blocked).
 #[allow(dead_code)] // used by unit tests and the editor fixture
 pub fn render(source: &str, base: Option<&Path>) -> String {
-    render_with_blocks(source, base, false).0
+    match render_with_blocks_checked(source, base, false, &DEFAULT_RENDER_LIMITS, false) {
+        Ok((html, _)) => html,
+        Err(error) => preview_limit_html(&error),
+    }
 }
 
 /// Render Markdown and build the edit map from a single parse. `allow_remote_images`
@@ -338,12 +473,19 @@ pub fn render(source: &str, base: Option<&Path>) -> String {
 /// failure returns a diagnostic HTML block with no edit blocks instead of
 /// truncating or mutating the source. Callers that need structured failures can
 /// use [`render_with_blocks_checked`].
+#[allow(dead_code)] // used by unit tests and the editor fixture
 pub fn render_with_blocks(
     source: &str,
     base: Option<&Path>,
     allow_remote_images: bool,
 ) -> (String, Vec<EditBlock>) {
-    match render_with_blocks_checked(source, base, allow_remote_images, &DEFAULT_RENDER_LIMITS) {
+    match render_with_blocks_checked(
+        source,
+        base,
+        allow_remote_images,
+        &DEFAULT_RENDER_LIMITS,
+        true,
+    ) {
         Ok(rendered) => rendered,
         Err(error) => (preview_limit_html(&error), Vec::new()),
     }
@@ -354,22 +496,16 @@ pub fn render_with_blocks_checked(
     base: Option<&Path>,
     allow_remote_images: bool,
     limits: &RenderLimits,
+    include_blocks: bool,
 ) -> Result<(String, Vec<EditBlock>), PreviewLimitError> {
     preflight(source, limits)?;
     let mut options = markdown_options();
     options.render.r#unsafe = true;
     options.render.sourcepos = true;
     let base = base.and_then(|path| path.canonicalize().ok());
-    let image_cache = Arc::new(Mutex::new(ImageCache::new()));
-    let rewriter_cache = Arc::clone(&image_cache);
     let rewriter_limits = *limits;
     options.extension.image_url_rewriter = Some(Arc::new(move |url: &str| {
-        rewriter_cache
-            .lock()
-            .map(|mut cache| {
-                cache.resolve(url, base.as_deref(), allow_remote_images, &rewriter_limits)
-            })
-            .unwrap_or_default()
+        images::resolve_image(url, base.as_deref(), allow_remote_images, &rewriter_limits)
     }));
     let plugins = Plugins {
         render: RenderPlugins {
@@ -381,8 +517,12 @@ pub fn render_with_blocks_checked(
     let root = parse_document(&arena, source, &options);
     check_node_budget(root, limits)?;
     author_html::strip_author_markers(root);
-    let line_starts = LineIndex::new(source);
-    let blocks = blocks_from_root(root, source, &line_starts);
+    let blocks = if include_blocks {
+        let line_starts = LineIndex::new(source);
+        blocks_from_root(root, source, &line_starts)
+    } else {
+        Vec::new()
+    };
     let task_indices: HashMap<_, _> = root
         .descendants()
         .filter(|node| matches!(node.data().value, NodeValue::TaskItem(_)))
@@ -992,7 +1132,7 @@ mod tests {
             ..DEFAULT_RENDER_LIMITS
         };
         assert_eq!(
-            render_with_blocks_checked("a\nb\nc", None, false, &line_limits)
+            render_with_blocks_checked("a\nb\nc", None, false, &line_limits, true)
                 .unwrap_err()
                 .kind,
             PreviewLimitKind::Lines
@@ -1009,7 +1149,7 @@ mod tests {
                 ..DEFAULT_RENDER_LIMITS
             };
             assert_eq!(
-                render_with_blocks_checked(source, None, false, &depth_limits)
+                render_with_blocks_checked(source, None, false, &depth_limits, true)
                     .unwrap_err()
                     .kind,
                 PreviewLimitKind::BlockquoteDepth,
@@ -1022,7 +1162,7 @@ mod tests {
             ..DEFAULT_RENDER_LIMITS
         };
         assert_eq!(
-            render_with_blocks_checked("a", None, false, &budget)
+            render_with_blocks_checked("a", None, false, &budget, true)
                 .unwrap_err()
                 .kind,
             PreviewLimitKind::AstNodes
@@ -1033,7 +1173,7 @@ mod tests {
             ..DEFAULT_RENDER_LIMITS
         };
         assert_eq!(
-            render_with_blocks_checked("# heading\n\nbody", None, false, &html_budget)
+            render_with_blocks_checked("# heading\n\nbody", None, false, &html_budget, true)
                 .unwrap_err()
                 .kind,
             PreviewLimitKind::HtmlBytes
@@ -1044,10 +1184,57 @@ mod tests {
             ..DEFAULT_RENDER_LIMITS
         };
         assert_eq!(
-            render_with_blocks_checked("too long", None, false, &source_bytes)
+            render_with_blocks_checked("too long", None, false, &source_bytes, true)
                 .unwrap_err()
                 .kind,
             PreviewLimitKind::SourceBytes
+        );
+    }
+
+    #[test]
+    fn preview_check_reports_structural_budget_failures_cheaply() {
+        let tight = RenderLimits {
+            max_ast_nodes: 2,
+            ..DEFAULT_RENDER_LIMITS
+        };
+        let error = preview_check("# heading\n\nA paragraph with **bold** text.", &tight)
+            .expect("a document over the node budget must be reported");
+        assert_eq!(error.kind, PreviewLimitKind::AstNodes);
+
+        assert_eq!(
+            preview_check("# heading\n\nA small paragraph.", &DEFAULT_RENDER_LIMITS),
+            None,
+            "a small document under the default limits must pass"
+        );
+    }
+
+    #[test]
+    fn render_with_blocks_checked_can_skip_edit_blocks() {
+        let (html, blocks) = render_with_blocks_checked(
+            "# Heading\n\nBody",
+            None,
+            false,
+            &DEFAULT_RENDER_LIMITS,
+            false,
+        )
+        .unwrap();
+        assert!(!html.is_empty());
+        assert!(
+            blocks.is_empty(),
+            "the no-blocks path must not build edit blocks"
+        );
+
+        let (_, blocks) = render_with_blocks_checked(
+            "# Heading\n\nBody",
+            None,
+            false,
+            &DEFAULT_RENDER_LIMITS,
+            true,
+        )
+        .unwrap();
+        assert!(
+            !blocks.is_empty(),
+            "explicitly requesting blocks must still build them"
         );
     }
 
@@ -1059,7 +1246,7 @@ mod tests {
             max_lines: 2,
             ..DEFAULT_RENDER_LIMITS
         };
-        let error = render_with_blocks_checked(source, None, false, &limits).unwrap_err();
+        let error = render_with_blocks_checked(source, None, false, &limits, true).unwrap_err();
         assert_eq!(source, original, "the source must never be rewritten");
         let html = preview_limit_html(&error);
         assert!(html.contains("data-preview-limit=\"lines\""), "{html}");
@@ -1155,7 +1342,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n\n");
         assert_eq!(
-            render_with_blocks_checked(&source, None, false, &limits)
+            render_with_blocks_checked(&source, None, false, &limits, true)
                 .unwrap_err()
                 .kind,
             PreviewLimitKind::ImageOccurrences,
@@ -1169,7 +1356,7 @@ mod tests {
         let over_bytes =
             format!("<img src=\"{image}\">\n\n<img src=\"{image}\">\n\n<img src=\"{image}\">");
         assert_eq!(
-            render_with_blocks_checked(&over_bytes, None, false, &bytes_limits)
+            render_with_blocks_checked(&over_bytes, None, false, &bytes_limits, true)
                 .unwrap_err()
                 .kind,
             PreviewLimitKind::ImageBytes,
@@ -1300,9 +1487,15 @@ mod tests {
             ..DEFAULT_RENDER_LIMITS
         };
         assert_eq!(
-            render_with_blocks_checked(source, Some(directory.path()), false, &occurrence_limits)
-                .unwrap_err()
-                .kind,
+            render_with_blocks_checked(
+                source,
+                Some(directory.path()),
+                false,
+                &occurrence_limits,
+                true
+            )
+            .unwrap_err()
+            .kind,
             PreviewLimitKind::ImageOccurrences
         );
 
@@ -1323,11 +1516,106 @@ mod tests {
             ..DEFAULT_RENDER_LIMITS
         };
         assert_eq!(
-            render_with_blocks_checked(source, Some(directory.path()), false, &repeat_limits)
+            render_with_blocks_checked(source, Some(directory.path()), false, &repeat_limits, true)
                 .unwrap_err()
                 .kind,
             PreviewLimitKind::ImageBytes
         );
+    }
+
+    #[test]
+    fn highlight_html_is_deterministic_and_oversized_fences_still_highlight() {
+        let code = "fn main() {\n    println!(\"hi\");\n}\n";
+        let first = highlight_html(Some("rust"), code);
+        let second = highlight_html(Some("rust"), code);
+        assert_eq!(first, second, "the highlight cache must be deterministic");
+        assert!(first.contains("class=\"storage"), "{first}");
+
+        // A single fence over the cache cap must still be highlighted; it is
+        // simply not stored.
+        let large = "let value = 1;\n".repeat(MAX_HIGHLIGHT_BYTES / 15 + 1);
+        assert!(large.len() > MAX_HIGHLIGHT_BYTES);
+        let html = highlight_html(Some("rust"), &large);
+        assert!(
+            html.contains("class=\"storage"),
+            "an oversized fence must still be highlighted: {}",
+            &html[..html.len().min(200)]
+        );
+    }
+
+    #[test]
+    fn highlight_code_strips_one_trailing_newline_and_keeps_markup() {
+        // Classed output wraps the code in spans, so the raw HTML usually does
+        // not end with the terminator; the helper must leave it unchanged then.
+        let code = "fn main() {}\n";
+        let raw = highlight_html(Some("rust"), code);
+        let highlighted = highlight_code(code, Some("rust"));
+        assert!(highlighted.contains("class=\"storage"), "{highlighted}");
+        assert_eq!(highlighted, raw.strip_suffix('\n').unwrap_or(&raw));
+
+        // The strip rule itself: exactly one newline, never more.
+        let mut once = "value\n".to_owned();
+        strip_trailing_newline(&mut once);
+        assert_eq!(once, "value");
+        let mut twice = "value\n\n".to_owned();
+        strip_trailing_newline(&mut twice);
+        assert_eq!(twice, "value\n");
+        let mut none = "value".to_owned();
+        strip_trailing_newline(&mut none);
+        assert_eq!(none, "value");
+
+        // Plain text is escaped, and the returned HTML never ends with a
+        // dangling newline.
+        let plain = highlight_code("<tag> & text\n", None);
+        assert!(!plain.contains("<tag>"), "{plain}");
+        assert!(plain.contains("&lt;tag&gt; &amp; text"), "{plain}");
+        assert!(!plain.ends_with('\n'));
+
+        // Code that does not end in a newline is returned unchanged.
+        assert_eq!(
+            highlight_code("plain text", None),
+            highlight_html(None, "plain text")
+        );
+    }
+
+    #[test]
+    fn local_images_render_identically_through_the_process_wide_cache() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pixel.png");
+        fs::write(&path, b"0123456789").unwrap();
+        let source = "![a](pixel.png)";
+
+        let first = render(source, Some(directory.path()));
+        let second = render(source, Some(directory.path()));
+        assert_eq!(
+            first, second,
+            "the global image cache must return the same bytes"
+        );
+        assert!(
+            first.contains("data:image/png;base64,MDEyMzQ1Njc4OQ=="),
+            "{first}"
+        );
+
+        // A different file version (different length and mtime) invalidates
+        // the cached encoding.
+        fs::write(&path, b"changed-after-edit").unwrap();
+        let changed = render(source, Some(directory.path()));
+        assert_ne!(changed, first);
+        assert!(!changed.contains("MDEyMzQ1Njc4OQ=="), "{changed}");
+        assert!(changed.contains("data:image/png;base64,"), "{changed}");
+    }
+
+    #[test]
+    fn render_still_sanitizes_raw_html_and_blocks_javascript_links() {
+        let rendered = render(
+            "# Title\n\n<script>alert(1)</script><img src=x onerror=alert(1)>\n\n[bad](javascript:alert(1))\n\n<a href=\"javascript:alert(1)\">raw bad</a>\n\n<iframe src=\"javascript:alert(1)\"></iframe>",
+            None,
+        );
+        assert!(rendered.contains("id=\"doc-title\""), "{rendered}");
+        assert!(!rendered.contains("<script"), "{rendered}");
+        assert!(!rendered.contains("onerror"), "{rendered}");
+        assert!(!rendered.contains("javascript:"), "{rendered}");
+        assert!(!rendered.contains("<iframe"), "{rendered}");
     }
 
     #[test]
@@ -1372,6 +1660,7 @@ mod tests {
             Some(directory.path()),
             false,
             &tiny_file_limit,
+            true,
         )
         .unwrap();
         assert!(!html.contains("data:image/png;base64,"), "{html}");

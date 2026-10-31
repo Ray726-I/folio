@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preview-check"
+description = "Enables the preview_check command without any pre-configured scope."
+commands.allow = ["preview_check"]
+
+[[permission]]
+identifier = "deny-preview-check"
+description = "Denies the preview_check command without any pre-configured scope."
+commands.deny = ["preview_check"]

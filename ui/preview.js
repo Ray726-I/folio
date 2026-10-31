@@ -34,17 +34,23 @@ function setActiveOutline(index) {
   if (!outlineEntries.length) return;
   const active = Math.max(0, Math.min(index, outlineEntries.length - 1));
   if (active === outlineActiveIndex) return;
+  const previous = outlineActiveIndex;
   outlineActiveIndex = active;
-  outlineEntries.forEach((entry, entryIndex) => {
+  const paint = entryIndex => {
+    const entry = outlineEntries[entryIndex];
+    if (!entry) return;
     const selected = entryIndex === active;
     entry.button.classList.toggle('active', selected);
     entry.button.tabIndex = selected ? 0 : -1;
     if (selected) entry.button.setAttribute('aria-current', 'location');
     else entry.button.removeAttribute('aria-current');
-  });
+  };
+  paint(previous);
+  paint(active);
 }
 function updateActiveOutline() {
   if (!outlineEntries.length) return;
+  if ($('outline').hidden) return;
   if (editor?.isSource()) {
     const position = editor.getSelection().head;
     let active = 0; outlineEntries.forEach((entry, index) => { if (entry.offset <= position) active = index; });

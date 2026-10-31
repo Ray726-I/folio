@@ -253,6 +253,17 @@ export function buildLedger(source, doc, options = {}) {
     });
   }
 
+  // O(1) lookup for the association below; buckets keep insertion order so the
+  // first unused candidate is still the one an ordinal scan would have chosen.
+  const tokenBlocksByKey = new Map();
+  for (let candidate = 0; candidate < tokenBlocks.length; candidate++) {
+    const block = tokenBlocks[candidate];
+    const key = `${block.type}\u0000${block.sourceFrom}`;
+    let bucket = tokenBlocksByKey.get(key);
+    if (!bucket) tokenBlocksByKey.set(key, bucket = []);
+    bucket.push(candidate);
+  }
+
   const pmBlocks = [];
   doc.forEach((node, offset) => pmBlocks.push({ node, pmFrom: offset }));
 
@@ -286,10 +297,11 @@ export function buildLedger(source, doc, options = {}) {
       const segment = trustedSegments[index];
       const node = doc.child(index);
       let match = -1;
-      for (let candidate = 0; candidate < tokenBlocks.length; candidate++) {
-        if (used.has(candidate)) continue;
-        const tokenBlock = tokenBlocks[candidate];
-        if (tokenBlock.type === node.type.name && tokenBlock.sourceFrom === segment.from) { match = candidate; break; }
+      const bucket = tokenBlocksByKey.get(`${node.type.name}\u0000${segment.from}`);
+      if (bucket) {
+        for (const candidate of bucket) {
+          if (!used.has(candidate)) { match = candidate; break; }
+        }
       }
       if (match >= 0) {
         used.add(match);
@@ -1020,6 +1032,7 @@ export function buildLedger(source, doc, options = {}) {
     source,
     doc,
     owners,
+    ownerById: new Map(owners.map(owner => [owner.id, owner])),
     runs,
     gaps,
     errors,
@@ -1122,7 +1135,7 @@ export function mapSource(ledger, offset, options = {}) {
     return {
       pm: mapSourceInRun(run, position, bias),
       confidence: 'exact', exact: true,
-      owner: ledger.owners.find(owner => owner.id === run.ownerId) || null,
+      owner: ledger.ownerById.get(run.ownerId) || null,
       source: position
     };
   }
@@ -1202,7 +1215,7 @@ export function mapRich(ledger, position, options = {}) {
     return {
       source: mapRichInRun(run, pmPosition, bias),
       confidence: 'exact', exact: true,
-      owner: ledger.owners.find(owner => owner.id === run.ownerId) || null,
+      owner: ledger.ownerById.get(run.ownerId) || null,
       pm: pmPosition
     };
   }

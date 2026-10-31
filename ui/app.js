@@ -2,6 +2,7 @@
 let current = { path: null, name: 'Untitled.md', content: '', saved: '', active: false };
 let mode = 'read', busy = false, queue = Promise.resolve();
 let activeFolder = null, folderEntries = [], folderVisible = true, expandedFolders = new Set();
+let renderedFolder = { path: null, entries: null };
 let fontSize = Math.min(40, Math.max(12, Number(preferences.get('fontSize', 19)) || 19));
 let windowZoom = Math.min(2, Math.max(.6, Number(preferences.get('windowZoom', 1)) || 1));
 let remoteImages = preferences.get('remoteImages', false) === true;
@@ -63,6 +64,12 @@ function errorMessage(error) { return commandError(error).message; }
 function icon(name) { const node = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); node.classList.add('icon'); node.setAttribute('aria-hidden', 'true'); const use = document.createElementNS('http://www.w3.org/2000/svg', 'use'); use.setAttribute('href', `#i-${name}`); node.append(use); return node; }
 function toast(message) { $('toast').textContent = errorMessage(message); $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 4500); }
 function status(message) { $('app-status').textContent = message; }
+let titleTimer = 0, lastSentTitle = { name: null, dirty: null };
+function sendTitle(name, dirty) {
+  if (lastSentTitle.name === name && lastSentTitle.dirty === dirty) return;
+  lastSentTitle = { name, dirty };
+  invoke('set_title', { name, dirty }).catch(() => {});
+}
 function updateTitle() {
   const name = current.active ? current.name : activeFolder?.name || '';
   $('document-name').textContent = name || 'Folio';
@@ -85,10 +92,23 @@ function updateTitle() {
     : state.state === 'dirty' ? 'Unsaved changes' : '';
   saveStateElement.title = stateTitle;
   saveStateElement.setAttribute('aria-label', state.state === 'error' && saveStatus?.error ? `Save failed: ${saveStatus.error}` : `Save state: ${accessibleText || 'no document'}`);
-  invoke('set_title', { name, dirty: dirty() }).catch(() => {});
+  clearTimeout(titleTimer);
+  titleTimer = setTimeout(() => sendTitle(name, dirty()), 120);
+}
+function countWords(text) {
+  let words = 0, inWord = false;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    const space = code === 32 || (code >= 9 && code <= 13) || code === 0xa0 || code === 0x1680
+      || (code >= 0x2000 && code <= 0x200a) || code === 0x2028 || code === 0x2029
+      || code === 0x202f || code === 0x205f || code === 0x3000 || code === 0xfeff;
+    if (space) inWord = false;
+    else if (!inWord) { inWord = true; words++; }
+  }
+  return words;
 }
 function updateStats() {
-  const words = current.content.trim().split(/\s+/).filter(Boolean).length;
+  const words = countWords(current.content);
   $('word-count').textContent = `${words.toLocaleString()} ${words === 1 ? 'word' : 'words'}`;
   $('reading-time').textContent = `${Math.max(1, Math.ceil(words / 220))} min read`;
 }
@@ -106,7 +126,7 @@ function showDocument() {
   if (!current.active) editorPresentation(false, false, false);
   resetHistory(); $('disk-banner').hidden = true; saveStatus = null; updateTitle(); updateStats(); setOutline(outlineVisible);
   $('folder-empty').hidden = current.active || !activeFolder;
-  renderFolderEntries();
+  syncFolderSelection();
   previewLimitedKind = null; syncSourceFallback();
 }
 function showWelcome() {
@@ -134,7 +154,7 @@ function goHome() {
       setTransitionLocked(true);
       await invoke('new_document');
       ++renderGeneration;
-      previewSnapshot = null; previewBlocks = [];
+      previewSnapshot = null;
       current = { path: null, name: 'Untitled.md', content: '', saved: '', active: false };
       activeFolder = null; folderEntries = []; expandedFolders.clear(); folderVisible = true;
       setLineEnding(null);
@@ -154,22 +174,59 @@ function setOutline(visible, persist = true) {
   $('outline-toggle').setAttribute('aria-pressed', String(visible));
   $('outline-toggle').setAttribute('aria-expanded', String(visible && current.active));
   if (persist) preferences.set('outlineVisible', visible);
+  if (visible && !$('outline').hidden && typeof refreshEditorOutline === 'function') refreshEditorOutline();
 }
 function setupSidebarResize(sidebarId, dividerId, key, defaultWidth, styleName = key) {
   const sidebar = $(sidebarId), divider = $(dividerId);
   const property = `--${styleName}-sidebar-width`;
-  function setWidth(value) {
-    const other = sidebarId === 'file-browser' ? $('outline') : $('file-browser');
-    const available = window.innerWidth - (other.hidden ? 0 : other.getBoundingClientRect().width) - 320;
+  let otherWidth = 0, dragLeft = 0, pendingX = null, frame = 0, appliedWidth = 0;
+  const otherSidebar = () => (sidebarId === 'file-browser' ? $('outline') : $('file-browser'));
+  // Layout only: clamps against the last measured sibling width and writes the
+  // CSS variable. Callers own measurement and persistence.
+  function applyWidth(value) {
+    const other = otherSidebar();
+    const available = window.innerWidth - (other.hidden ? 0 : otherWidth) - 320;
     const width = Math.max(200, Math.min(Math.max(200, Math.min(520, available)), value));
     document.body.style.setProperty(property, `${width}px`);
-    preferences.set(key, width);
+    appliedWidth = width;
   }
-  setWidth(Number(preferences.get(key, defaultWidth)) || defaultWidth);
-  divider.addEventListener('pointerdown', event => { event.preventDefault(); divider.setPointerCapture(event.pointerId); divider.classList.add('dragging'); });
-  divider.addEventListener('pointermove', event => { if (divider.hasPointerCapture(event.pointerId)) setWidth(event.clientX - sidebar.getBoundingClientRect().left); });
-  divider.addEventListener('pointerup', event => { if (divider.hasPointerCapture(event.pointerId)) divider.releasePointerCapture(event.pointerId); divider.classList.remove('dragging'); });
-  divider.addEventListener('keydown', event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); setWidth(sidebar.getBoundingClientRect().width + (event.key === 'ArrowRight' ? 20 : -20)); } });
+  function measureOther() { const other = otherSidebar(); otherWidth = other.hidden ? 0 : other.getBoundingClientRect().width; }
+  function applyPending() {
+    if (pendingX === null) return;
+    const x = pendingX;
+    pendingX = null;
+    applyWidth(x - dragLeft);
+  }
+  measureOther();
+  applyWidth(Number(preferences.get(key, defaultWidth)) || defaultWidth);
+  // Keep the resolved startup width on record so the default survives the
+  // first launch; drags persist once per gesture instead of per move.
+  preferences.set(key, appliedWidth);
+  divider.addEventListener('pointerdown', event => {
+    event.preventDefault(); divider.setPointerCapture(event.pointerId); divider.classList.add('dragging');
+    // Layout is read once per gesture; pointermove then only reads the pointer.
+    measureOther(); dragLeft = sidebar.getBoundingClientRect().left;
+  });
+  divider.addEventListener('pointermove', event => {
+    if (!divider.hasPointerCapture(event.pointerId)) return;
+    pendingX = event.clientX;
+    if (frame) return;
+    frame = requestAnimationFrame(() => { frame = 0; applyPending(); });
+  });
+  divider.addEventListener('pointerup', event => {
+    if (divider.hasPointerCapture(event.pointerId)) divider.releasePointerCapture(event.pointerId);
+    divider.classList.remove('dragging');
+    if (frame) { cancelAnimationFrame(frame); frame = 0; }
+    applyPending();
+    preferences.set(key, appliedWidth);
+  });
+  divider.addEventListener('keydown', event => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    measureOther();
+    applyWidth(sidebar.getBoundingClientRect().width + (event.key === 'ArrowRight' ? 20 : -20));
+    preferences.set(key, appliedWidth);
+  });
 }
 setupSidebarResize('file-browser', 'folder-divider', 'folder', 250);
 setupSidebarResize('outline', 'outline-divider', 'outlineWidth', 248, 'outline');
@@ -185,14 +242,24 @@ function readerScrollAnchor() {
   if (!current.active) return null;
   const scroller = $('reader-scroll');
   if (!scroller || scroller.hidden) return null;
-  const top = scroller.getBoundingClientRect().top + 24;
-  if (editor?.isSource?.()) {
-    const line = [...$('source-editor').querySelectorAll('.cm-line')]
-      .find(element => element.getBoundingClientRect().bottom > top);
-    return line || $('source-editor').querySelector('.cm-content');
+  const box = scroller.getBoundingClientRect();
+  const source = editor?.isSource?.();
+  // The reader centers its text column, so probing from the scroller's own
+  // edge would land in the side gutter and resolve to the scroller itself.
+  const column = (source ? $('source-editor') : $('preview')).getBoundingClientRect();
+  const left = Math.max(box.left, column.left);
+  const x = Math.max(left + 1, Math.min(left + 64, box.right - 1));
+  const y = Math.min(box.top + 24, box.bottom - 1);
+  // Padding above the first block and the gaps between blocks are hit-test
+  // dead zones, so probe a short way down the same line before falling back.
+  for (const offset of [0, 16, 32, 48]) {
+    const hit = document.elementFromPoint(x, Math.min(y + offset, box.bottom - 1));
+    if (!hit) continue;
+    const block = source ? hit.closest('#source-editor .cm-line') : hit.closest('.ProseMirror > *');
+    if (block) return block;
   }
-  const blocks = [...$('preview').querySelectorAll('.ProseMirror > *')];
-  return blocks.find(element => element.getBoundingClientRect().bottom > top) || blocks[0] || null;
+  if (source) return $('source-editor').querySelector('.cm-content');
+  return $('preview').querySelector('.ProseMirror > *') || null;
 }
 function zoomText(delta, reset = false) {
   // Reflow from a font-size change moves every later line. Keep the block or
@@ -268,7 +335,6 @@ async function openPath(path, confirmed = false) {
     const document = await invoke('open_document', { path });
     ++renderGeneration;
     previewSnapshot = null;
-    previewBlocks = [];
     current = { path: document.path, name: document.name, content: document.content, saved: document.content, active: true };
     if (activeFolder && !samePath(document.path, activeFolder.path) && !isWithin(document.path, activeFolder.path)) { activeFolder = null; folderEntries = []; expandedFolders.clear(); }
     if (activeFolder) expandParentsOf(document.path);
@@ -385,9 +451,16 @@ function setFolderVisible(visible) {
   $('folder-toggle').setAttribute('aria-expanded', String(shown));
 }
 function expandParentsOf(path) {
+  let expanded = false;
   for (const entry of folderEntries) {
-    if (entry.directory && isWithin(path, entry.path)) expandedFolders.add(pathKey(entry.path));
+    if (entry.directory && isWithin(path, entry.path)) {
+      const key = pathKey(entry.path);
+      if (!expandedFolders.has(key)) { expandedFolders.add(key); expanded = true; }
+    }
   }
+  // Revealing a document inside a collapsed directory is a tree change, so the
+  // selection sync must rebuild instead of only moving the highlight.
+  if (expanded) renderedFolder = { path: null, entries: null };
 }
 function entryIsVisible(entry) {
   if (!activeFolder) return false;
@@ -406,7 +479,7 @@ function renderFolderEntries() {
   const scrollTop = $('folder-items').scrollTop;
   const previousFocus = document.activeElement?.closest?.('.folder-entry')?.dataset.path || null;
   list.replaceChildren();
-  if (!activeFolder) return;
+  if (!activeFolder) { renderedFolder = { path: null, entries: folderEntries }; return; }
   $('folder-name').textContent = activeFolder.name || activeFolder.path;
   $('folder-name').title = activeFolder.path;
   for (const entry of folderEntries) {
@@ -444,6 +517,17 @@ function renderFolderEntries() {
     const target = [...list.querySelectorAll('.folder-entry')].find(button => button.dataset.path === previousFocus);
     if (target) { target.focus({ preventScroll: true }); target.scrollIntoView({ block: 'nearest' }); }
   }
+  renderedFolder = { path: activeFolder?.path || null, entries: folderEntries };
+}
+function syncFolderSelection() {
+  const path = activeFolder?.path || null;
+  if (!renderedFolder || renderedFolder.path !== path || renderedFolder.entries !== folderEntries) { renderFolderEntries(); return; }
+  for (const button of $('folder-items').querySelectorAll('.folder-entry[data-path]')) {
+    const selected = !button.classList.contains('directory') && samePath(current.path, button.dataset.path);
+    button.classList.toggle('selected', selected);
+    if (selected) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  }
 }
 async function openFolderPath(path, confirmed = false) {
   if (!confirmed && !(await allowDiscard())) return false;
@@ -463,7 +547,6 @@ async function openFolderPath(path, confirmed = false) {
     expandedFolders.clear(); folderVisible = true;
     current = { path: null, name: 'Untitled.md', content: '', saved: '', active: false };
     previewSnapshot = null;
-    previewBlocks = [];
     setLineEnding(null);
     mode = 'read'; root.dataset.mode = mode;
     $('reader-scroll').hidden = false;
@@ -526,7 +609,6 @@ function newDocument(sample = false) {
       setTransitionLocked(true);
       await invoke('new_document'); ++renderGeneration;
       previewSnapshot = null;
-      previewBlocks = [];
       const content = sample ? SAMPLE : '';
       current = { path: null, name: sample ? 'Welcome.md' : 'Untitled.md', content, saved: content, active: true };
       setLineEnding(null);
@@ -867,11 +949,13 @@ Your files stay yours. This sample is just a starting point.[^1]
 async function start() {
   zoomText(0); zoomWindow(0); renderRecent(); setDocumentWidth(wideLayout, false); setFormatToolbarVisible(formatToolbarVisible, false);
   syncOpenAffordance();
+  applyTheme(selectedTheme, false); applyReadingFont(readingFont, false);
   if (!window.__TAURI__) { toast('Open Folio from your app menu to enable file access.'); return; }
-  await listen('request-close', requestClose);
-  await listen('open-files', event => { for (const path of event.payload) requestOpenLocation(path); });
-  await listen('system-theme', event => { omarchy = event.payload; if (selectedTheme === 'omarchy') applyTheme('omarchy', false); else if ($('command-dialog').open) renderCommands(); });
-  applyReadingFont(readingFont, false);
+  await Promise.all([
+    listen('request-close', requestClose),
+    listen('open-files', event => { for (const path of event.payload) requestOpenLocation(path); }),
+    listen('system-theme', event => { omarchy = event.payload; if (selectedTheme === 'omarchy') applyTheme('omarchy', false); else if ($('command-dialog').open) renderCommands(); })
+  ]);
   const state = await invoke('bootstrap'); setPlatform(state.platform); omarchy = state.theme;
   if (preferences.get('theme', null) === null && omarchy) selectedTheme = 'omarchy';
   applyTheme(selectedTheme, false);
@@ -880,10 +964,16 @@ async function start() {
     const type = event.payload.type; $('drop-overlay').hidden = type !== 'over' && type !== 'enter';
     if (type === 'drop') { $('drop-overlay').hidden = true; for (const path of event.payload.paths) requestOpenLocation(path); }
   });
+  const idle = window.requestIdleCallback || (callback => setTimeout(callback, 200));
+  idle(() => {
+    loadAsset('vendor/editor/editor.js').catch(() => {});
+    loadAsset('vendor/editor/editor.css', true).catch(() => {});
+  });
   setInterval(async () => {
     if (!current.path || busy || document.hidden) return;
     const path = current.path;
     try { const changed = await invoke('document_changed'); if (path === current.path) $('disk-banner').hidden = !changed; } catch {}
   }, 3000);
+  requestAnimationFrame(() => requestAnimationFrame(() => { invoke('ready').catch(() => {}); }));
 }
 start().catch(error => { toast(error); console.error(error); });

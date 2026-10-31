@@ -4,23 +4,66 @@ use super::{
 use base64::{engine::general_purpose::STANDARD, Engine};
 use html5ever::tokenizer::{TagKind, Token};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fs::File,
     io::Read,
     path::{Path, PathBuf},
+    sync::{LazyLock, Mutex},
+    time::SystemTime,
 };
 
-/// Per-render local-image cache keyed by canonical path. Budget accounting is
-/// done over the final sanitized HTML so Markdown images and author HTML images
-/// share the same occurrence/byte rules without double-counting cache hits.
+/// One version of a local image file: canonical path, modification time, and
+/// length. Editing an image changes at least its mtime or its length, so an
+/// entry is never served for a different version of the file.
+type ImageKey = (PathBuf, SystemTime, u64);
+
+/// Upper bounds for the process-wide encoded-image cache. Entries are evicted
+/// oldest-first until both the count and the byte budget hold.
+const MAX_IMAGE_CACHE_ENTRIES: usize = 128;
+const MAX_IMAGE_CACHE_BYTES: usize = 64 * 1024 * 1024;
+
+/// Process-wide local-image cache keyed by canonical path, mtime, and length.
+/// The value is the base64 payload (not the `data:` prefix), or `None` when the
+/// file is present but unreadable or over the per-file budget. Budget
+/// accounting is still done over the final sanitized HTML on every render, so
+/// cache hits are charged once per document occurrence.
+#[derive(Default)]
 pub(crate) struct ImageCache {
-    cache: HashMap<PathBuf, Option<String>>,
+    cache: HashMap<ImageKey, Option<String>>,
+    /// Insertion order, so the oldest entry is evicted first.
+    order: VecDeque<ImageKey>,
+    /// Total bytes of encoded payloads currently cached.
+    bytes: usize,
 }
 
 impl ImageCache {
-    pub(crate) fn new() -> Self {
-        Self {
-            cache: HashMap::new(),
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn insert(&mut self, key: ImageKey, encoded: Option<String>) {
+        let bytes = encoded.as_ref().map_or(0, String::len);
+        if bytes > MAX_IMAGE_CACHE_BYTES {
+            return;
+        }
+        if let Some(previous) = self.cache.insert(key.clone(), encoded) {
+            self.bytes = self
+                .bytes
+                .saturating_sub(previous.map_or(0, |value| value.len()))
+                + bytes;
+            return;
+        }
+        self.bytes += bytes;
+        self.order.push_back(key);
+        while self.cache.len() > MAX_IMAGE_CACHE_ENTRIES || self.bytes > MAX_IMAGE_CACHE_BYTES {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(evicted) = self.cache.remove(&oldest) {
+                self.bytes = self
+                    .bytes
+                    .saturating_sub(evicted.map_or(0, |value| value.len()));
+            }
         }
     }
 
@@ -41,23 +84,70 @@ impl ImageCache {
         let Some((path, mime)) = resolve_local_path(destination, base) else {
             return super::LOCAL_IMAGE_PLACEHOLDER.into();
         };
-
-        let encoded = match self.cache.get(&path) {
-            Some(Some(encoded)) => encoded.clone(),
-            Some(None) => return super::LOCAL_IMAGE_PLACEHOLDER.into(),
+        let encoded = match file_stamp(&path) {
+            Some((modified, length)) => {
+                let key = (path, modified, length);
+                // The per-file budget is a property of the call, not of the
+                // file, so it must be applied to cached entries too and never
+                // cached itself.
+                if length > limits.max_image_file_bytes as u64 {
+                    return super::LOCAL_IMAGE_PLACEHOLDER.into();
+                }
+                match self.cache.get(&key) {
+                    Some(Some(encoded)) => encoded.clone(),
+                    Some(None) => return super::LOCAL_IMAGE_PLACEHOLDER.into(),
+                    None => {
+                        let Some(bytes) = read_bounded(&key.0, limits.max_image_file_bytes) else {
+                            self.insert(key, None);
+                            return super::LOCAL_IMAGE_PLACEHOLDER.into();
+                        };
+                        let encoded = STANDARD.encode(bytes);
+                        self.insert(key, Some(encoded.clone()));
+                        encoded
+                    }
+                }
+            }
             None => {
+                // No stable identity to invalidate (missing file, or a
+                // filesystem without a modification time): read directly.
                 let Some(bytes) = read_bounded(&path, limits.max_image_file_bytes) else {
-                    self.cache.insert(path, None);
                     return super::LOCAL_IMAGE_PLACEHOLDER.into();
                 };
-                let encoded = STANDARD.encode(bytes);
-                self.cache.insert(path, Some(encoded.clone()));
-                encoded
+                STANDARD.encode(bytes)
             }
         };
 
         format!("data:{mime};base64,{encoded}")
     }
+}
+
+static IMAGE_CACHE: LazyLock<Mutex<ImageCache>> = LazyLock::new(|| Mutex::new(ImageCache::new()));
+
+/// Resolve a Markdown image destination through the process-wide encoded-image
+/// cache. Behaviour matches the old per-render cache: remote images follow the
+/// privacy preference, missing files use the placeholder, and the per-file
+/// budget is enforced before encoding.
+pub(crate) fn resolve_image(
+    destination: &str,
+    base: Option<&Path>,
+    allow_remote_images: bool,
+    limits: &RenderLimits,
+) -> String {
+    let mut cache = IMAGE_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    cache.resolve(destination, base, allow_remote_images, limits)
+}
+
+/// Modification time and length of a canonical local image. Missing paths,
+/// non-regular files, and filesystems without a usable modification time have
+/// no stamp and are therefore read uncached.
+fn file_stamp(path: &Path) -> Option<(SystemTime, u64)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    Some((metadata.modified().ok()?, metadata.len()))
 }
 
 /// Count every sanitized `<img src>` occurrence and every data-URL output byte.

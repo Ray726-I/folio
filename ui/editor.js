@@ -2,7 +2,6 @@
 // Shell adapter. The engines live in the locally bundled editor/ modules.
 let editor = null, editorDocument = null, editorPath = null, outlineTimer, fallbackCheckedContent = null;
 let outlineRevision = 0;
-let previewBlocks = [];
 // Temporary protection while a queued open replaces the active document. This
 // is separate from the user's persistent Lock; it starts before native
 // open_document and ends after the replacement editor has mounted (or failed).
@@ -64,7 +63,7 @@ function openSourceSnapshot() {
   $('source-snapshot-status').textContent = 'Exact Markdown at the time this snapshot was opened. Unsaved changes are included.';
   $('source-dialog').showModal(); $('source-snapshot-text').focus();
 }
-function scheduleEditorOutline() { clearTimeout(outlineTimer); outlineTimer = setTimeout(refreshEditorOutline, 180); }
+function scheduleEditorOutline() { clearTimeout(outlineTimer); outlineTimer = setTimeout(refreshEditorOutline, 500); }
 function headingSlug(text) {
   // Match the native renderer's heading-id convention: lowercase, drop
   // punctuation but keep letters, digits, whitespace, hyphens and underscores,
@@ -72,11 +71,16 @@ function headingSlug(text) {
   // collapsed, so "A & B" becomes "a--b" like the preview's own id).
   return String(text).toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-');
 }
+function lineStartsFor(text) {
+  const starts = [0];
+  for (let index = 0; index < text.length; index++) if (text[index] === '\n') starts.push(index + 1);
+  return starts;
+}
 function refreshEditorOutline() {
   if (!editor || !current.active) return;
+  if ($('outline').hidden) return;
   const headings = window.FolioEditor.headings(current.content);
-  const lineStarts = [0];
-  for (let index = 0; index < current.content.length; index++) if (current.content[index] === '\n') lineStarts.push(index + 1);
+  let lineStarts;
   $('outline-items').replaceChildren(); outlineEntries = []; outlineActiveIndex = -1;
   const elements = editor.isSource() ? [] : [...$('preview').querySelectorAll('h1,h2,h3,h4,h5,h6')];
   const seenIds = new Set();
@@ -91,6 +95,7 @@ function refreshEditorOutline() {
       if (!heading.raw && extension) continue;
       if (extension) {
         const pos = candidate.dataset?.sourcepos;
+        if (!lineStarts) lineStarts = lineStartsFor(current.content);
         const offset = pos ? lineStarts[Math.max(0, Number.parseInt(pos, 10) - 1)] : undefined;
         if (candidate.dataset.folioOutlineRevision !== String(outlineRevision) || offset !== heading.offset) continue;
       }
@@ -108,7 +113,7 @@ function refreshEditorOutline() {
     seenIds.add(id);
     const button = document.createElement('button'); button.className = 'outline-link'; button.textContent = text;
     button.dataset.level = heading.level; button.style.setProperty('--indent', `${(heading.level - 1) * 12}px`); button.tabIndex = outlineEntries.length ? -1 : 0;
-    button.onclick = () => { editor.selectRange(heading.offset); setActiveOutline(outlineEntries.indexOf(entry)); element?.scrollIntoView({ block: 'center' }); };
+    button.onclick = () => { editor.selectRange(heading.offset); setActiveOutline(outlineEntries.indexOf(entry)); element?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); };
     const entry = { id, element, button, offset: heading.offset };
     $('outline-items').append(button); outlineEntries.push(entry);
   }
@@ -127,8 +132,8 @@ async function mountUnifiedEditor() {
     if (editor.isFallback() && current.content !== fallbackCheckedContent && current.content.length <= 2 * 1024 * 1024) {
       fallbackCheckedContent = current.content;
       try {
-        const result = await invoke('render_markdown', { content: current.content, remoteImages: false });
-        if (!/data-preview-limit=/.test((typeof result === 'string' ? result : result.html) || '')) { editor.setFallback(false); refreshEditorOutline(); }
+        const result = await invoke('preview_check', { content: current.content });
+        if (!result?.limited) { editor.setFallback(false); refreshEditorOutline(); }
       } catch {}
     }
     if (editorPath !== current.path) { editorPath = current.path; editor.refreshMedia(); }
@@ -137,16 +142,22 @@ async function mountUnifiedEditor() {
   const documentAtOpen = current, generation = ++renderGeneration;
   editor?.destroy(); editor = null; cancelMermaidPending();
   $('preview').replaceChildren(); $('source-editor').replaceChildren();
-  await loadAsset('vendor/editor/editor.js');
-  await loadAsset('vendor/editor/editor.css', true);
-  if (current !== documentAtOpen || generation !== renderGeneration) return;
+  $('preview').classList.add('is-mounting');
+  const finishMounting = () => $('preview').classList.remove('is-mounting');
+  try {
+    await loadAsset('vendor/editor/editor.js');
+    await loadAsset('vendor/editor/editor.css', true);
+  } catch (error) {
+    finishMounting();
+    throw error;
+  }
+  if (current !== documentAtOpen || generation !== renderGeneration) { finishMounting(); return; }
   let limited = false;
   try {
-    const result = await invoke('render_markdown', { content: current.content, remoteImages: false });
-    const html = typeof result === 'string' ? result : result.html;
-    limited = /data-preview-limit=/.test(html || ''); previewBlocks = result.blocks || [];
+    const result = await invoke('preview_check', { content: current.content });
+    limited = Boolean(result?.limited);
   } catch { limited = true; }
-  if (current !== documentAtOpen || generation !== renderGeneration) return;
+  if (current !== documentAtOpen || generation !== renderGeneration) { finishMounting(); return; }
   let extensionCache = null, extensionContent = null, extensionRemote = null;
   const codeHighlightCache = new Map();
   editorDocument = current; editorPath = current.path;
@@ -212,13 +223,11 @@ async function mountUnifiedEditor() {
     async highlightCode(code, language) {
       const key = `${language}\u0000${code}`;
       if (codeHighlightCache.has(key)) return codeHighlightCache.get(key);
-      const longestRun = Math.max(2, ...[...String(code).matchAll(/`+/g)].map(match => match[0].length));
-      const fence = '`'.repeat(longestRun + 1);
-      const tag = /^[a-z0-9_+#.-]*$/i.test(language) ? language : '';
-      const result = await invoke('render_markdown', { content: `${fence}${tag}\n${code}\n${fence}`, remoteImages: false });
-      const html = typeof result === 'string' ? result : result.html;
-      const parsed = new DOMParser().parseFromString(html || '', 'text/html');
-      const highlightedNode = parsed.querySelector('pre code');
+      const lang = /^[a-z0-9_+#.-]*$/i.test(language) ? language : null;
+      const result = await invoke('highlight_code', { code, language: lang });
+      const html = typeof result === 'string' ? result : result?.html || '';
+      const parsed = new DOMParser().parseFromString(`<code>${html}</code>`, 'text/html');
+      const highlightedNode = parsed.querySelector('code');
       // The native adapter terminates its code element with a newline. Remove
       // exactly that terminator so the token layer mirrors the node text.
       if (highlightedNode?.textContent.endsWith('\n')) {
@@ -256,11 +265,13 @@ async function mountUnifiedEditor() {
     try {
       editor = window.FolioEditor.create({ ...editorOptions, forceSource: true });
     } catch (fallbackError) {
+      finishMounting();
       toast('This document could not be opened in the editor. Your file is unchanged.');
       throw fallbackError;
     }
     toast('Rich view unavailable for this document. Showing Markdown source.');
   }
+  finishMounting();
   $('folder-empty').hidden = true; refreshEditorOutline(); status('');
 }
 
