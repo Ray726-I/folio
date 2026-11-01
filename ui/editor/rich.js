@@ -2996,7 +2996,6 @@ export function createRichEditor(parent, options) {
           else openSubmenu(wrap, true);
         });
         btn.addEventListener('pointerenter', () => { if (!btn.disabled) openSubmenu(wrap, false); });
-        btn.addEventListener('focus', () => { if (!btn.disabled) openSubmenu(wrap, false); });
         wrap.addEventListener('pointerleave', () => closeSubmenu(false));
         sub.addEventListener('pointerenter', () => cancelHoverClear());
         menu.append(wrap);

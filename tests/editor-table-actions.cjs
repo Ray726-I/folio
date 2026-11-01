@@ -31,7 +31,16 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.locator('#preview td').first().click({ button: 'right' });
     const menu = page.getByRole('menu', { name: 'Table menu' });
     await menu.waitFor({ state: 'visible' });
+    assert.equal(await page.locator('.folio-table-submenu:visible').count(), 0, 'opening the menu does not automatically open a submenu');
     await menu.getByRole('button', { name: 'Row submenu' }).hover();
+    const boxes = await page.evaluate(() => {
+      const main = document.querySelector('.folio-table-menu').getBoundingClientRect();
+      const sub = document.querySelector('.folio-table-submenu:not([hidden])').getBoundingClientRect();
+      return { mainRight: main.right, subLeft: sub.left, x: sub.left + 30, y: sub.top + 20 };
+    });
+    assert.ok(boxes.subLeft >= boxes.mainRight - 12, `submenu appears beside the main menu, not clipped inside it: ${JSON.stringify(boxes)}`);
+    await page.mouse.move(boxes.x, boxes.y, { steps: 12 });
+    assert.equal(await page.locator('.folio-table-submenu:visible').count(), 1, 'submenu stays open when moving into it');
     for (const label of ['Insert row above', 'Duplicate row']) assert.equal(await menu.getByRole('menuitem', { name: label, exact: true }).count(), 1, `${label} is available`);
     await menu.getByRole('button', { name: 'Column submenu' }).hover();
     for (const label of ['Insert column left', 'Duplicate column', 'Align center']) assert.equal(await menu.getByRole('menuitem', { name: label, exact: true }).count(), 1, `${label} is available`);
@@ -41,6 +50,15 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.equal(await page.locator('#preview tr').count(), 5);
     await page.keyboard.press('Control+z');
     await page.waitForFunction(text => current.content === text, source);
+
+    await page.locator('#preview td').first().click({ button: 'right' });
+    await menu.waitFor({ state: 'visible' });
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await page.locator('.folio-table-submenu:visible').count(), 1, 'keyboard opens the submenu');
+    await page.keyboard.press('ArrowLeft');
+    assert.equal(await page.locator('.folio-table-submenu:visible').count(), 0, 'keyboard returns to the main menu');
+    await page.keyboard.press('Escape');
+    assert.equal(await menu.isHidden(), true, 'Escape closes the main menu');
 
     await page.locator('#preview td').first().click();
     await hoverEdge('left');

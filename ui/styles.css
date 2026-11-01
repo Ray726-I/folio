@@ -108,7 +108,7 @@
 .folio-table-grip { display:block; width:10px; height:14px; background-image:radial-gradient(circle,currentColor 1.2px,transparent 1.3px); background-size:5px 5px; background-position:center; pointer-events:none; }
 .folio-table-drop-line { position:fixed; inset:auto; z-index:31; margin:0; padding:0; border:0; border-radius:2px; background:var(--accent); pointer-events:none; }
 .folio-table-drop-line[hidden] { display:none; }
-.folio-table-menu { position:fixed; inset:auto; z-index:30; min-width:208px; max-width:min(260px,calc(100vw - 32px)); max-height:min(360px,calc(100vh - 16px)); overflow:auto; margin:0; padding:4px; border:1px solid var(--line); border-radius:10px; background:var(--panel); box-shadow:0 12px 34px #0003,0 2px 6px #0002; }
+.folio-table-menu { position:fixed; inset:auto; z-index:30; min-width:208px; max-width:min(260px,calc(100vw - 32px)); overflow:visible; margin:0; padding:4px; border:1px solid var(--line); border-radius:10px; background:var(--panel); box-shadow:0 12px 34px #0003,0 2px 6px #0002; }
 .folio-table-menu button { display:flex; align-items:center; gap:8px; width:100%; box-sizing:border-box; padding:7px 9px; border:0; border-radius:6px; background:transparent; color:var(--fg); font:500 12px/1.35 var(--font-ui); text-align:left; white-space:nowrap; cursor:pointer; }
 .folio-table-menu button:hover:not(:disabled) { background:var(--hover); }
 .folio-table-menu button:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; background:var(--hover); }
