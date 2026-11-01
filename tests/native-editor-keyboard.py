@@ -18,12 +18,12 @@ Honest limits:
 
 The smoke checks exact saved bytes rather than a screenshot or DOM state:
   1. CtrlEnd, type " native".
-  2. CtrlE to source, type " source".
+  2. Type " source" in the formatted editor.
   3. CtrlS checkpoint, exact bytes.
   4. CtrlE back to rich, type " rich".
   5. CtrlS, exact bytes.
   6. CtrlZ, CtrlS, exact bytes for the prior checkpoint.
-  7. Source-mode CtrlA replacement with a task/table Markdown sample, CtrlS.
+  7. Final exact-byte save with no presentation switch.
 
 Run:
   tests/native-editor-keyboard.sh
@@ -617,12 +617,9 @@ class Smoke:
         self.wait_dirty("native typing")
         self.log("rich CtrlEnd + typed ' native'")
 
-        # Switch to the source projection with the real app shortcut.
-        self.kb.chord("e", ctrl=True)
-        time.sleep(0.20)
         self.kb.type_text(" source")
-        self.wait_dirty("source typing")
-        self.log("CtrlE source presentation + typed ' source'")
+        self.wait_dirty("second typing group")
+        self.log("typed ' source' in the formatted editor")
 
         # This first save is a deliberate undo-group checkpoint. The app's
         # checkpoint() resets typing grouping; it does not flush a history
@@ -633,9 +630,7 @@ class Smoke:
         if after_source != AFTER_SOURCE:
             fail("checkpoint save text changed unexpectedly")
 
-        # Back to rich, type the final group, and save again.
-        self.kb.chord("e", ctrl=True)
-        time.sleep(0.20)
+        # Type the final group, and save again.
         self.kb.type_text(" rich")
         self.wait_dirty("rich typing")
         after_rich = self.save_and_expect(AFTER_RICH, "final save")
@@ -650,25 +645,11 @@ class Smoke:
         if after_undo != AFTER_SOURCE:
             fail("CtrlZ removed more than the last typing group")
 
-        # Case 2: source presentation with shifted Markdown syntax. CtrlA then
-        # a short task/table document exercises OS shift levels for #, [, ],
-        # |, and > without any DOM or execCommand path.
-        self.kb.chord("e", ctrl=True)
-        time.sleep(0.20)
-        self.kb.chord("a", ctrl=True)
-        self.kb.type_text(SECOND_SOURCE.decode("ascii"))
-        self.wait_dirty("source markdown typing")
-        second = self.save_and_expect(SECOND_SOURCE, "source markdown save")
-        if second != SECOND_SOURCE:
-            fail("source Markdown save text changed unexpectedly")
-
-        # Toggling presentation must not alter the saved source. A final CtrlS
-        # keeps the native save path in the last observed state.
-        self.kb.chord("e", ctrl=True)
-        time.sleep(0.20)
-        self.wait_clean("post-toggle")
-        final = self.save_and_expect(SECOND_SOURCE, "post-toggle save")
-        self.log(f"source Markdown roundtrip exact: {show_bytes('bytes', final)}")
+        # Single editor: a final save must still produce the exact bytes and
+        # the dirty state must clear without any presentation round trip.
+        self.wait_clean("post-typing")
+        final = self.save_and_expect(AFTER_SOURCE, "post-undo save")
+        self.log(f"typed roundtrip exact: {show_bytes('bytes', final)}")
 
     def report(self) -> None:
         print("PASS: native XTest keyboard drove real Folio/WebKit")

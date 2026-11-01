@@ -32,29 +32,24 @@ const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n
     await page.keyboard.press('Control+z'); assert.equal(await text(), beforeStructure);
     await page.locator('.table-tools summary').click();
 
-    // Both projections share the same source history; source mode performs
-    // ordinary exact interval edits even through table syntax.
-    await page.locator('#show-markdown').click(); await page.locator('#source-editor .cm-content').waitFor({ state: 'visible' });
+    // Select All/Delete in the single editor must not leave protected table
+    // shells behind, and undo restores the exact bytes.
+    await page.locator('#preview td').first().click();
     await page.keyboard.press('Control+a'); await page.keyboard.press('Delete');
     assert.equal(await text(), '', 'Select All/Delete must not leave protected table shells');
     await page.keyboard.press('Control+z'); assert.equal(await text(), beforeStructure);
-    await page.locator('#view-formatted').click();
-    // Links edit in place: clicking a link reveals its Markdown source in the
-    // same buffer, with the URL selected for direct typing. No modal.
+    await page.locator('#preview td').first().click();
+    // Links edit in place through the destination dialog, with no mode switch
+    // and no second editor.
     await page.locator('#preview a').first().click();
-    await page.locator('#source-editor .cm-content').waitFor({ state: 'visible' });
-    assert.equal(await page.evaluate(() => editor.isSource()), true, 'link click reveals Markdown source in the same buffer');
-    assert.equal(await page.locator('#editor-action-dialog').evaluate(node => node.open), false, 'link editing uses in-buffer source, not a modal');
-    const linkSelection = await page.evaluate(() => editor.getSelection());
-    const linkSelected = await page.evaluate(selection => {
-      const value = editor.getText();
-      return value.slice(Math.min(selection.anchor, selection.head), Math.max(selection.anchor, selection.head));
-    }, linkSelection);
-    assert.ok(linkSelected.includes('https://example.com/original'), `link URL is selected in source, got ${JSON.stringify(linkSelected)}`);
-    await page.keyboard.type('https://example.com/changed');
-    assert.ok((await text()).includes('https://example.com/changed'));
-    assert.equal(await page.evaluate(() => editor.isSource()), true, 'link URL edit stays in the shared buffer');
-    await page.locator('#view-formatted').click();
+    await page.waitForFunction(() => document.getElementById('editor-action-dialog').open);
+    assert.equal(await page.evaluate(() => editor.isSource()), false, 'link editing stays in the formatted editor');
+    const linkValue = await page.locator('#editor-action-value').inputValue();
+    assert.ok(linkValue.includes('https://example.com/original'), `dialog holds the link destination, got ${JSON.stringify(linkValue)}`);
+    await page.locator('#editor-action-value').fill('https://example.com/changed');
+    await page.locator('#editor-action-form button[type="submit"]').click();
+    await page.waitForFunction(() => current.content.includes('https://example.com/changed'));
+    assert.equal(await page.evaluate(() => editor.isSource()), false, 'link URL edit stays in the formatted editor');
     assert.equal(await page.locator('#preview a').first().textContent(), 'route');
     assert.ok((await page.locator('#preview a').first().getAttribute('href')).includes('https://example.com/changed'));
     // Math edits locally without switching the document to Markdown.
@@ -71,19 +66,15 @@ const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n
     await page.locator('#preview .math-error').waitFor();
     assert.ok((await text()).includes('\\frac{1}{'));
     await page.keyboard.press('Control+z'); assert.equal(await text(), beforeMath);
-    // Image source is reachable in place, without a modal.
+    // Image source edits in place through the same destination dialog.
     await page.getByRole('button', { name: 'Edit image', exact: true }).click();
-    await page.locator('#source-editor .cm-content').waitFor({ state: 'visible' });
-    assert.equal(await page.evaluate(() => editor.isSource()), true, 'image edit reveals Markdown source in the same buffer');
-    assert.equal(await page.locator('#editor-action-dialog').evaluate(node => node.open), false, 'image editing uses in-buffer source, not a modal');
-    const imageSelection = await page.evaluate(() => editor.getSelection());
-    const imageSelected = await page.evaluate(selection => {
-      const value = editor.getText();
-      return value.slice(Math.min(selection.anchor, selection.head), Math.max(selection.anchor, selection.head));
-    }, imageSelection);
-    assert.ok(imageSelected.includes('https://example.com/tracker.png'), `image source is selected in source, got ${JSON.stringify(imageSelected)}`);
-    await page.locator('#view-formatted').click();
-    assert.ok((await text()).includes('https://example.com/tracker.png'));
+    await page.waitForFunction(() => document.getElementById('editor-action-dialog').open);
+    assert.equal(await page.evaluate(() => editor.isSource()), false, 'image edit stays in the formatted editor');
+    const imageValue = await page.locator('#editor-action-value').inputValue();
+    assert.ok(imageValue.includes('https://example.com/tracker.png'), `dialog holds the image source, got ${JSON.stringify(imageValue)}`);
+    await page.locator('#editor-action-value').fill('https://example.com/tracker2.png');
+    await page.locator('#editor-action-form button[type="submit"]').click();
+    await page.waitForFunction(() => current.content.includes('https://example.com/tracker2.png'));
 
     // No requests on view/hover/focus. A deliberate Load remains possible
     // under Lock and must not become a source mutation or broad permission.
@@ -93,7 +84,7 @@ const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n
     await page.waitForFunction(() => window.calls.some(call => call.command === 'render_markdown' && call.args.remoteImages === true));
     await page.waitForFunction(() => document.querySelector('.image-widget img') !== null);
     assert.equal(await text(), locked);
-    assert.deepEqual(requests, ['https://example.com/tracker.png']);
+    assert.deepEqual(requests, ['https://example.com/tracker2.png']);
     await page.locator('#lock-document').click();
 
     // Rich plain prose is continuous: split/join doesn't mount a textarea.

@@ -5,11 +5,11 @@ const { openEditor } = require('./editor-browser.cjs');
   const session = await openEditor('abcdef\n');
   try {
     const { page } = session;
-    await page.locator('#show-markdown').click();
-    await page.waitForFunction(() => !busy && mode === 'edit');
-    await page.keyboard.press('Control+End');
+    // The single formatted editor has no mode to enter: moving the caret with
+    // the selection API is the same discontinuity a caret jump represents.
+    await page.evaluate(() => editor.selectRange(current.content.length));
     await page.keyboard.type('A');
-    await page.keyboard.press('Control+Home');
+    await page.evaluate(() => editor.selectRange(0));
     await page.keyboard.type('B');
     assert.equal(await page.evaluate(() => current.content), 'Babcdef\nA');
     await page.keyboard.press('Control+z');

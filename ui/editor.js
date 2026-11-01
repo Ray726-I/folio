@@ -2,6 +2,8 @@
 // Shell adapter. The engines live in the locally bundled editor/ modules.
 let editor = null, editorDocument = null, editorPath = null, outlineTimer, fallbackCheckedContent = null;
 let outlineRevision = 0;
+// Anything larger is shown read-only: ProseMirror would have to parse it in JS.
+const MAX_RICH_LENGTH = 2 * 1024 * 1024;
 // Temporary protection while a queued open replaces the active document. This
 // is separate from the user's persistent Lock; it starts before native
 // open_document and ends after the replacement editor has mounted (or failed).
@@ -10,29 +12,11 @@ function setTransitionLocked(next) {
   transitionLocked = Boolean(next);
   editor?.setTransitionLocked(transitionLocked);
 }
-function resetHistory() {} // History belongs to the active document controller.
 function changeContent(content) { if (editor) editor.replaceContent(content); else { current.content = content; updateTitle(); scheduleStats(); } }
 function undoRedo(redo = false) { return editor?.undo(redo) || false; }
-function commitInlineEdit() { return Promise.resolve(true); }
-function syncPreviewEditing() {}
-function syncSourceFallback() {}
-function previewBlockAtViewportTop() { return 0; }
-function previewElementForBlock() { return $('preview').querySelector('h1,h2,p') || $('source-editor'); }
-
-function editorPresentation(show, locked, fallback) {
-  mode = show ? 'edit' : 'read'; root.dataset.mode = mode;
-  const formattedButton = $('view-formatted');
-  if (formattedButton) {
-    formattedButton.setAttribute('aria-pressed', String(!show));
-    const formattedLabel = show ? 'Show formatted view (Ctrl+E)' : 'Formatted view (Ctrl+E)';
-    formattedButton.setAttribute('aria-label', formattedLabel);
-    formattedButton.title = formattedLabel;
-  }
-  const showButton = $('show-markdown');
-  showButton.setAttribute('aria-pressed', String(show));
-  const showLabel = show ? 'Markdown source (Ctrl+E)' : 'Show Markdown source (Ctrl+E)';
-  showButton.setAttribute('aria-label', showLabel);
-  showButton.title = showLabel;
+function editorPresentation(_show, locked, fallback) {
+  // One editing surface: the document is always the formatted editor.
+  mode = 'read'; root.dataset.mode = mode;
   const lockButton = $('lock-document');
   lockButton.setAttribute('aria-pressed', String(locked));
   const lockLabel = locked ? 'Unlock document editing' : 'Protect against accidental edits';
@@ -43,23 +27,17 @@ function editorPresentation(show, locked, fallback) {
   $('editor-notice').hidden = !fallback;
   $('format-tools').querySelectorAll('button,select').forEach(control => { control.disabled = locked; });
 }
-function revealSourceForEdit(from, to) {
-  if (!editor || editor.isLocked()) return;
-  const value = editor.getText();
-  const safeFrom = Math.max(0, Math.min(Number.isFinite(from) ? from : 0, value.length));
-  const safeTo = Math.max(0, Math.min(Number.isFinite(to) ? to : safeFrom, value.length));
-  const anchor = Math.min(safeFrom, safeTo), head = Math.max(safeFrom, safeTo);
-  // In-buffer source access: the Markdown projection is the same persistent
-  // buffer, not a separate edit session. Switching presentation preserves
-  // content, caret history and undo; selecting the exact syntax range keeps
-  // keyboard focus and selection predictable.
-  if (!editor.isSource()) editor.setPresentation(true, false);
-  editor.selectRange(anchor, head, true);
+// Kept for blocks whose exact byte range the ledger cannot prove. Atoms with a
+// provable range open their own in-place editor instead of reaching this.
+function revealSourceForEdit() {
+  toast('This block’s exact source could not be located. Edit it from the source snapshot.');
 }
 function openSourceSnapshot() {
-  if (!editor) return;
-  editor.captureSelection?.();
-  $('source-snapshot-text').value = editor.getText();
+  if (!current.active) return;
+  // Without a mounted editor (over-limit documents) the snapshot still shows
+  // the canonical buffer, so the exact bytes stay copyable.
+  editor?.captureSelection?.();
+  $('source-snapshot-text').value = editor ? editor.getText() : current.content;
   $('source-snapshot-status').textContent = 'Exact Markdown at the time this snapshot was opened. Unsaved changes are included.';
   $('source-dialog').showModal(); $('source-snapshot-text').focus();
 }
@@ -82,7 +60,7 @@ function refreshEditorOutline() {
   const headings = window.FolioEditor.headings(current.content);
   let lineStarts;
   $('outline-items').replaceChildren(); outlineEntries = []; outlineActiveIndex = -1;
-  const elements = editor.isSource() ? [] : [...$('preview').querySelectorAll('h1,h2,h3,h4,h5,h6')];
+  const elements = [...$('preview').querySelectorAll('h1,h2,h3,h4,h5,h6')];
   const seenIds = new Set();
   let cursor = 0;
   for (const heading of headings) {
@@ -122,26 +100,48 @@ function refreshEditorOutline() {
   requestAnimationFrame(updateActiveOutline);
 }
 
+// A single in-place value editor backed by the existing action dialog. Used
+// for link and image destinations so they no longer require switching the
+// document to a Markdown presentation.
+function editValue({ title, value }) {
+  const dialog = $('editor-action-dialog'), form = $('editor-action-form');
+  const input = $('editor-action-value'), openButton = $('editor-action-open');
+  $('editor-action-title').textContent = title || 'Edit';
+  input.value = value || '';
+  openButton.hidden = true;
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = result => {
+      if (settled) return; settled = true;
+      form.removeEventListener('submit', onSubmit); dialog.removeEventListener('cancel', onCancel);
+      dialog.removeEventListener('close', onClose); $('editor-action-cancel').removeEventListener('click', onCancelClick);
+      if (dialog.open) dialog.close();
+      resolve(result);
+    };
+    const onSubmit = event => { event.preventDefault(); finish(input.value); };
+    const onCancel = event => { event.preventDefault(); finish(null); };
+    const onCancelClick = () => finish(null);
+    const onClose = () => finish(null);
+    form.addEventListener('submit', onSubmit); dialog.addEventListener('cancel', onCancel);
+    $('editor-action-cancel').addEventListener('click', onCancelClick); dialog.addEventListener('close', onClose);
+    dialog.showModal();
+    input.focus(); input.select();
+  });
+}
+
 async function mountUnifiedEditor() {
   if (!current.active) {
     editor?.destroy(); editor = null; editorDocument = null;
-    $('preview').replaceChildren(); $('source-editor').replaceChildren(); return;
+    $('preview').replaceChildren(); return;
   }
   if (editorDocument === current && editor) {
     if (editor.getText() !== current.content) editor.replaceContent(current.content);
-    if (editor.isFallback() && current.content !== fallbackCheckedContent && current.content.length <= 2 * 1024 * 1024) {
-      fallbackCheckedContent = current.content;
-      try {
-        const result = await invoke('preview_check', { content: current.content });
-        if (!result?.limited) { editor.setFallback(false); refreshEditorOutline(); }
-      } catch {}
-    }
     if (editorPath !== current.path) { editorPath = current.path; editor.refreshMedia(); }
     return;
   }
   const documentAtOpen = current, generation = ++renderGeneration;
   editor?.destroy(); editor = null; cancelMermaidPending();
-  $('preview').replaceChildren(); $('source-editor').replaceChildren();
+  $('preview').replaceChildren();
   $('preview').classList.add('is-mounting');
   const finishMounting = () => $('preview').classList.remove('is-mounting');
   try {
@@ -152,21 +152,45 @@ async function mountUnifiedEditor() {
     throw error;
   }
   if (current !== documentAtOpen || generation !== renderGeneration) { finishMounting(); return; }
-  let limited = false;
-  try {
-    const result = await invoke('preview_check', { content: current.content });
-    limited = Boolean(result?.limited);
-  } catch { limited = true; }
+  // The native budgets are not the only ceiling: ProseMirror has to parse the
+  // document again in JS, and the two-engine build refused anything over this
+  // size. Check it first so an oversized file never pays a native render probe
+  // it cannot use.
+  let limited = current.content.length > MAX_RICH_LENGTH ? 'source-bytes' : false;
+  if (!limited) {
+    try {
+      const result = await invoke('preview_check', { content: current.content });
+      limited = result?.limited ? String(result.limited) : false;
+    } catch { limited = true; }
+  }
   if (current !== documentAtOpen || generation !== renderGeneration) { finishMounting(); return; }
+  if (limited) {
+    // ProseMirror cannot represent this document within the editor budgets, so
+    // a second text engine is not worth keeping for it. Show the complete
+    // Markdown read-only, keep Save exact, and never truncate.
+    const shown = document.createElement('pre');
+    shown.className = 'document-over-limit';
+    shown.setAttribute('role', 'region');
+    shown.setAttribute('aria-label', 'Markdown source, read-only');
+    shown.setAttribute('tabindex', '0');
+    shown.textContent = current.content;
+    $('preview').replaceChildren(shown);
+    $('editor-notice').hidden = false;
+    editorDocument = current; editorPath = current.path; fallbackCheckedContent = current.content;
+    finishMounting();
+    status('');
+    return;
+  }
+  $('editor-notice').hidden = true;
   let extensionCache = null, extensionContent = null, extensionRemote = null;
   const codeHighlightCache = new Map();
   editorDocument = current; editorPath = current.path;
   fallbackCheckedContent = current.content;
   const editorOptions = {
-    content: current.content, forceSource: limited, transitionLocked, richParent: $('preview'), sourceParent: $('source-editor'), scroller: $('reader-scroll'),
+    content: current.content, transitionLocked, richParent: $('preview'), scroller: $('reader-scroll'),
     onChange(content) { if (current !== documentAtOpen) return; outlineRevision++; current.content = content; previewSnapshot = null; updateTitle(); scheduleStats(); scheduleEditorOutline(); if (!$('find-bar').hidden) editor?.clearHighlight?.(); },
     onPresentation: editorPresentation, message: toast, loadKatex, remoteImages: () => remoteImages, themeRevision: () => diagramThemeRevision,
-    revealSource: (from, to) => revealSourceForEdit(from, to),
+    revealSource: (from, to) => revealSourceForEdit(from, to), editValue,
     openLink(href) { const anchor = document.createElement('a'); anchor.setAttribute('href', href); followPreviewLink(anchor); },
     async renderExtension(source) {
       const snapshot = current.content;
@@ -259,39 +283,21 @@ async function mountUnifiedEditor() {
   try {
     editor = window.FolioEditor.create(editorOptions);
   } catch {
-    // A rich-projection failure must not leave the reader pane blank. Source
-    // mode has no Markdown projection step, so it can still open the document.
-    $('preview').replaceChildren(); $('source-editor').replaceChildren();
-    try {
-      editor = window.FolioEditor.create({ ...editorOptions, forceSource: true });
-    } catch (fallbackError) {
-      finishMounting();
-      toast('This document could not be opened in the editor. Your file is unchanged.');
-      throw fallbackError;
-    }
-    toast('Rich view unavailable for this document. Showing Markdown source.');
+    // There is no second engine to retry into. Show the complete Markdown
+    // read-only so the document is still inspectable and Save stays exact.
+    const shown = document.createElement('pre');
+    shown.className = 'document-over-limit';
+    shown.textContent = current.content;
+    $('preview').replaceChildren(shown);
+    editor = null; editorDocument = null;
+    finishMounting();
+    toast('This document could not be opened in the editor. Its Markdown is shown read-only; your file is unchanged.');
+    return;
   }
   finishMounting();
   $('folder-empty').hidden = true; refreshEditorOutline(); status('');
 }
 
-function switchPresentation(show) {
-  return enqueue(async () => { await renderPreview(); editor?.setPresentation(show); refreshEditorOutline(); });
-}
-$('view-switch').addEventListener('mousedown', event => { if (event.target.closest('button')) event.preventDefault(); });
-$('view-switch').addEventListener('keydown', event => {
-  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-  const segments = [...$('view-switch').querySelectorAll('button')];
-  if (!segments.length) return;
-  event.preventDefault();
-  const current = segments.indexOf(document.activeElement);
-  const next = event.key === 'Home' ? 0
-    : event.key === 'End' ? segments.length - 1
-    : (current + (event.key === 'ArrowRight' ? 1 : -1) + segments.length) % segments.length;
-  segments[next].focus();
-});
-$('show-markdown').onclick = () => { if (mode !== 'edit') switchPresentation(true); };
-$('view-formatted').onclick = () => { if (mode !== 'read') switchPresentation(false); };
 $('lock-document').onclick = () => editor?.setLocked(!editor.isLocked());
 $('source-snapshot').onclick = openSourceSnapshot;
 $('source-snapshot-close').onclick = () => { $('source-dialog').close(); editor?.focus(); };

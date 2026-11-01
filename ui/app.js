@@ -70,8 +70,17 @@ function sendTitle(name, dirty) {
   lastSentTitle = { name, dirty };
   invoke('set_title', { name, dirty }).catch(() => {});
 }
+let renderedTitleKey = null;
 function updateTitle() {
   const name = current.active ? current.name : activeFolder?.name || '';
+  // Typing calls this on every keystroke. Everything below is derived from
+  // these values, so when none of them changed there is nothing to write: the
+  // name, dirty flag and save state are stable for the whole typing burst.
+  const state = saveState();
+  const key = [name, current.path || activeFolder?.path || '', current.active ? 1 : 0,
+    dirty() ? 1 : 0, state.text, state.state, saveStatus?.error || ''].join('\u0000');
+  if (key === renderedTitleKey) return;
+  renderedTitleKey = key;
   $('document-name').textContent = name || 'Folio';
   $('document-location').textContent = current.path ? dirname(current.path) : activeFolder?.path || (current.active ? 'Unsaved document' : 'Markdown files and folders');
   $('document-location').title = current.path || activeFolder?.path || '';
@@ -82,7 +91,7 @@ function updateTitle() {
     : isDirty ? `Save (Ctrl+S) — unsaved changes in ${current.name}` : 'Save (Ctrl+S) — all changes saved';
   saveButton.setAttribute('aria-label', saveLabel);
   saveButton.title = saveLabel;
-  const state = saveState(), saveStateElement = $('save-state');
+  const saveStateElement = $('save-state');
   saveStateElement.textContent = state.text;
   saveStateElement.dataset.state = state.state;
   // The short "Edited" label still announces the full meaning to assistive
@@ -124,10 +133,9 @@ function showDocument() {
   document.querySelectorAll('.document-control').forEach(control => { control.hidden = !current.active; });
   setFormatToolbarVisible(formatToolbarVisible, false);
   if (!current.active) editorPresentation(false, false, false);
-  resetHistory(); $('disk-banner').hidden = true; saveStatus = null; updateTitle(); updateStats(); setOutline(outlineVisible);
+  $('disk-banner').hidden = true; saveStatus = null; updateTitle(); updateStats(); setOutline(outlineVisible);
   $('folder-empty').hidden = current.active || !activeFolder;
   syncFolderSelection();
-  previewLimitedKind = null; syncSourceFallback();
 }
 function showWelcome() {
   editor?.destroy(); editor = null; editorDocument = null; cancelMermaidPending();
@@ -141,7 +149,6 @@ function showWelcome() {
   document.querySelectorAll('.document-control').forEach(control => { control.hidden = true; });
   setFormatToolbarVisible(formatToolbarVisible, false); editorPresentation(false, false, false);
   saveStatus = null; updateTitle(); updateStats();
-  previewLimitedKind = null; syncSourceFallback();
 }
 function goHome() {
   return enqueue(async () => {
@@ -230,23 +237,26 @@ function setupSidebarResize(sidebarId, dividerId, key, defaultWidth, styleName =
 }
 setupSidebarResize('file-browser', 'folder-divider', 'folder', 250);
 setupSidebarResize('outline', 'outline-divider', 'outlineWidth', 248, 'outline');
-async function setMode(next) {
+// The shell always shows the formatted editor; opening a document only needs
+// the editor mounted and the find matches refreshed.
+async function refreshEditorSurface() {
   if (!current.active) return;
   editor?.captureSelection?.();
   await renderPreview();
-  editor?.setPresentation(next === 'edit', true);
+  // Opening a document puts the caret in the editor. Without this the page
+  // has no focused editing host, and a native drag that crosses into a
+  // rendered block collapses instead of spanning it.
+  editor?.focus();
   if (!$('find-bar').hidden) updateFind();
 }
-function requestMode(next) { return enqueue(() => setMode(next)); }
 function readerScrollAnchor() {
   if (!current.active) return null;
   const scroller = $('reader-scroll');
   if (!scroller || scroller.hidden) return null;
   const box = scroller.getBoundingClientRect();
-  const source = editor?.isSource?.();
   // The reader centers its text column, so probing from the scroller's own
   // edge would land in the side gutter and resolve to the scroller itself.
-  const column = (source ? $('source-editor') : $('preview')).getBoundingClientRect();
+  const column = $('preview').getBoundingClientRect();
   const left = Math.max(box.left, column.left);
   const x = Math.max(left + 1, Math.min(left + 64, box.right - 1));
   const y = Math.min(box.top + 24, box.bottom - 1);
@@ -255,10 +265,9 @@ function readerScrollAnchor() {
   for (const offset of [0, 16, 32, 48]) {
     const hit = document.elementFromPoint(x, Math.min(y + offset, box.bottom - 1));
     if (!hit) continue;
-    const block = source ? hit.closest('#source-editor .cm-line') : hit.closest('.ProseMirror > *');
+    const block = hit.closest('.ProseMirror > *');
     if (block) return block;
   }
-  if (source) return $('source-editor').querySelector('.cm-content');
   return $('preview').querySelector('.ProseMirror > *') || null;
 }
 function zoomText(delta, reset = false) {
@@ -308,7 +317,7 @@ function ask(title, message, choices) {
   });
 }
 async function allowDiscard() {
-  if (current.active && mode === 'edit') await commitInlineEdit();
+  
   if (!dirty()) return true;
   const result = await ask('Save your changes?', `“${current.name}” has changes that haven't been saved.`, [
     { label: 'Cancel', value: 'cancel' }, { label: 'Discard', value: 'discard', style: 'destructive' }, { label: 'Save', value: 'save', style: 'suggested' }
@@ -339,7 +348,7 @@ async function openPath(path, confirmed = false) {
     if (activeFolder && !samePath(document.path, activeFolder.path) && !isWithin(document.path, activeFolder.path)) { activeFolder = null; folderEntries = []; expandedFolders.clear(); }
     if (activeFolder) expandParentsOf(document.path);
     setLineEnding(document.lineEnding || null);
-    showDocument(); $('reader-scroll').scrollTop = 0; await setMode('read'); addRecent(current.path); return true;
+    showDocument(); $('reader-scroll').scrollTop = 0; await refreshEditorSurface(); addRecent(current.path); return true;
   } finally {
     setTransitionLocked(false);
   }
@@ -573,7 +582,6 @@ function requestOpenLocation(path) {
 }
 async function save(saveAs = false, force = false) {
   if (!current.active) return false;
-  if (mode === 'edit') await commitInlineEdit();
   editor?.checkpoint();
   const snapshot = current.content;
   status('Saving…'); saveStatus = 'saving'; updateTitle();
@@ -612,7 +620,7 @@ function newDocument(sample = false) {
       const content = sample ? SAMPLE : '';
       current = { path: null, name: sample ? 'Welcome.md' : 'Untitled.md', content, saved: content, active: true };
       setLineEnding(null);
-      showDocument(); $('reader-scroll').scrollTop = 0; await setMode('read'); if (!sample) editor?.focus();
+      showDocument(); $('reader-scroll').scrollTop = 0; await refreshEditorSurface(); if (!sample) editor?.focus();
     } finally {
       setTransitionLocked(false);
     }
@@ -642,7 +650,6 @@ function allCommands() {
   if (current.active) commands.splice(2, 0,
     { label: 'Save', icon: 'save', shortcut: 'Ctrl+S', action: () => requestSave() },
     { label: 'Save as…', icon: 'save', shortcut: 'Ctrl+Shift+S', action: () => requestSave(true) },
-    { label: mode === 'edit' ? 'Show formatted view' : 'Show Markdown source', icon: 'edit', shortcut: 'Ctrl+E', action: () => requestMode(mode === 'edit' ? 'read' : 'edit') },
     { label: editor?.isLocked() ? 'Unlock document' : 'Lock document', icon: 'read', action: () => editor?.setLocked(!editor.isLocked()) },
     { label: 'Source snapshot', icon: 'file', action: openSourceSnapshot },
     { label: 'Undo', icon: 'edit', shortcut: 'Ctrl+Z', action: () => enqueue(() => undoRedo()) },
@@ -753,7 +760,8 @@ function nextFind(direction) {
 function closeFind() { $('find-bar').hidden = true; clearHighlights(); editor?.focus(); }
 function toggleFocus() { document.body.classList.toggle('focus-mode'); }
 function setDocumentWidth(full, persist = true) {
-  const anchor = current.active ? previewElementForBlock(previewBlockAtViewportTop()) : null;
+  // Anchor on what the reader is actually looking at, not on the first block.
+  const anchor = current.active ? readerScrollAnchor() : null;
   const previousTop = anchor?.getBoundingClientRect().top;
   wideLayout = Boolean(full);
   root.dataset.documentWidth = wideLayout ? 'full' : 'centered';
@@ -895,11 +903,10 @@ document.addEventListener('keydown', event => {
   else if (event.code === 'Minus' || key === '-' || key === '_') { event.preventDefault(); event.shiftKey ? zoomText(-1) : zoomWindow(-.1); }
   else if (key === '0') { event.preventDefault(); event.shiftKey ? zoomText(0, true) : zoomWindow(0, true); }
   else if (key === 'o') { event.preventDefault(); openEntry(); }
-  else if (key === 'b' && editor && event.target.closest?.('#source-editor .cm-content')) { event.preventDefault(); editor.command('bold'); }
+  else if (key === 'b' && editor && (event.target.closest?.('#preview .ProseMirror') || event.target.closest?.('#preview'))) { event.preventDefault(); editor.command('bold'); }
   else if (key === 'b' && activeFolder && !event.target.closest?.('#preview .ProseMirror')) { event.preventDefault(); setFolderVisible(!folderVisible); }
   else if (key === 'n') { event.preventDefault(); newDocument(); }
   else if (key === 's') { event.preventDefault(); requestSave(event.shiftKey); }
-  else if (key === 'e') { event.preventDefault(); enqueue(() => setMode(mode === 'read' ? 'edit' : 'read')); }
   else if (key === 'f') { event.preventDefault(); openFind(); }
   else if (key === 'w') { event.preventDefault(); requestClose(); }
 });
@@ -921,7 +928,6 @@ Use the search button in the header, or **Ctrl+Shift+P**, to open the command wi
 | Action | Shortcut |
 | :--- | :--- |
 | Open a file or folder | Ctrl+O |
-| Switch Formatted / Markdown | Ctrl+E |
 | Save | Ctrl+S |
 | Zoom the whole app | Ctrl+= / Ctrl+- |
 | Change document text size | Ctrl+Shift+= / Ctrl+Shift+- |

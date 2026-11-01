@@ -11,7 +11,7 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
   const session = await openIsolatedEditor(source, bundle.outfile, { width: 900, height: 620 });
   const { page, errors } = session;
   try {
-    await page.waitForFunction(() => !editor.isSource());
+    await page.locator('#preview .ProseMirror').waitFor({ state: 'visible' });
     await page.evaluate(() => editor.selectRange(10, 10, true));
     await page.keyboard.press('Shift+Enter');
     await page.waitForFunction(() => current.content === '# H\n\nAlpha\\\n beta\n');

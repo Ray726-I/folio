@@ -24,7 +24,7 @@ const { openEditor } = require('./editor-browser.cjs');
 
     const clean = {
       state: await box('save-state'),
-      viewSwitch: await box('view-switch'),
+      viewMenu: await box('view-menu-button'),
       lock: await box('lock-document'),
       save: await box('save'),
       palette: await box('palette-open'),
@@ -63,7 +63,7 @@ const { openEditor } = require('./editor-browser.cjs');
 
     const dirty = {
       state: await box('save-state'),
-      viewSwitch: await box('view-switch'),
+      viewMenu: await box('view-menu-button'),
       lock: await box('lock-document'),
       save: await box('save'),
       palette: await box('palette-open'),
@@ -79,8 +79,8 @@ const { openEditor } = require('./editor-browser.cjs');
       dirty.state.width <= 72,
       `dirty save-state must stay compact (got ${dirty.state.width}px, old gap was 116px)`,
     );
-    // Neighbors must not shift: view switch, lock, save, palette stay put.
-    for (const key of ['viewSwitch', 'lock', 'save', 'palette']) {
+    // Neighbors must not shift: view menu, lock, save, palette stay put.
+    for (const key of ['viewMenu', 'lock', 'save', 'palette']) {
       assert.ok(
         Math.abs(dirty[key].x - clean[key].x) <= 1.5,
         `${key} shifted by ${(dirty[key].x - clean[key].x).toFixed(2)}px when save state changed`,

@@ -46,13 +46,7 @@ const source = [
     await page.waitForFunction(() => document.querySelector('.code-container[data-language="js"] .code-highlight')?.textContent.includes('const extra = 1;'));
     assert.ok((await text()).includes('const extra = 1;'), 'typing must round-trip to the Markdown source');
 
-    // Source presentation shares the same exact buffer, and switching back
-    // keeps the highlighted editable projection.
-    await page.locator('#show-markdown').click();
-    await page.locator('#source-editor .cm-content').waitFor({ state: 'visible' });
-    assert.ok((await text()).includes('const extra = 1;'));
-    await page.locator('#view-formatted').click();
-    await js.locator('.code-highlight span').first().waitFor();
+    // Markdown mode removed in the single-editor migration.
 
     // Mermaid keeps its diagram treatment and has no code highlight layer.
     const mermaid = page.locator('.code-container[data-language="mermaid"]');
@@ -67,7 +61,7 @@ const source = [
     assert.ok((await html.locator('.code-highlight code').innerText()).includes('<img src=x onerror="window.__xss = true">'));
 
     assert.deepEqual(errors, []);
-    console.log('PASS: rich fenced code keeps editable source while showing safe native token highlighting; Mermaid and source round-trip are unaffected.');
+    console.log('PASS: rich fenced code keeps editable source while showing safe native token highlighting; Mermaid is unaffected.');
   } catch (error) {
     console.error('PAGE ERRORS:', errors, 'URL:', page.url());
     console.error(await page.locator('#toast').textContent({ timeout: 1000 }).catch(() => 'App document is unavailable'));

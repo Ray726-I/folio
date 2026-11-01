@@ -7,7 +7,7 @@ const source = '# Zoom anchor\n\n' + Array.from({ length: 80 }, (_, index) => `P
   const session = await openEditor(source, { width: 1000, height: 700 });
   const { page, errors } = session;
   try {
-    await page.waitForFunction(() => !busy && editor && !editor.isSource());
+    await page.locator('#preview .ProseMirror').waitFor({ state: 'visible' });
     await page.evaluate(() => { const scroller = document.getElementById('reader-scroll'); scroller.style.scrollBehavior = 'auto'; scroller.scrollTop = 1800; });
     await page.waitForFunction(() => document.getElementById('reader-scroll').scrollTop > 1000);
 

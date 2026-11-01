@@ -139,24 +139,7 @@ function waitForRichFindVisible(page, needle) {
     await page.locator('#find-input').fill(FIND);
     await page.waitForFunction(() => document.getElementById('find-result').textContent.trim() === '1 / 1');
 
-    // The selected range must survive the source presentation round trip.
-    await page.locator('#show-markdown').click();
-    await page.waitForFunction(() => !busy && mode === 'edit');
-    await page.waitForFunction(needle => [...document.querySelectorAll('#source-editor .cm-line')]
-      .some(item => item.textContent.includes(needle)), FIND);
-    const source = await page.evaluate(needle => {
-      const from = current.content.indexOf(needle);
-      return { content: current.content, selection: editor.getSelection(), from, to: from + needle.length };
-    }, FIND);
-    assert.deepEqual(source.selection, { anchor: source.from, head: source.to },
-      'find selection must stay exact when moving to Markdown');
-
-    await page.locator('#view-formatted').click();
-    await page.waitForFunction(() => !busy && mode === 'read');
-    const back = await richFindState(page, FIND);
-    assert.equal(back.locked, false);
-    assert.deepEqual(back.selection, { anchor: found.from, head: found.to },
-      'find selection must stay exact when returning to the rich view');
+    // Markdown mode removed in the single-editor migration.
 
     // Locking protects edits, not navigation: find must still select and reveal.
     await page.evaluate(() => editor.setLocked(true));
@@ -170,6 +153,6 @@ function waitForRichFindVisible(page, needle) {
     assert.ok(locked.scrollTop > found.scrollTop, 'locked find must still scroll to its offscreen match');
 
     assert.deepEqual(errors, []);
-    console.log('PASS: rich find selects exactly, reveals offscreen matches, and survives mode/lock changes.');
+    console.log('PASS: rich find selects exactly, reveals offscreen matches, and survives lock changes.');
   } finally { await session.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

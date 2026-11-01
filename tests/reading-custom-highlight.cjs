@@ -100,25 +100,9 @@ async function highlightState(page) {
     assert.equal(cleared.registered, false, 'collapse clears the registry');
     assert.equal(cleared.painted, false, 'collapse removes the paint class');
 
-    // 5. Clear on hidden source presentation: the mirror never paints the
-    // hidden rich surface once editing switches to the source buffer.
-    await page.mouse.move(points.from.x, points.from.y);
-    await page.mouse.down();
-    await page.mouse.move(points.to.x, points.to.y, { steps: 12 });
-    await page.mouse.up();
-    await page.waitForTimeout(300);
-    assert.equal((await highlightState(page)).registered, true, 'mirror re-engages for the next drag');
-    await page.locator('#show-markdown').click();
-    await page.locator('#source-editor .cm-content').waitFor({ state: 'visible' });
-    assert.equal(await page.evaluate(() => editor.isSource()), true, 'source presentation shown');
-    const inSource = await highlightState(page);
-    assert.equal(inSource.registered, false, 'source presentation clears the registry');
-    assert.equal(inSource.painted, false, 'source presentation removes the paint class');
-    await page.locator('#view-formatted').click();
-    await page.waitForFunction(() => !editor.isSource());
-    await page.waitForTimeout(400);
+    // Markdown mode removed in the single-editor migration.
 
-    // 6. Clear on node selection: clicking an inline atom takes the PM node
+    // 5. Clear on node selection: clicking an inline atom takes the PM node
     // path (hidden selection + outline), never the text mirror.
     await page.locator('#preview .html-inline').first().click();
     await page.waitForTimeout(300);
@@ -127,7 +111,7 @@ async function highlightState(page) {
     assert.equal(onNode.registered, false, 'node selection keeps the registry clear');
     assert.equal(onNode.painted, false, 'node selection keeps the paint class off');
 
-    // 7. Fallback: without the Highlight API the reader keeps ordinary
+    // 6. Fallback: without the Highlight API the reader keeps ordinary
     // native painting with no mirror machinery engaged.
     await page.addInitScript(() => { try { delete window.Highlight; } catch {} });
     await page.reload();
@@ -150,7 +134,7 @@ async function highlightState(page) {
     assert.equal(await page.evaluate(() => current.content), source, 'fallback drag never mutates the document');
 
     assert.deepEqual(session.errors, []);
-    console.log('PASS: custom highlight mirror activates on reading ranges, preserves the real selection and clipboard, and clears on collapse, source presentation, node selection and API fallback.');
+    console.log('PASS: custom highlight mirror activates on reading ranges, preserves the real selection and clipboard, and clears on collapse, node selection and API fallback.');
   } catch (error) {
     console.error('PAGE ERRORS:', session.errors);
     await session.page.screenshot({ path: '/tmp/opencode/folio-custom-highlight-failure.png', fullPage: true }).catch(() => {});

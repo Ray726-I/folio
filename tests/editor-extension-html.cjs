@@ -12,7 +12,7 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
   const session = await openIsolatedEditor(source, bundle.outfile, { width: 900, height: 620 });
   const { page, errors, requests } = session;
   try {
-    await page.waitForFunction(() => !editor.isSource());
+    await page.locator('#preview .ProseMirror').waitFor({ state: 'visible' });
     await page.waitForFunction(() => document.querySelector('.extension-preview p')?.textContent === 'Visible safe HTML text');
 
     const state = await page.evaluate(() => {

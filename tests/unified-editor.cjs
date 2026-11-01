@@ -37,11 +37,9 @@ const fixture = process.env.FOLIO_FIXTURE || path.resolve('target/debug/examples
   try {
     await page.goto(pathToFileURL(path.resolve('ui/index.html')).href);
     await page.waitForFunction(() => typeof busy !== 'undefined' && !busy);
-    assert.equal(await page.locator('#show-markdown').count(), 1, 'explicit Markdown segment is present');
-    assert.equal(await page.locator('#view-formatted').count(), 1, 'explicit Formatted segment is present');
     await page.locator('#preview .ProseMirror').waitFor();
-    assert.equal(await page.locator('#view-formatted').getAttribute('aria-pressed'), 'true');
-    assert.equal(await page.locator('#show-markdown').getAttribute('aria-pressed'), 'false');
+    assert.equal(await page.locator('#view-switch').count(), 0, 'the Markdown/Formatted mode switch is gone');
+    assert.equal(await page.locator('#source-editor').count(), 0, 'no second editor surface exists');
     assert.equal(await page.evaluate(() => current.content), source, 'opening preserves exact Markdown');
     await page.locator('#preview h1').click();
     await page.keyboard.press('End'); await page.keyboard.type(' edited');
@@ -57,14 +55,14 @@ const fixture = process.env.FOLIO_FIXTURE || path.resolve('target/debug/examples
     assert.equal(await page.locator('#preview tr').first().locator('th,td').first().evaluate(el => getComputedStyle(el).textAlign), 'center', 'center-aligned table delimiter opens in the rich view');
     const edges = await page.locator('#preview tr').evaluateAll(rows => rows.map(row => [...row.cells].map(c => c.getBoundingClientRect().left)));
     assert.ok(Math.max(...edges.map(row => row[1])) - Math.min(...edges.map(row => row[1])) < 2, 'rich-table columns align');
-    const beforeToggle = await page.evaluate(() => current.content);
-    await page.locator('#show-markdown').click();
-    await page.locator('#source-editor .cm-editor').waitFor({ state: 'visible' });
-    assert.equal(await page.evaluate(() => current.content), beforeToggle, 'toggle does not rewrite source');
-    await page.keyboard.type('Y');
+    // Editing stays in the one surface: no presentation switch can rewrite or
+    // remap the document behind the user's back.
+    const beforeEdit = await page.evaluate(() => current.content);
+    await cell.click(); await page.keyboard.press('End'); await page.keyboard.type('Y');
     assert.ok((await page.evaluate(() => current.content)).includes('Y'));
-    await page.locator('#view-formatted').click();
-    assert.ok((await page.locator('#preview td').first().innerText()).includes('Y'), 'source caret maps back to the same cell');
+    assert.equal(await page.evaluate(() => editor.isSource()), false, 'there is no source presentation to switch into');
+    await page.keyboard.press('Control+z');
+    assert.equal(await page.evaluate(() => current.content), beforeEdit);
     await page.locator('#view-menu-button').click();
     await page.locator('#source-snapshot').click();
     const snapshot = await page.locator('#source-snapshot-text').inputValue();
@@ -84,7 +82,7 @@ const fixture = process.env.FOLIO_FIXTURE || path.resolve('target/debug/examples
     assert.equal(await page.locator('#dirty-dot').isVisible(), false);
     assert.deepEqual(errors, []);
     await page.screenshot({ path: path.join(os.tmpdir(), 'folio-unified-app.png'), fullPage: true });
-    console.log('PASS: real unified rich/source editing, tasks, aligned tables, shared undo, exact snapshot, lock, image privacy and save.');
+    console.log('PASS: single formatted editor with tasks, aligned tables, shared undo, exact snapshot, lock, image privacy and save.');
   } catch (error) {
     console.error('PAGE ERRORS:', errors);
     console.error('APP:', await page.locator('#toast').textContent().catch(() => ''));

@@ -44,15 +44,12 @@ async function assertPendingReplacementRejected(page, before, label) {
 async function editorDomState(page) {
   return page.evaluate(() => {
     const rich = document.querySelector('#preview .ProseMirror');
-    const source = document.querySelector('#source-editor .cm-content');
     const visible = node => Boolean(node && node.getClientRects().length);
     return {
       mode,
       richVisible: visible(rich),
-      sourceVisible: visible(source),
       richText: rich?.textContent ?? '',
-      richStrong: rich?.querySelectorAll('strong').length ?? 0,
-      sourceText: source?.textContent ?? ''
+      richStrong: rich?.querySelectorAll('strong').length ?? 0
     };
   });
 }
@@ -64,26 +61,7 @@ async function pasteInto(page, selector, text) {
   }, { selector, text });
 }
 
-async function presentationToggle() {
-  const session = await openEditor('# Title\n\nA paragraph.\n');
-  try {
-    const { page } = session;
-    await page.locator('#preview p').click();
-    await page.keyboard.press('End');
-    await page.keyboard.press('Control+e');
-    await page.waitForFunction(() => !busy && mode === 'edit');
-    assert.equal(await page.locator('#source-editor .cm-content').evaluate(node => node.contains(document.activeElement)), true,
-      'Ctrl+E must focus the new presentation so typing continues without another click');
-    await page.keyboard.type('SOURCE');
-    assert.equal(await page.evaluate(() => current.content), '# Title\n\nA paragraph.SOURCE\n');
-    await page.keyboard.press('Control+e');
-    await page.waitForFunction(() => !busy && mode === 'read');
-    await page.keyboard.type('RICH');
-    assert.equal(await page.evaluate(() => current.content), '# Title\n\nA paragraph.SOURCERICH\n');
-    assert.deepEqual(session.errors, []);
-    console.log('PASS: keyboard presentation toggle keeps typing focus and caret in both directions.');
-  } finally { await session.close(); }
-}
+// Markdown mode removed in the single-editor migration.
 
 // Acceptance scenario 1: clean A, B's native open deferred after the discard
 // guard, rich input/undo/formatting must not mutate A.
@@ -134,56 +112,7 @@ async function richPendingOpen() {
   } finally { await session.close(); }
 }
 
-// Acceptance scenario 1 (source presentation): clean A in Markdown presentation,
-// B deferred; CodeMirror input must not mutate A.
-async function sourcePendingOpen() {
-  const session = await openEditor(A);
-  const { page } = session;
-  try {
-    await page.locator('#preview p').click();
-    await page.keyboard.press('End');
-    await page.keyboard.press('Control+e');
-    await page.waitForFunction(() => !busy && mode === 'edit');
-    await page.locator('#source-editor .cm-content').click();
-    const before = await snapshot(page);
-    assert.equal(before.path, A_PATH);
-    assert.equal(before.dirty, false);
-    assert.equal(await page.evaluate(() => editor.isSource()), true);
-
-    await session.holdOpen(B_PATH, B);
-    await page.evaluate(path => { void requestOpen(path); }, B_PATH);
-    await waitForPendingOpen(page, B_PATH);
-    assert.equal(await page.locator('#source-editor .cm-content').evaluate(node => node.contains(document.activeElement)), true,
-      'Markdown editor must retain focus before testing rejected keyboard input');
-
-    await page.keyboard.type('MARKDOWN');
-    await assertPendingOpenRejected(page, before, 'Markdown source typing');
-
-    await page.evaluate(() => editor.undo());
-    await assertPendingOpenRejected(page, before, 'Markdown source undo');
-
-    await session.releaseOpen(B_PATH);
-    await page.waitForFunction(path => current.path === path && !busy, B_PATH);
-    const after = await snapshot(page);
-    assert.equal(after.path, B_PATH);
-    assert.equal(after.content, B);
-    assert.equal(after.text, B);
-    assert.equal(after.mode, 'read');
-    assert.equal(await page.evaluate(() => editor.isLocked()), false);
-    await page.locator('#preview p').click();
-    await page.keyboard.press('End');
-    await page.keyboard.press('Control+e');
-    await page.waitForFunction(() => !busy && mode === 'edit');
-    assert.equal(await page.locator('#source-editor .cm-content').evaluate(node => node.contains(document.activeElement)), true,
-      'Markdown editor must receive focus before testing resumed typing');
-    await page.keyboard.type('RESUMED');
-    const resumed = await snapshot(page);
-    assert.equal(resumed.content, '# Beta\n\nBeta paragraph.RESUMED\n');
-    assert.equal(resumed.text, resumed.content, 'the Markdown source editor must expose the resumed edit');
-    assert.deepEqual(session.errors, []);
-    console.log('PASS: pending native open rejects Markdown source typing and undo without mutating A, and B is editable afterwards.');
-  } finally { await session.close(); }
-}
+// Markdown mode removed in the single-editor migration.
 
 // Folder scans are async too: typing after the discard check but before the
 // scan resolves must not edit A, which is about to be replaced by the folder view.
@@ -442,15 +371,14 @@ async function transitionTaskAndRichPaste() {
   } finally { await session.close(); }
 }
 
-// Source presentation: paste and DOM state must also stay on A while B is pending.
-async function sourceTransitionPaste() {
+// Rich paste and undo must also stay on A, without changing the visible rich
+// DOM, while B is pending.
+async function richTransitionPaste() {
   const session = await openEditor(A);
   const { page } = session;
   try {
     await page.locator('#preview p').click();
-    await page.keyboard.press('Control+e');
-    await page.waitForFunction(() => !busy && mode === 'edit');
-    await page.locator('#source-editor .cm-content').click();
+    await page.keyboard.press('End');
     const before = await snapshot(page);
     const beforeDom = await editorDomState(page);
 
@@ -458,16 +386,17 @@ async function sourceTransitionPaste() {
     await page.evaluate(path => { void requestOpen(path); }, B_PATH);
     await waitForPendingOpen(page, B_PATH);
     await page.keyboard.type('NOPE');
-    await pasteInto(page, '#source-editor .cm-content', 'PASTED');
+    await page.keyboard.press('Control+a');
+    await pasteInto(page, '#preview .ProseMirror', 'PASTED');
     await page.evaluate(() => editor.undo());
-    await assertPendingOpenRejected(page, before, 'Source typing/paste/undo during transition');
-    assert.deepEqual(await editorDomState(page), beforeDom, 'source DOM must remain A during the transition');
+    await assertPendingOpenRejected(page, before, 'Rich typing/paste/undo during transition');
+    assert.deepEqual(await editorDomState(page), beforeDom, 'rich DOM must remain A during the transition');
 
     await session.rejectOpen(B_PATH, 'SIMULATED_OPEN_FAILURE');
     await page.waitForFunction(() => !busy);
-    assert.deepEqual(await editorDomState(page), beforeDom, 'source DOM must be restored after rejection');
+    assert.deepEqual(await editorDomState(page), beforeDom, 'rich DOM must be restored after rejection');
     assert.deepEqual(session.errors, []);
-    console.log('PASS: source typing, paste, and undo are rejected without changing the visible source DOM.');
+    console.log('PASS: rich typing, paste, and undo are rejected without changing the visible rich DOM.');
   } finally { await session.close(); }
 }
 
@@ -507,34 +436,33 @@ async function homePendingRejectsRichEdits() {
   } finally { await session.close(); }
 }
 
-// The source presentation is a separate mutation path; New must protect it too.
-async function newPendingRejectsSourceEdits() {
+// Rich input is also the only mutation path New must protect while the native
+// reset is pending.
+async function newPendingRejectsRichEdits() {
   const session = await openEditor(A);
   const { page } = session;
   try {
     await page.locator('#preview p').click();
     await page.keyboard.press('End');
-    await page.keyboard.press('Control+e');
-    await page.waitForFunction(() => !busy && mode === 'edit');
-    await page.locator('#source-editor .cm-content').click();
     const before = await snapshot(page);
     assert.equal(before.path, A_PATH);
     assert.equal(before.dirty, false);
-    assert.equal(await page.evaluate(() => editor.isSource()), true);
 
     await session.holdNewDocument();
     await page.evaluate(() => { void newDocument(); });
     await waitForPendingNewDocument(page);
     assert.equal((await snapshot(page)).path, A_PATH, 'A must remain current while New is pending');
-    assert.equal(await page.locator('#source-editor .cm-content').evaluate(node => node.contains(document.activeElement)), true,
-      'Markdown editor must retain focus before testing rejected keyboard input');
+    assert.equal(await page.locator('#preview .ProseMirror').evaluate(node => node.contains(document.activeElement)), true,
+      'rich editor must retain focus before testing rejected keyboard input');
 
-    await page.keyboard.type('MARKDOWN');
-    await assertPendingReplacementRejected(page, before, 'Markdown source typing while New is pending');
-    await pasteInto(page, '#source-editor .cm-content', 'PASTED');
-    await assertPendingReplacementRejected(page, before, 'Markdown source paste while New is pending');
+    await page.keyboard.type('RICH');
+    await assertPendingReplacementRejected(page, before, 'Rich typing while New is pending');
+    await page.locator('#preview .ProseMirror').focus();
+    await page.keyboard.press('Control+a');
+    await pasteInto(page, '#preview .ProseMirror', 'PASTED');
+    await assertPendingReplacementRejected(page, before, 'Rich paste while New is pending');
     await page.evaluate(() => editor.undo());
-    await assertPendingReplacementRejected(page, before, 'Markdown source undo while New is pending');
+    await assertPendingReplacementRejected(page, before, 'Rich undo while New is pending');
 
     await session.releaseNewDocument();
     await page.waitForFunction(() => !busy && current.active && current.name === 'Untitled.md');
@@ -548,7 +476,7 @@ async function newPendingRejectsSourceEdits() {
     await page.keyboard.type('FRESH');
     assert.match((await snapshot(page)).content, /FRESH/, 'the new document must accept edits after the transition');
     assert.deepEqual(session.errors, []);
-    console.log('PASS: pending New rejects Markdown source typing, paste, and undo without mutating A, then creates an editable document.');
+    console.log('PASS: pending New rejects rich typing, paste, and undo without mutating A, then creates an editable document.');
   } finally { await session.close(); }
 }
 
@@ -634,9 +562,9 @@ async function homeRejectionPreservesDocumentAndLock() {
 }
 
 const tests = {
-  presentationToggle, richPendingOpen, sourcePendingOpen, folderPendingOpen, folderRejectedOpenPreservesLock,
+  richPendingOpen, folderPendingOpen, folderRejectedOpenPreservesLock,
   rejectedOpenCleanup, rejectionPreservesUserLock, richStoredMarkRejection, transitionEditorDomConsistency,
-  transitionTaskAndRichPaste, sourceTransitionPaste, homePendingRejectsRichEdits, newPendingRejectsSourceEdits,
+  transitionTaskAndRichPaste, richTransitionPaste, homePendingRejectsRichEdits, newPendingRejectsRichEdits,
   newRejectionPreservesDocumentAndLock, homeRejectionPreservesDocumentAndLock
 };
 (async () => {

@@ -382,51 +382,85 @@ export function createRichEditor(parent, options) {
   // stays the truth; these helpers only select the exact syntax range in the
   // shared source projection for direct typing. No modal, no separate edit
   // session. Lock and undo are preserved by the shell entry.
-  function revealLinkSource(from, to, href) {
-    if (options.isLocked() || !options.revealSource) return;
-    const needle = String(href || '');
-    const verified = verifiedSourceRange(from, to);
-    if (verified) {
-      if (needle) {
-        const start = model.source.indexOf(needle, verified.to);
-        if (start >= verified.to && start <= verified.to + needle.length + 10) {
-          options.revealSource(start, start + needle.length);
-          return;
-        }
-      }
-      options.revealSource(verified.from, verified.to);
-      return;
-    }
-    const mapped = richMapping(model, from, { bias: 'right' });
-    if (mapped && Number.isInteger(mapped.source)) {
-      if (needle) {
-        const start = model.source.indexOf(needle, mapped.source);
-        if (start >= mapped.source && start <= mapped.source + needle.length + 10) {
-          options.revealSource(start, start + needle.length);
-          return;
-        }
-      }
-      options.revealSource(mapped.source, mapped.source);
-    }
+  // Open a destination for editing in place. The exact Markdown range is
+  // replaced through the source-preserving commit; there is no mode switch.
+  async function editDestination({ title, current, from, to, fallbackFrom, fallbackTo }) {
+    if (options.isLocked()) return;
+    if (!options.editValue) { options.revealSource?.(fallbackFrom, fallbackTo); return; }
+    const next = await options.editValue({ title, value: current });
+    if (next === null || next === undefined || next === current) return;
+    const outcome = replaceLogicalSelection(next, 'command', { from, to, all: false, collapsed: false });
+    if (!outcome.committed) options.message?.('That change could not be applied to the Markdown source.');
   }
-  function revealAtomSource(pmPos, attrText) {
-    if (options.isLocked() || !options.revealSource) return;
+  // Locate an inline Markdown destination by syntax, not by searching for its
+  // decoded value (which may occur in the label or contain escaped characters).
+  function inlineDestination(open, limit) {
+    const source = model.source;
+    if (source.slice(open, open + 2) !== '](') return null;
+    let start = open + 2;
+    while (start < limit && /[ \t\n]/.test(source[start])) start++;
+    const angle = source[start] === '<';
+    if (angle) start++;
+    let depth = 0;
+    for (let i = start; i < limit; i++) {
+      const ch = source[i];
+      if (ch === '\\') { i++; continue; }
+      if (angle && ch === '>') return { from: start, to: i, current: source.slice(start, i) };
+      if (!angle && ch === '(') { depth++; continue; }
+      if (!angle && ch === ')' && depth > 0) { depth--; continue; }
+      if (!angle && (ch === ')' || /\s/.test(ch))) return { from: start, to: i, current: source.slice(start, i) };
+    }
+    return null;
+  }
+  function destinationRange(from, to) {
+    let verified = verifiedSourceRange(from, to);
+    if (!verified) {
+      const start = richMapping(model, from, { bias: 'right' });
+      const end = richMapping(model, to, { bias: 'left' });
+      if (!start.exact || !end.exact || !start.owner || start.owner.id !== end.owner?.id ||
+          start.source > end.source || model.source.slice(start.source, end.source) !== model.doc.textBetween(from, to)) return null;
+      verified = { from: start.source, to: end.source };
+    }
+    const close = model.source.indexOf('](', Math.max(verified.from, verified.to - 1));
+    if (close < 0 || close > verified.to + 1) return null;
+    return inlineDestination(close, model.source.length);
+  }
+  function revealLinkSource(from, to, href) {
+    if (options.isLocked()) return;
+    const range = destinationRange(from, to);
+    if (!range) { options.message?.('This link destination cannot be edited safely.'); return; }
+    void editDestination({ title: 'Edit link destination', ...range, fallbackFrom: range.from, fallbackTo: range.to });
+  }
+  function revealAtomSource(pmPos, attrText, image = false) {
+    if (options.isLocked()) return;
     const mapped = richMapping(model, pmPos, { bias: 'right' });
     const owner = mapped?.owner;
-    let from = owner?.sourceFrom, to = owner?.sourceTo;
-    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to > model.source.length || from >= to) {
-      if (Number.isInteger(mapped?.source)) options.revealSource(mapped.source, mapped.source);
-      return;
-    }
     const needle = String(attrText ?? '');
-    if (needle) {
-      const inner = model.source.indexOf(needle, from);
-      if (inner >= from && inner + needle.length <= to) {
-        options.revealSource(inner, inner + needle.length);
-        return;
+    let chosen = null;
+    if (owner && Number.isInteger(owner.sourceFrom) && Number.isInteger(owner.sourceTo) && owner.sourceFrom < owner.sourceTo) {
+      if (image) {
+        const source = model.source;
+        let depth = 0, close = -1;
+        if (source.slice(owner.sourceFrom, owner.sourceFrom + 2) === '![') {
+          for (let i = owner.sourceFrom + 2; i < owner.sourceTo; i++) {
+            if (source[i] === '\\') { i++; continue; }
+            if (source[i] === '[') depth++;
+            else if (source[i] === ']') { if (depth) depth--; else { close = i; break; } }
+          }
+        }
+        chosen = close < 0 ? null : inlineDestination(close, owner.sourceTo);
+        if (!chosen) { options.message?.('This image destination cannot be edited safely.'); return; }
+      } else {
+      const inner = needle ? model.source.indexOf(needle, owner.sourceFrom) : -1;
+      chosen = inner >= owner.sourceFrom && inner + needle.length <= owner.sourceTo
+        ? { from: inner, to: inner + needle.length, current: needle }
+        : { from: owner.sourceFrom, to: owner.sourceTo, current: model.source.slice(owner.sourceFrom, owner.sourceTo) };
       }
+    } else if (Number.isInteger(mapped?.source)) {
+      chosen = { from: mapped.source, to: mapped.source, current: '' };
     }
-    options.revealSource(from, to);
+    if (!chosen) return;
+    void editDestination({ title: 'Edit source', ...chosen, fallbackFrom: chosen.from, fallbackTo: chosen.to });
   }
   function revealCurrentSelection() {
     if (options.isLocked() || !options.revealSource) return;
@@ -589,6 +623,11 @@ export function createRichEditor(parent, options) {
       if (!panel.hidden) { panel.hidden = true; render(); return; }
       input.value = node.attrs.tex; panel.hidden = false; input.focus();
     };
+    // A quiet affordance so editing is discoverable without a double-click.
+    // It is a real button: focusable, labelled, and disabled under Lock.
+    const edit = button('Edit formula', toggleEditor);
+    edit.classList.add('math-edit');
+    edit.setAttribute('aria-label', 'Edit formula'); edit.title = 'Edit formula';
     // One click selects the formula so a run of formulas can be selected
     // (shift-click, drag) without every click opening its editor. Editing is
     // the deliberate gesture: double-click, or Enter/Space on a focused formula.
@@ -606,7 +645,7 @@ export function createRichEditor(parent, options) {
       editor.dispatch(state.tr.setSelection(TextSelection.create(state.doc, from, to)));
     });
     formula.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleEditor(); } });
-    dom.append(formula, panel); let generation = 0;
+    dom.append(formula, edit, panel); let generation = 0;
     const render = async () => {
       const tex = panel.hidden ? node.attrs.tex : input.value;
       const current = ++generation; formula.textContent = tex; formula.classList.remove('math-error');
@@ -616,7 +655,7 @@ export function createRichEditor(parent, options) {
     };
     input.addEventListener('input', render);
     cancel.addEventListener('click', render);
-    render(); const refresh = () => { formula.setAttribute('aria-disabled', String(options.isLocked())); input.disabled = options.isLocked(); apply.disabled = options.isLocked(); }; refreshers.add(refresh);
+    render(); const refresh = () => { formula.setAttribute('aria-disabled', String(options.isLocked())); edit.disabled = options.isLocked(); input.disabled = options.isLocked(); apply.disabled = options.isLocked(); }; refreshers.add(refresh);
     return { dom, update(next) { if (next.type !== node.type) return false; if (next.sameMarkup(node) && next.textContent === node.textContent) { node = next; return true; } node = next; render(); return true; }, stopEvent: event => {
       // The local editor's own controls keep their events; pointer events on
       // the formula itself must reach the editor so a single click selects the
@@ -632,7 +671,7 @@ export function createRichEditor(parent, options) {
       if (options.isLocked()) return;
       let pos = null;
       try { pos = getPos(); } catch { pos = null; }
-      if (pos != null) revealAtomSource(pos, node.attrs.src);
+      if (pos != null) revealAtomSource(pos, node.attrs.src, true);
       else revealCurrentSelection();
     });
     edit.setAttribute('aria-label', 'Edit image'); edit.title = 'Edit image source';
@@ -1305,8 +1344,26 @@ export function createRichEditor(parent, options) {
     // the guard here as a backstop; in-editor drags are guarded centrally.
     projection.addEventListener('mousemove', event => { if (event.buttons & 1) setSelectionGuarded(true); });
     const actions = document.createElement('div'); actions.className = 'extension-actions';
-    const edit = button(/^---\n/.test(node.textContent) ? 'Edit front matter' : 'Edit source', () => {
+    const editLabel = /^---\n/.test(node.textContent) ? 'Edit front matter' : 'Edit source';
+    // In-place source editing: this block's literal Markdown opens in a
+    // textarea inside the block and commits through the exact source splice,
+    // so editing never requires switching the whole document to a text engine.
+    const panel = document.createElement('div'); panel.className = 'extension-source-editor'; panel.hidden = true;
+    const sourceInput = document.createElement('textarea');
+    sourceInput.setAttribute('aria-label', `${editLabel} for this block`);
+    sourceInput.spellcheck = false;
+    sourceInput.rows = Math.min(24, Math.max(3, node.textContent.split('\n').length));
+    const commitSource = () => {
       if (options.isLocked()) return;
+      const frame = sourceFrame();
+      if (!frame) { options.message('Could not safely locate this block in the source.'); return; }
+      if (sourceInput.value === model.source.slice(frame.from, frame.to)) { panel.hidden = true; edit.focus(); return; }
+      const outcome = replaceLogicalSelection(sourceInput.value, 'command', { from: frame.from, to: frame.to, all: false, collapsed: false });
+      if (outcome.committed) { panel.hidden = true; editor.focus(); }
+    };
+    // Only reachable when the ledger cannot prove an exact byte range for this
+    // block. Kept until the source presentation is removed.
+    const revealFallback = () => {
       let pos = null;
       try { pos = getPos(); } catch { pos = null; }
       if (pos != null) {
@@ -1325,12 +1382,28 @@ export function createRichEditor(parent, options) {
         } catch {}
       }
       revealCurrentSelection();
+    };
+    const edit = button(editLabel, () => {
+      if (options.isLocked()) return;
+      const frame = sourceFrame();
+      if (!frame) { revealFallback(); return; }
+      sourceInput.value = model.source.slice(frame.from, frame.to);
+      panel.hidden = false;
+      sourceInput.focus();
+      sourceInput.select();
     });
     edit.classList.add('extension-edit');
-    edit.setAttribute('aria-label', /^---\n/.test(node.textContent) ? 'Edit front matter source' : 'Edit Markdown source');
-    edit.title = 'Edit source in Markdown view';
+    edit.setAttribute('aria-label', `${editLabel} for this block`);
+    edit.title = 'Edit this block’s Markdown in place';
+    sourceInput.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { event.preventDefault(); panel.hidden = true; edit.focus(); return; }
+      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); commitSource(); }
+    });
+    const applySource = button('Apply', commitSource);
+    const cancelSource = button('Cancel', () => { panel.hidden = true; edit.focus(); });
+    panel.append(sourceInput, applySource, cancelSource);
     actions.append(edit);
-    dom.append(projection, actions);
+    dom.append(projection, actions, panel);
     let generation = 0;
     let mountedSource = null;
     function invalidateTasks() {
@@ -1341,7 +1414,7 @@ export function createRichEditor(parent, options) {
     // text and the live model source must agree on the exact byte slice before
     // any checkbox is enabled; a stale projection or a remapped ledger fails
     // closed and leaves the native disabled state in place.
-    function taskFrame() {
+    function sourceFrame() {
       let pos = null;
       try { pos = getPos(); } catch { return null; }
       if (pos == null) return null;
@@ -1362,11 +1435,16 @@ export function createRichEditor(parent, options) {
       const to = owner.sourceFrom + node.textContent.length;
       if (to > owner.sourceTo) return null;
       if (model.source.slice(owner.sourceFrom, to) !== node.textContent) return null;
+      return { from: owner.sourceFrom, to };
+    }
+    function taskFrame() {
+      const frame = sourceFrame();
+      if (!frame) return null;
       // renderExtension selects the projection by the first occurrence of this
       // literal. If an identical raw slice appears earlier, the rendered
       // controls do not provably belong to this node, so disable them.
-      if (model.source.indexOf(node.textContent) !== owner.sourceFrom) return null;
-      return { from: owner.sourceFrom, to };
+      if (model.source.indexOf(node.textContent) !== frame.from) return null;
+      return frame;
     }
     function taskMarkerAt(index) {
       if (mountedSource !== node.textContent) return null;
@@ -1439,16 +1517,17 @@ export function createRichEditor(parent, options) {
         lastRemote = remote; generation++; invalidateTasks();
         if (!remote) projection.querySelectorAll('img').forEach(img => { img.removeAttribute('srcset'); img.removeAttribute('src'); });
       }
-      edit.disabled = options.isLocked(); syncEditability(); syncTaskControls(); Promise.resolve().then(render);
+      edit.disabled = options.isLocked(); applySource.disabled = options.isLocked(); sourceInput.disabled = options.isLocked();
+      if (options.isLocked()) panel.hidden = true;
+      syncEditability(); syncTaskControls(); Promise.resolve().then(render);
     };
     refreshers.add(refresh); refresh();
     const removeListeners = () => { refreshers.delete(refresh); };
     // Atom view: the literal source is not mounted in the reading DOM, so no
-    // duplicate selectable text exists here. All source edits go through the
-    // explicit source presentation via the edit action above; task checkboxes
-    // are the one bounded exception, because their whole state is one marker
-    // character in the exact raw slice.
-    return { dom, update(next) { if (next.type !== node.type) return false; const same = next.sameMarkup(node) && next.textContent === node.textContent; if (!same) { generation++; invalidateTasks(); } node = next; if (!same) Promise.resolve().then(render); return true; }, ignoreMutation: () => true, stopEvent: event => event.target.closest?.('button, input[type="checkbox"]') != null, destroy() { generation++; removeListeners(); } };
+    // duplicate selectable text exists here. Source edits go through the
+    // in-place panel above; task checkboxes are the one bounded exception,
+    // because their whole state is one marker character in the exact raw slice.
+    return { dom, update(next) { if (next.type !== node.type) return false; const same = next.sameMarkup(node) && next.textContent === node.textContent; if (!same) { generation++; invalidateTasks(); } node = next; if (!same) Promise.resolve().then(render); return true; }, ignoreMutation: () => true, stopEvent: event => event.target.closest?.('.extension-source-editor, button, input[type="checkbox"]') != null, destroy() { generation++; removeListeners(); } };
   }
   const safeDestination = value => {
     const destination = String(value || '');

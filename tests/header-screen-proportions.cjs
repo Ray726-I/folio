@@ -5,17 +5,13 @@ const { openEditor } = require('./editor-browser.cjs');
   try {
     const { page } = session;
     await page.evaluate(() => Object.defineProperty(window.screen, 'availWidth', { configurable: true, value: 1920 }));
-    for (const [width, icons, hideSaved] of [[1400, false, false], [1250, true, false], [1000, true, true]]) {
+    // The Formatted/Markdown mode switch was removed, so only the compact save
+    // state remains to verify against screen-relative width.
+    for (const [width, hideSaved] of [[1400, false], [1250, false], [1000, true]]) {
       await page.setViewportSize({ width, height: 800 });
       await page.evaluate(() => window.dispatchEvent(new Event('resize')));
-      const result = await page.evaluate(() => ({
-        label: getComputedStyle(document.querySelector('#view-formatted span')).display,
-        icon: getComputedStyle(document.querySelector('#view-formatted svg')).display,
-        saved: getComputedStyle(document.querySelector('#save-state')).clipPath,
-      }));
-      assert.equal(result.label === 'none', icons, `mode label at ${width}px`);
-      assert.equal(result.icon !== 'none', icons, `mode icon at ${width}px`);
-      assert.equal(result.saved === 'inset(50%)', hideSaved, `saved text at ${width}px`);
+      const saved = await page.locator('#save-state').evaluate(node => getComputedStyle(node).clipPath);
+      assert.equal(saved === 'inset(50%)', hideSaved, `saved text at ${width}px`);
     }
     const clip = () => page.locator('#save-state').evaluate(e => getComputedStyle(e).clipPath);
     await page.locator('#preview p').click();

@@ -86,27 +86,34 @@ Press <kbd>Use</kbd> to run and stop <samp>here.</samp>[^1]
     assert.ok((await page.evaluate(() => current.content)) === source, 'an outside drag leaves the Markdown untouched');
     await page.evaluate(() => window.getSelection().removeAllRanges());
 
-    // C: the deliberate edit action reveals the exact raw source in the
-    // explicit source presentation. (The type/undo round-trip itself lives in
-    // reading-view-cleanup.cjs; this file keeps the reveal assertion.)
+    // C: the deliberate edit action opens this block's exact Markdown in place.
     await page.locator('#preview .extension-block').first().hover();
     await page.waitForFunction(() => {
       const button = document.querySelector('#preview .extension-block .extension-edit');
       return button && getComputedStyle(button.parentElement).opacity === '1';
     });
     await page.locator('#preview .extension-edit').first().click();
-    await page.locator('#source-editor .cm-content').waitFor({ state: 'visible' });
-    assert.equal(await page.evaluate(() => editor.isSource()), true, 'edit action reveals the explicit Markdown presentation');
-    const revealed = await page.evaluate(() => editor.getSelection());
-    const blockStart = source.indexOf('Press <kbd>Use</kbd>');
-    const revealedText = await page.evaluate(selection => {
-      const value = editor.getText();
-      return value.slice(Math.min(selection.anchor, selection.head), Math.max(selection.anchor, selection.head));
-    }, revealed);
-    assert.equal(Math.min(revealed.anchor, revealed.head), blockStart, 'the edit action starts at the exact block source');
-    assert.ok(revealedText.startsWith('Press <kbd>Use</kbd>') && revealedText.includes('[^1]'),
-      `the edit action selects the block source, got ${JSON.stringify(revealedText.slice(0, 80))}`);
+    const panelInput = page.locator('#preview .extension-block').first().locator('.extension-source-editor textarea');
+    await panelInput.waitFor({ state: 'visible' });
+    assert.equal(await page.evaluate(() => editor.isSource()), false, 'the edit action stays in the formatted editor');
+    const rawValue = await panelInput.inputValue();
+    assert.ok(rawValue.startsWith('Press <kbd>Use</kbd>') && rawValue.includes('[^1]'),
+      `the in-place editor holds the exact block source, got ${JSON.stringify(rawValue.slice(0, 80))}`);
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Backspace');
+    assert.equal(await page.evaluate(() => current.content), source, 'editing the textarea must not delete the document');
+    await page.keyboard.type('first');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('second');
+    assert.equal(await panelInput.inputValue(), 'first\nsecond', 'Enter inserts a newline in the source textarea');
+    assert.equal(await page.evaluate(() => current.content), source, 'textarea edits do not change the document before Apply');
+    await panelInput.fill('In-place block edit.');
+    await page.locator('#preview .extension-block').first().getByRole('button', { name: 'Apply' }).click();
+    await page.waitForFunction(() => current.content.includes('In-place block edit.'));
+    assert.ok(!(await page.evaluate(() => current.content)).includes('Press <kbd>Use</kbd>'), 'the apply replaces exactly that block');
+    await page.keyboard.press('Control+z');
+    await page.waitForFunction(text => current.content === text, source);
     assert.deepEqual(session.errors, []);
-    console.log('PASS: extension-block reading shows no source disclosure, projection drags select rendered text, and the deliberate edit action reveals the exact raw source.');
+    console.log('PASS: extension-block reading shows no source disclosure, projection drags select rendered text, and the edit action opens the exact block source in place.');
   } finally { await session.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

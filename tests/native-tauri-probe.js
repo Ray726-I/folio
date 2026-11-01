@@ -442,7 +442,6 @@
         heading: document.querySelector('#preview h1')
           ? document.querySelector('#preview h1').textContent : '',
         sourceMode: instance.isSource(),
-        fallback: instance.isFallback(),
         noticeHidden: document.getElementById('editor-notice').hidden,
         dirtyHidden: document.getElementById('dirty-dot').hidden,
         pass: !!root &&
@@ -451,7 +450,6 @@
           document.querySelector('#preview h1') &&
           document.querySelector('#preview h1').textContent === 'Native editor smoke' &&
           instance.isSource() === false &&
-          instance.isFallback() === false &&
           document.getElementById('editor-notice').hidden === true &&
           document.getElementById('dirty-dot').hidden === true
       };
@@ -468,12 +466,9 @@
         pass: focusModeOn && focusModeRestored
       };
 
-      // Programmatic selection + real presentation button. Focus must move to
-      // the active projection in both directions and the source selection must
-      // survive the rich <-> source round trip.
-      // Keep the range inside one paragraph: source offsets at a block boundary
-      // are not representable as a rich selection, so this checks the
-      // selection/focus contract rather than a lossy block-edge approximation.
+      // Programmatic selection in the single editor: the caret and a range must
+      // round-trip through the public API and the DOM selection, with focus
+      // staying in the one editing surface.
       const paragraphText = 'Intro paragraph with ';
       const paragraphStart = source.indexOf(paragraphText);
       if (paragraphStart < 0) throw new Error('selection anchor text missing');
@@ -482,62 +477,24 @@
       instance.selectRange(rangeStart);
       await sleep(50);
       const richFocus = activeWithin('#preview .ProseMirror');
-      clickElement('show-markdown');
-      await waitFor(
-        () => activeWithin('#source-editor .cm-content') &&
-          !document.getElementById('source-editor').hidden,
-        5000,
-        'source presentation focus'
-      );
-      const sourceCaret = instance.getSelection();
+      const richCaret = instance.getSelection();
       instance.selectRange(rangeStart, rangeStart + rangeLength);
       await sleep(80);
-      const sourceSelection = instance.getSelection();
-      const sourceDomText = String(window.getSelection());
-      clickElement('show-markdown');
-      await waitFor(
-        () => activeWithin('#preview .ProseMirror') &&
-          !document.getElementById('preview').hidden,
-        5000,
-        'rich presentation focus'
-      );
+      const richSelection = instance.getSelection();
       const richDomText = String(window.getSelection());
-      clickElement('show-markdown');
-      await waitFor(
-        () => activeWithin('#source-editor .cm-content'),
-        5000,
-        'source presentation refocus'
-      );
-      const roundtripSelection = instance.getSelection();
-      clickElement('show-markdown');
-      await waitFor(
-        () => activeWithin('#preview .ProseMirror') &&
-          !document.getElementById('preview').hidden,
-        5000,
-        'rich presentation refocus'
-      );
-      const finalRichSelection = instance.getSelection();
       report.selection = {
         anchorOffset: rangeStart,
         rangeLength,
         richFocus,
-        sourceCaret,
-        sourceSelection,
-        sourceDomText: sourceDomText.slice(0, 80),
+        richCaret,
+        richSelection,
         richDomText: richDomText.slice(0, 80),
-        roundtripSelection,
-        finalRichSelection,
         pass: richFocus &&
-          sourceCaret.anchor === rangeStart &&
-          sourceCaret.head === rangeStart &&
-          sourceSelection.anchor === rangeStart &&
-          sourceSelection.head === rangeStart + rangeLength &&
-          sourceDomText.includes('paragraph with') &&
-          richDomText.includes('paragraph with') &&
-          roundtripSelection.anchor === rangeStart &&
-          roundtripSelection.head === rangeStart + rangeLength &&
-          finalRichSelection.anchor === rangeStart &&
-          finalRichSelection.head === rangeStart + rangeLength
+          richCaret.anchor === rangeStart &&
+          richCaret.head === rangeStart &&
+          richSelection.anchor === rangeStart &&
+          richSelection.head === rangeStart + rangeLength &&
+          richDomText.includes('paragraph with')
       };
 
       // The snapshot dialog must expose the exact native-loaded source.

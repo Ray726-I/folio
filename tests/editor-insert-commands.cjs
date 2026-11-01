@@ -57,13 +57,13 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
     }), 'x', 'collapsed math keeps its placeholder selected for immediate typing');
 
     await page.evaluate(() => {
-      activeFolder = '/tmp'; editor.setFallback(true);
+      activeFolder = '/tmp';
       const from = current.content.indexOf('label text'); editor.selectRange(from, from + 10, true);
     });
     const folderBefore = await page.evaluate(() => folderVisible);
     await page.keyboard.press('Control+b');
-    assert.ok((await page.evaluate(() => current.content)).includes('**label text**'), 'source Ctrl+B formats the selection');
-    assert.equal(await page.evaluate(() => folderVisible), folderBefore, 'source Ctrl+B does not toggle the folder');
+    assert.ok((await page.evaluate(() => current.content)).includes('**label text**'), 'Ctrl+B in the editor formats the selection');
+    assert.equal(await page.evaluate(() => folderVisible), folderBefore, 'Ctrl+B in the editor does not toggle the folder');
 
     assert.deepEqual(errors, []);
     console.log('PASS: Link/Image/Math insert usable exact Markdown with selected address/TeX and undo.');

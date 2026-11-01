@@ -59,13 +59,11 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
 
     await page.evaluate(() => { current.content = '# Math $x$\n\n## Before\n'; editor.replaceContent(current.content); refreshEditorOutline(); });
     assert.deepEqual(await page.evaluate(() => outlineEntries.map(entry => entry.id)), ['doc-math-x', 'doc-before']);
-    await page.locator('#show-markdown').click();
     await page.evaluate(() => { current.content = '# Changed\n\n## New\n'; editor.replaceContent(current.content); refreshEditorOutline(); });
-    assert.deepEqual(await page.locator('#outline-items .outline-link').allTextContents(), ['Changed', 'New'], 'source mode uses current source, not hidden rich DOM');
+    assert.deepEqual(await page.locator('#outline-items .outline-link').allTextContents(), ['Changed', 'New'], 'the outline follows the current document, not a stale rich DOM');
     await page.locator('#outline-items .outline-link').nth(1).click();
     assert.equal(await page.evaluate(() => editor.getSelection().anchor), '# Changed\n\n'.length);
-    await page.evaluate(() => { editor.setFallback(true); refreshEditorOutline(); });
-    assert.deepEqual(await page.locator('#outline-items .outline-link').allTextContents(), ['Changed', 'New'], 'forced source retains the outline');
+    // Markdown mode removed in the single-editor migration.
 
     assert.deepEqual(errors, []);
     console.log('PASS: extension headings keep their offset, and duplicate heading links use native slug identities.');

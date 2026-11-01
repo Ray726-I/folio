@@ -83,10 +83,6 @@
       <div id="document-location" class="subtitle">Markdown, one file at a time</div>
     </div>
     <div class="header-end">
-      <div id="view-switch" class="segmented document-control" role="group" aria-label="View as Formatted or Markdown (Ctrl+E to switch)" hidden>
-        <button id="view-formatted" aria-pressed="true" title="Formatted view (Ctrl+E)" aria-label="Formatted view (Ctrl+E)"><svg class="icon view-switch-icon" aria-hidden="true"><use href="#i-read"/></svg><span>Formatted</span></button>
-        <button id="show-markdown" aria-pressed="false" title="Markdown source (Ctrl+E)" aria-label="Show Markdown source (Ctrl+E)"><svg class="icon view-switch-icon" aria-hidden="true"><use href="#i-code"/></svg><span>Markdown</span></button>
-      </div>
       <button id="lock-document" class="icon-button document-control" aria-pressed="false" aria-label="Protect against accidental edits" title="Protect against accidental edits" hidden>
         <svg class="icon" aria-hidden="true"><use href="#i-unlock"/></svg>
       </button>
@@ -215,10 +211,9 @@
           </div></details>
         </div>
         <div id="editor-lock-note" class="editor-note" role="status" hidden>Locked · You can select, copy, follow links and load images. Unlock to make changes.</div>
-        <div id="editor-notice" class="editor-note" role="status" hidden>Rich formatting is paused for this document's size or complexity. Its complete Markdown remains editable below; nothing is truncated.</div>
+        <div id="editor-notice" class="editor-note" role="status" hidden>This document is too large or complex to format. Its complete Markdown is shown below, read-only; saving still writes the file unchanged.</div>
         <div id="reader-scroll" class="reader-scroll" tabindex="0" aria-label="Markdown document">
           <article id="preview" class="markdown"></article>
-          <div id="source-editor" class="markdown" hidden></div>
           <div id="folder-empty" class="folder-empty" hidden>
             <h1>Folder opened</h1>
             <p>Choose a Markdown file from the folder list.</p>

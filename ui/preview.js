@@ -1,6 +1,6 @@
 'use strict';
 // Preview rendering, lazy math/diagram assets, and diagram lifecycle.
-let renderGeneration = 0, previewSnapshot = null, diagramThemeRevision = 0, previewLimitedKind = null;
+let renderGeneration = 0, previewSnapshot = null, diagramThemeRevision = 0;
 const assetLoads = new Map();
 function loadAsset(url, style = false) {
   if (assetLoads.has(url)) return assetLoads.get(url);
@@ -51,11 +51,6 @@ function setActiveOutline(index) {
 function updateActiveOutline() {
   if (!outlineEntries.length) return;
   if ($('outline').hidden) return;
-  if (editor?.isSource()) {
-    const position = editor.getSelection().head;
-    let active = 0; outlineEntries.forEach((entry, index) => { if (entry.offset <= position) active = index; });
-    setActiveOutline(active); return;
-  }
   const line = $('reader-scroll').getBoundingClientRect().top + 88;
   let low = 0, high = outlineEntries.length - 1, active = 0;
   while (low <= high) {

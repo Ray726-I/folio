@@ -98,7 +98,7 @@ let errors = [];
   await page.locator('#sample').click();
   await page.locator('#preview h1').waitFor();
   await page.waitForFunction(() => !busy);
-  assert.equal(await page.locator('#show-markdown').getAttribute('aria-pressed'), 'false');
+  await page.locator('#preview .ProseMirror').waitFor({ state: 'visible' });
   assert.equal(await page.locator('#lock-document').getAttribute('aria-pressed'), 'false');
   assert.equal(await page.locator('#view-menu #source-snapshot').count(), 1, 'the source snapshot lives in the View menu');
   await page.locator('#outline-toggle').click();
@@ -108,19 +108,8 @@ let errors = [];
   assert((await page.locator('#outline-items .outline-link').count()) > 0, 'the outline should list headings');
   assert.deepEqual(await page.evaluate(() => ({ visible: localStorage.getItem('folio.outlineVisible'), width: localStorage.getItem('folio.outlineWidth') })), { visible: 'true', width: '248' }, 'outline visibility and width should use separate preferences');
   await page.locator('#outline-close').click();
-  const initialRenderCalls = await page.evaluate(() => window.nativeCalls.filter(call => call.command === 'render_markdown').length);
-  await page.evaluate(() => { window.initialHeading = document.querySelector('#preview h1'); });
-  // Explicit segments: switching both ways reuses the rendered preview,
-  // and re-clicking the active segment is a quiet no-op that changes nothing.
-  await page.locator('#show-markdown').click();
-  await page.waitForFunction(() => !busy);
-  for (const button of ['#show-markdown', '#show-markdown', '#view-formatted', '#view-formatted']) {
-    await page.locator(button).click();
-    await page.waitForFunction(() => !busy);
-  }
-  assert.equal(await page.locator('#view-formatted').getAttribute('aria-pressed'), 'true', 'explicit segments must end back in the formatted view');
-  assert.equal(await page.evaluate(() => window.nativeCalls.filter(call => call.command === 'render_markdown').length), initialRenderCalls, 'unchanged mode switches should reuse the rendered preview');
-  assert(await page.evaluate(() => window.initialHeading === document.querySelector('#preview h1')), 'unchanged mode switches should preserve the preview DOM');
+  // The Formatted/Markdown mode switch was removed; there are no mode-switch
+  // steps left to verify preview reuse.
 
   const lastRemoteFlag = () => page.evaluate(() => window.nativeCalls.filter(call => call.command === 'render_markdown').at(-1)?.args.remoteImages);
   assert.equal(await lastRemoteFlag(), false, 'remote images should be blocked by default');

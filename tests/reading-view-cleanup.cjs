@@ -100,16 +100,12 @@ async function geometry(page) {
     // renders wrapped in an anchor that reveals the exact source on click.
     assert.equal(await page.locator('#preview .ProseMirror > p .html-inline > a[href="https://example.com"] kbd').count(), 1, 'link-wrapped pair renders a real anchor');
     await page.locator('#preview .ProseMirror > p .html-inline > a').first().click();
-    await page.locator('#source-editor .cm-content').waitFor({ state: 'visible' });
-    assert.equal(await page.evaluate(() => editor.isSource()), true, 'link-wrapped pair click reveals source mode');
-    const linkRevealed = await page.evaluate(() => {
-      const selection = editor.getSelection();
-      return editor.getText().slice(Math.min(selection.anchor, selection.head), Math.max(selection.anchor, selection.head));
-    });
-    assert.ok(linkRevealed.includes('<kbd>here</kbd>'), `link click reveals the exact pair source, got ${JSON.stringify(linkRevealed)}`);
-    await page.locator('#view-formatted').click();
-    await page.waitForFunction(() => !editor.isSource());
-    await page.waitForTimeout(400);
+    await page.waitForFunction(() => document.getElementById('editor-action-dialog').open);
+    assert.equal(await page.evaluate(() => editor.isSource()), false, 'link click edits the destination in place');
+    assert.equal(await page.locator('#editor-action-value').inputValue(), '<kbd>here</kbd>', 'the dialog holds the exact inline source that was clicked');
+    await page.locator('#editor-action-cancel').click();
+    await page.waitForFunction(() => !document.getElementById('editor-action-dialog').open);
+    await page.waitForTimeout(200);
     // A mouse drag across the rendered keys selects text, and Control+C
     // serves that rendered text with no markup leaking into the clipboard.
     const keysGeometry = await page.evaluate(() => {
@@ -255,25 +251,20 @@ async function geometry(page) {
       const button = document.querySelector('#preview .extension-block .extension-edit');
       return button && getComputedStyle(button.parentElement).opacity === '1';
     });
-    const expectedStart = source.indexOf('Press <kbd>Use</kbd>');
     await page.locator('#preview .extension-edit').first().click();
-    await page.locator('#source-editor .cm-content').waitFor({ state: 'visible' });
-    assert.equal(await page.evaluate(() => editor.isSource()), true, 'edit action reveals the explicit Markdown presentation');
-    const revealed = await page.evaluate(() => editor.getSelection());
-    const revealedText = await page.evaluate(selection => {
-      const value = editor.getText();
-      return value.slice(Math.min(selection.anchor, selection.head), Math.max(selection.anchor, selection.head));
-    }, revealed);
-    assert.ok(revealedText.includes('Press <kbd>Use</kbd>'), `exact block source is selected, got ${JSON.stringify(revealedText.slice(0, 80))}`);
-    assert.equal(Math.min(revealed.anchor, revealed.head), expectedStart, 'selection starts at the exact block source');
-    await page.keyboard.type('X');
-    assert.ok((await page.evaluate(() => current.content)).includes('XPress') || (await page.evaluate(() => current.content)).includes('X'), 'source edit applies to the exact Markdown');
+    const panelInput = page.locator('#preview .extension-block').first().locator('.extension-source-editor textarea');
+    await panelInput.waitFor({ state: 'visible' });
+    assert.equal(await page.evaluate(() => editor.isSource()), false, 'edit action stays in the formatted editor');
+    const rawValue = await panelInput.inputValue();
+    assert.ok(rawValue.includes('Press <kbd>Use</kbd>'), `the in-place editor holds the exact block source, got ${JSON.stringify(rawValue.slice(0, 80))}`);
+    await panelInput.fill(rawValue.replace('Press <kbd>Use</kbd>', 'Press X <kbd>Use</kbd>'));
+    await page.locator('#preview .extension-block').first().getByRole('button', { name: 'Apply' }).click();
+    await page.waitForFunction(() => current.content.includes('Press X <kbd>Use</kbd>'));
+    assert.ok((await page.evaluate(() => current.content)).includes('Press X <kbd>Use</kbd>'), 'the in-place edit applies to the exact Markdown');
     await page.keyboard.press('Control+z');
     assert.equal(await page.evaluate(() => current.content), source, 'source undo restores the exact document');
-    await page.locator('#view-formatted').click();
-    await page.waitForFunction(() => !editor.isSource());
-    await page.waitForTimeout(500);
-    assert.equal(await page.locator('#preview .source-block').count(), 0, 'returning to reading shows no source disclosure');
+    await page.waitForTimeout(200);
+    assert.equal(await page.locator('#preview .source-block').count(), 0, 'the reading view shows no source disclosure');
     assert.ok(await page.evaluate(() => document.querySelector('.extension-preview')?.textContent.includes('Use')), 'projection re-renders after the round trip');
 
     // 6. Read-only mode keeps the same reading selection behavior.

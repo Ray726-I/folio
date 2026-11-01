@@ -12,7 +12,7 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
   const session = await openIsolatedEditor(source, bundle.outfile, { width: 900, height: 620 });
   const { page, errors } = session;
   try {
-    await page.waitForFunction(() => !editor.isSource());
+    await page.locator('#preview .ProseMirror').waitFor({ state: 'visible' });
     await page.keyboard.press('Control+f');
     await page.locator('#find-input').fill('FIND');
     await page.waitForFunction(() => document.getElementById('find-result').textContent.trim() === '1 / 2');

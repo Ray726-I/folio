@@ -52,18 +52,7 @@ async function openIsolated(source, outfile) {
   return session;
 }
 
-async function showSource(page) {
-  if (await page.evaluate(() => mode) === 'edit') return;
-  await page.locator('#show-markdown').click();
-  await page.waitForFunction(() => !busy && mode === 'edit');
-}
-async function showRich(page) {
-  if (await page.evaluate(() => mode) === 'read') return;
-  await page.locator('#view-formatted').click();
-  await page.waitForFunction(() => !busy && mode === 'read');
-}
 async function selectSource(page, anchor, head = anchor) {
-  await showSource(page);
   await page.evaluate(range => editor.selectRange(range.anchor, range.head), { anchor, head });
   await page.waitForFunction(range => {
     const selection = editor.getSelection();
@@ -87,30 +76,30 @@ function pastePlainText(page, text) {
   const bundle = await buildBundle();
   process.on('exit', () => fs.rmSync(bundle.directory, { recursive: true, force: true }));
 
-  // 1. A non-injective source offset inside an entity survives zero-write
-  // presentation round trips, and a selected marked run replaces its exact
-  // source delimiters and undo restores the bytes.
+  // 1. A non-injective source offset inside an entity still splices at the
+  // exact source offset in the single formatted editor, and a selected marked
+  // run replaces its exact source delimiters and undo restores the bytes.
   {
     const source = 'A &amp; B\n\nA **bold** B\n';
     const session = await openIsolated(source, bundle.outfile);
     try {
       const { page, errors } = session;
       await selectSource(page, 4);
-      await showRich(page);
-      await showSource(page);
-      assert.deepEqual(await selection(page), { anchor: 4, head: 4 },
-        'raw source entity offset must survive a zero-write presentation round trip');
+      await page.keyboard.type('X');
+      assert.equal(await content(page), expectedSplice(source, 4, 4, 'X'),
+        'a non-injective entity offset must still splice at the exact source offset');
+      await page.keyboard.press('Control+z');
+      assert.equal(await content(page), source, 'undo must restore the bytes after an entity splice');
 
       const start = source.indexOf('**bold**');
       await selectSource(page, start, start + 8);
-      await showRich(page);
       await page.keyboard.type('X');
       assert.equal(await content(page), expectedSplice(source, start, start + 8, 'X'),
         'typed replacement must remove the selected bold delimiters exactly');
       await page.keyboard.press('Control+z');
       assert.equal(await content(page), source, 'undo must restore the exact source bytes');
       assert.deepEqual(errors, []);
-      console.log('PASS: source bookmark survives entity projection; selected markers replace and undo exactly.');
+      console.log('PASS: a non-injective source offset and selected markers splice and undo exactly.');
     } finally { await session.close(); }
   }
 
@@ -125,7 +114,6 @@ function pastePlainText(page, text) {
         const from = source.indexOf('1');
         const to = source.indexOf('2') + 1;
         await selectSource(page, from, to);
-        await showRich(page);
         await page.keyboard.type('X');
         assert.equal(await content(page), expectedSplice(source, from, to, 'X'),
           'a forward selection across cells must splice the exact source interval');
@@ -139,7 +127,6 @@ function pastePlainText(page, text) {
         const from = source.indexOf('1');
         const to = source.indexOf('2') + 1;
         await selectSource(page, to, from);
-        await showRich(page);
         await page.keyboard.type('Y');
         assert.equal(await content(page), expectedSplice(source, from, to, 'Y'),
           'a backward selection across cells must splice the same literal interval');
@@ -153,7 +140,6 @@ function pastePlainText(page, text) {
         const from = source.indexOf('Prose A');
         const to = source.indexOf('Tail') + 4;
         await selectSource(page, from, to);
-        await showRich(page);
         await page.keyboard.type('Q');
         assert.equal(await content(page), expectedSplice(source, from, to, 'Q'),
           'a prose/table/prose selection must preserve the literal slice boundaries');
@@ -173,7 +159,6 @@ function pastePlainText(page, text) {
         const { page, errors } = session;
         const from = source.indexOf('Prose A');
         await selectSource(page, from, from + 'Prose A'.length);
-        await showRich(page);
         await page.keyboard.press(key);
         assert.equal(await content(page), expectedSplice(source, from, from + 'Prose A'.length, ''),
           `${key} over a selected logical range must delete exactly that source interval`);
@@ -186,7 +171,6 @@ function pastePlainText(page, text) {
         const { page, errors } = session;
         const from = source.indexOf('Prose A');
         await selectSource(page, from, from + 'Prose A'.length);
-        await showRich(page);
         await page.keyboard.press('Enter');
         assert.equal(await content(page), expectedSplice(source, from, from + 'Prose A'.length, '\n'),
           'Enter over a selected logical range must splice a newline, not collapse the range');
@@ -200,7 +184,6 @@ function pastePlainText(page, text) {
         const from = source.indexOf('Prose A');
         const expected = expectedSplice(source, from, from + 'Prose A'.length, 'PASTE');
         await selectSource(page, from, from + 'Prose A'.length);
-        await showRich(page);
         await pastePlainText(page, 'PASTE');
         await page.waitForFunction(value => current.content === value, expected);
         assert.equal(await content(page), expected, 'plain-text paste must replace the logical interval');
@@ -214,7 +197,6 @@ function pastePlainText(page, text) {
         const { page, errors } = session;
         const from = source.indexOf('Prose A');
         await selectSource(page, from, from + 'Prose A'.length);
-        await showRich(page);
         await page.keyboard.press('Control+x');
         await page.waitForFunction(value => current.content === value, expectedSplice(source, from, from + 'Prose A'.length, ''));
         assert.equal(await content(page), expectedSplice(source, from, from + 'Prose A'.length, ''),
@@ -227,7 +209,7 @@ function pastePlainText(page, text) {
       const session = await openIsolated(sourceWithReferences, bundle.outfile);
       try {
         const { page, errors } = session;
-        await showRich(page);
+        await page.locator('#preview .ProseMirror').click();
         await page.keyboard.press('Control+a');
         assert.deepEqual(await selection(page), { anchor: 0, head: sourceWithReferences.length },
           'SelectAll must map the whole source, including reference definitions');
@@ -246,7 +228,6 @@ function pastePlainText(page, text) {
     try {
       const { page, errors } = session;
       await selectSource(page, 4);
-      await showRich(page);
       assert.deepEqual(await selection(page), { anchor: 4, head: 4 });
       const point = await page.evaluate(() => {
         const paragraph = document.querySelector('#preview .ProseMirror p');
@@ -262,7 +243,6 @@ function pastePlainText(page, text) {
         const current = editor.getSelection();
         return !(current.anchor === 4 && current.head === 4);
       });
-      await showSource(page);
       const released = await selection(page);
       assert.notDeepEqual(released, { anchor: 4, head: 4 }, 'an explicit same-projection click must release the logical bookmark');
       assert.deepEqual(errors, []);
@@ -278,7 +258,6 @@ function pastePlainText(page, text) {
       const { page, errors } = session;
       const from = source.indexOf('Prose A');
       await selectSource(page, from, from + 'Prose A'.length);
-      await showRich(page);
       await page.locator('#lock-document').click();
       await page.waitForFunction(() => editor.isLocked());
       await pastePlainText(page, 'BLOCKED');
@@ -307,7 +286,6 @@ function pastePlainText(page, text) {
       const from = source.indexOf('Prose A');
       const to = from + 'Prose A'.length;
       await selectSource(page, from, to);
-      await showRich(page);
       const beforeSelection = await selection(page);
       await page.evaluate(() => { window.__folioTestAppendDivergence = true; });
       await page.keyboard.type('X');

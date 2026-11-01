@@ -104,11 +104,13 @@ function trimSpace(source, from, to) {
 }
 
 function textLeaf(text, from, names) {
-  const charMap = new Array(text.length);
-  for (let i = 0; i < text.length; i++) charMap[i] = { from: from + i, to: from + i + 1 };
+  // `source.slice(from, from + text.length)` is exactly this text, so the
+  // mapping is linear by construction. Building a per-character object map
+  // here cost ~70% of a 100 KB ledger build and was then discarded by
+  // isLinear; the run carries `linear: true` instead.
   return {
     kind: 'text', text, sourceFrom: from, sourceTo: from + text.length,
-    marks: names, marksKey: marksKey(names), charMap
+    marks: names, marksKey: marksKey(names), charMap: null, linear: true
   };
 }
 
@@ -207,6 +209,9 @@ export function buildLedger(source, doc, options = {}) {
         confidence, supported: confidence !== 'unmapped', reason,
         contentFrom: null, contentTo: null, pmContentFrom: null, pmContentTo: null
       };
+      // Owners are appended in document order and never inserted, so a
+      // container's descendants are exactly the owners added after it.
+      owner.childStart = owners.length;
       owners.push(owner);
       return owner;
     },
@@ -218,7 +223,7 @@ export function buildLedger(source, doc, options = {}) {
       ctx.addHint(sourceFrom, sourceTo, 'unmapped');
     },
     addRun(owner, leaf, pmFrom, pmTo) {
-      const linear = leaf.kind === 'text' && isLinear(leaf.charMap, leaf.sourceFrom, leaf.sourceTo, leaf.text.length);
+      const linear = leaf.kind === 'text' && (leaf.linear === true || isLinear(leaf.charMap, leaf.sourceFrom, leaf.sourceTo, leaf.text.length));
       const run = {
         ownerId: owner.id,
         kind: leaf.kind,
@@ -335,7 +340,7 @@ export function buildLedger(source, doc, options = {}) {
       return null;
     }
     while (lezerIndex < topLevel.length && topLevel[lezerIndex].to <= block.sourceFrom) lezerIndex++;
-    let fallback = null;
+    let fallback = null, fallbackIndex = -1;
     for (let i = lezerIndex; i < topLevel.length; i++) {
       const node = topLevel[i];
       if (node.from >= block.sourceTo) break;
@@ -347,10 +352,10 @@ export function buildLedger(source, doc, options = {}) {
       // A mismatching top-level node inside this token range means the two
       // parsers disagree about this block.  Do not guess; remember it and
       // continue looking for an exact structural match.
-      if (!fallback) fallback = node;
+      if (!fallback) { fallback = node; fallbackIndex = i; }
     }
-    if (fallback) {
-      lezerIndex = Math.max(lezerIndex, topLevel.indexOf(fallback) + 1);
+    if (fallbackIndex >= 0) {
+      lezerIndex = Math.max(lezerIndex, fallbackIndex + 1);
     }
     return null;
   };
@@ -452,6 +457,11 @@ export function buildLedger(source, doc, options = {}) {
         if (!open || !close || close === open) { unsupportedInline(node, from, to, out); return; }
         const chars = normaliseCode(source.slice(open.to, close.from));
         const text = chars.map(char => char.text).join('');
+        const raw = source.slice(open.to, close.from);
+        if (text === raw) {
+          out.push(mappedLeaf(text, open.to, close.from, [...names, 'code'], null, { linear: true }));
+          return;
+        }
         const charMap = chars.map(char => ({ from: open.to + char.from, to: open.to + char.to }));
         const sourceFrom = chars.length ? charMap[0].from : open.to;
         const sourceTo = chars.length ? charMap[charMap.length - 1].to : open.to;
@@ -662,10 +672,13 @@ export function buildLedger(source, doc, options = {}) {
     const children = [];
     pmNode.forEach((child, offset) => children.push({ child, pmFrom: pmFrom + 1 + offset }));
     for (const { child, pmFrom: childPm } of children) {
-      const match = candidates.slice(index).find(node => lezerBlockMatches(child.type.name, node, child));
-      if (!match) { markNodeUnmapped(child, childPm, ctx, 'No structural source match inside blockquote'); continue; }
-      index = candidates.indexOf(match) + 1;
-      mapBlockNode(child, childPm, match, null);
+      let matchIndex = -1;
+      for (let i = index; i < candidates.length; i++) {
+        if (lezerBlockMatches(child.type.name, candidates[i], child)) { matchIndex = i; break; }
+      }
+      if (matchIndex < 0) { markNodeUnmapped(child, childPm, ctx, 'No structural source match inside blockquote'); continue; }
+      index = matchIndex + 1;
+      mapBlockNode(child, childPm, candidates[matchIndex], null);
     }
     for (const node of lezerNode.children) if (node.name === 'QuoteMark') ctx.addHint(node.from, node.to, 'syntax');
     aggregate(owner);
@@ -870,7 +883,8 @@ export function buildLedger(source, doc, options = {}) {
   }
 
   function aggregate(owner) {
-    const children = owners.filter(candidate => candidate.id !== owner.id && candidate.pmFrom >= owner.pmFrom && candidate.pmTo <= owner.pmTo);
+    const pool = Number.isInteger(owner.childStart) ? owners.slice(owner.childStart) : owners;
+    const children = pool.filter(candidate => candidate.id !== owner.id && candidate.pmFrom >= owner.pmFrom && candidate.pmTo <= owner.pmTo);
     if (!children.length) {
       if (owner.confidence !== 'unmapped') owner.confidence = 'unmapped';
       owner.supported = false;
@@ -967,11 +981,21 @@ export function buildLedger(source, doc, options = {}) {
   runs.sort((a, b) => a.sourceFrom - b.sourceFrom || a.sourceTo - b.sourceTo);
   const gapHints = hints.slice().sort((a, b) => a.from - b.from || a.to - b.to);
   const gaps = [];
+  // Gaps are emitted in non-decreasing source order, so overlapping hints are
+  // found with one advancing cursor instead of rescanning every hint for every
+  // gap (that scan was quadratic and dominated the whole ledger build).
+  let hintCursor = 0;
+  const hintsAround = (from, to) => {
+    while (hintCursor < gapHints.length && gapHints[hintCursor].to <= from) hintCursor++;
+    const matched = [];
+    for (let index = hintCursor; index < gapHints.length && gapHints[index].from < to; index++) {
+      if (gapHints[index].to > from) matched.push(gapHints[index]);
+    }
+    return matched;
+  };
   const hintAt = (from, to) => {
     let best = null;
-    for (const hint of gapHints) {
-      if (hint.to <= from) continue;
-      if (hint.from >= to) break;
+    for (const hint of hintsAround(from, to)) {
       if (!best || hint.to - hint.from > best.to - best.from) best = hint;
     }
     return best;
@@ -979,9 +1003,7 @@ export function buildLedger(source, doc, options = {}) {
   const addGap = (from, to) => {
     if (to <= from) return;
     const points = new Set([from, to]);
-    for (const hint of gapHints) {
-      if (hint.to <= from) continue;
-      if (hint.from >= to) break;
+    for (const hint of hintsAround(from, to)) {
       points.add(Math.max(from, hint.from));
       points.add(Math.min(to, hint.to));
     }

@@ -16,8 +16,8 @@ const { openEditor } = require('./editor-browser.cjs');
       assert.ok(!titleVisible || boxes['.window-title'].right <= boxes['.header-end'].left + 1, `title overlaps controls at ${width}px`);
       assert.ok(boxes['.header-end'].right <= width, `header overflows at ${width}px`);
       assert.ok(Math.abs((boxes['.window-title'].left + boxes['.window-title'].right) / 2 - width / 2) <= 2, `title must be centered in the window at ${width}px`);
-      const firstControl = await page.locator('#view-switch').boundingBox();
-      assert.ok(!titleVisible || boxes['.window-title'].right <= firstControl.x + 1, `title overlaps view switch at ${width}px`);
+      const firstControl = await page.locator('#lock-document').boundingBox();
+      assert.ok(!titleVisible || boxes['.window-title'].right <= firstControl.x + 1, `title overlaps first header control at ${width}px`);
     }
     await page.setViewportSize({ width: 1180, height: 800 });
     await page.evaluate(() => goHome());
