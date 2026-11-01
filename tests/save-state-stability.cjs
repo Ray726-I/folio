@@ -27,7 +27,6 @@ const { openEditor } = require('./editor-browser.cjs');
       viewMenu: await box('view-menu-button'),
       lock: await box('lock-document'),
       save: await box('save'),
-      palette: await box('palette-open'),
     };
 
     // Compact footprint: near the old Saved width, nowhere near the 116px gap.
@@ -66,7 +65,6 @@ const { openEditor } = require('./editor-browser.cjs');
       viewMenu: await box('view-menu-button'),
       lock: await box('lock-document'),
       save: await box('save'),
-      palette: await box('palette-open'),
     };
 
     // Stable footprint: the indicator keeps its width across states.
@@ -79,8 +77,8 @@ const { openEditor } = require('./editor-browser.cjs');
       dirty.state.width <= 72,
       `dirty save-state must stay compact (got ${dirty.state.width}px, old gap was 116px)`,
     );
-    // Neighbors must not shift: view menu, lock, save, palette stay put.
-    for (const key of ['viewMenu', 'lock', 'save', 'palette']) {
+    // Neighbors must not shift: view menu, lock, and save stay put.
+    for (const key of ['viewMenu', 'lock', 'save']) {
       assert.ok(
         Math.abs(dirty[key].x - clean[key].x) <= 1.5,
         `${key} shifted by ${(dirty[key].x - clean[key].x).toFixed(2)}px when save state changed`,

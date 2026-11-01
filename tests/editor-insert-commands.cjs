@@ -18,6 +18,7 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
     }, text);
 
     const command = async (name, expected, selected) => {
+      await page.locator('#format-more').click();
       await page.locator(`[data-editor-command="${name}"]`).click();
       await page.waitForFunction(value => current.content === value, expected);
       const state = await page.evaluate(() => {
@@ -48,6 +49,7 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
 
     // Collapsed insertion supplies a complete editable placeholder.
     await page.evaluate(() => { const offset = current.content.indexOf('label text'); editor.selectRange(offset + 'label text'.length, offset + 'label text'.length, true); });
+    await page.locator('#format-more').click();
     await page.locator('[data-editor-command="math"]').click();
     await page.waitForFunction(() => current.content.includes('label text$x$'));
     assert.equal(await page.evaluate(() => current.content), '# H\n\nlabel text$x$\n\nhttps://example.org/a\n\nx^2\n\nassets/pic.png\n');

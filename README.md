@@ -21,7 +21,7 @@ For native prerequisites, follow Tauri's [Linux](https://v2.tauri.app/start/prer
 
 | Action | Shortcut |
 | --- | --- |
-| Command window (also the header search button) | Ctrl+Shift+P (Command+Shift+P on macOS) |
+| Command window (commands, themes, files) | Ctrl+Shift+P (Command+Shift+P on macOS) |
 | Open a Markdown file or folder | Ctrl+O |
 | Show or hide the file tree | Ctrl+B |
 | New document | Ctrl+N |

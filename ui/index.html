@@ -25,6 +25,7 @@
     <symbol id="i-read" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
     <symbol id="i-outline" viewBox="0 0 24 24"><path d="M8 5h13M8 12h13M8 19h13M3 5h.01M3 12h.01M3 19h.01"/></symbol>
     <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H5v18h14V8l-5-5ZM14 3v5h5M8 12h8M8 16h6"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.4A2.4 2.4 0 0 1 5.4 5h3.7l2.1 2.3h7.4A2.4 2.4 0 0 1 21 9.7v7.9a2.4 2.4 0 0 1-2.4 2.4H5.4A2.4 2.4 0 0 1 3 17.6V7.4Z"/></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
@@ -70,13 +71,6 @@
           </button>
         </div>
       </div>
-      <span class="header-divider" aria-hidden="true"></span>
-      <button id="folder-toggle" class="icon-button" title="Toggle file tree (Ctrl+B)" aria-label="Toggle file tree" aria-controls="file-browser" aria-expanded="false" aria-pressed="false" hidden>
-        <svg class="icon" aria-hidden="true"><use href="#i-open"/></svg>
-      </button>
-      <button id="outline-toggle" class="icon-button document-control" title="Toggle contents" aria-label="Toggle contents" aria-controls="outline" aria-expanded="false" aria-pressed="false" hidden>
-        <svg class="icon" aria-hidden="true"><use href="#i-outline"/></svg>
-      </button>
     </div>
     <div class="window-title">
       <div class="window-title-line"><span id="document-name">Folio</span><span id="dirty-dot" class="dirty-dot" aria-label="Unsaved changes" hidden></span></div>
@@ -110,9 +104,6 @@
       <button id="save" class="icon-button document-control" title="Save (Ctrl+S)" aria-label="Save" hidden>
         <svg class="icon" aria-hidden="true"><use href="#i-save"/></svg>
       </button>
-      <button id="palette-open" class="icon-button" title="Commands and themes (Ctrl+Shift+P)" aria-label="Open command window">
-        <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
-      </button>
     </div>
   </header>
 
@@ -143,6 +134,14 @@
     </section>
 
     <div id="document-view" class="document-view" hidden>
+      <nav class="navigation-rail" aria-label="Sidebar">
+        <div class="rail-dock">
+          <button type="button" data-rail-action="find" aria-label="Search document" aria-controls="find-bar" aria-pressed="false" title="Search document (Ctrl+F)"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></button>
+          <span class="rail-separator" aria-hidden="true"></span>
+          <button type="button" data-dock-tab="outline" aria-label="Contents" aria-controls="outline" aria-pressed="false" title="Contents — click again to close"><svg class="icon" aria-hidden="true"><use href="#i-outline"/></svg></button>
+          <button type="button" data-dock-tab="files" aria-label="Files" aria-controls="file-browser" aria-pressed="false" title="Files — click again to close"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg></button>
+        </div>
+      </nav>
       <aside id="outline" class="sidebar" hidden aria-label="Document contents">
         <div class="sidebar-head">
           <div class="sidebar-heading">
@@ -160,7 +159,7 @@
       <aside id="file-browser" class="sidebar" aria-label="File tree" hidden>
         <div class="sidebar-head">
           <div class="sidebar-heading">
-            <h2>Explorer</h2>
+            <h2>Files</h2>
             <p id="folder-name" class="sidebar-meta"></p>
           </div>
           <div class="sidebar-actions">
@@ -173,6 +172,7 @@
           </div>
         </div>
         <nav id="folder-items" class="sidebar-scroll" aria-label="Markdown files in folder"></nav>
+        <button id="dock-open-folder" class="button ghost" hidden>Open folder</button>
       </aside>
       <div id="folder-divider" class="sidebar-resizer" role="separator" aria-label="Resize folder sidebar" aria-orientation="vertical" tabindex="0" hidden></div>
 
@@ -198,10 +198,15 @@
           <button class="button small ghost" data-editor-command="bullet">List</button>
           <button class="button small ghost" data-editor-command="numbered">1. List</button>
           <button class="button small ghost" data-editor-command="quote">Quote</button>
-          <button class="button small ghost" data-editor-command="link">Link</button>
-          <button class="button small ghost" data-editor-command="image">Image</button>
-          <button class="button small ghost" data-editor-command="math">Math</button>
-          <button class="button small ghost" data-editor-command="table">Table</button>
+          <div class="menu-group format-menu-group">
+            <button id="format-more" class="button small ghost" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="format-menu">Insert</button>
+            <div id="format-menu" class="menu" role="menu" hidden>
+              <button class="menu-item" role="menuitem" data-editor-command="link">Link</button>
+              <button class="menu-item" role="menuitem" data-editor-command="image">Image</button>
+              <button class="menu-item" role="menuitem" data-editor-command="math">Math</button>
+              <button class="menu-item" role="menuitem" data-editor-command="table">Table</button>
+            </div>
+          </div>
           <button id="format-toolbar-close" class="icon-button" type="button" title="Hide formatting toolbar" aria-label="Hide formatting toolbar">
             <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
           </button>

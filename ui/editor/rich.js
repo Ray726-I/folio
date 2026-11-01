@@ -12,6 +12,7 @@ import { decodeHTML, decodeHTMLAttribute } from 'entities';
 import { schema, parseSource, updateSource, sourceToRich, richToSource, sourceMapping, richMapping, INLINE_HTML_SPAN_TAGS } from './model.js';
 import { buildLedger, applySourcePatches } from './source-ledger.js';
 import { tryTextEdits } from './source-edits.js';
+import { parser as markdownParser, GFM } from '@lezer/markdown';
 
 const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
 const NAVIGATION_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']);
@@ -432,6 +433,53 @@ export function createRichEditor(parent, options) {
     if (!range) { options.message?.('This link destination cannot be edited safely.'); return; }
     void editDestination({ title: 'Edit link destination', ...range, fallbackFrom: range.from, fallbackTo: range.to });
   }
+  function editLinkMarkdown(anchor, from, to) {
+    if (options.isLocked()) return;
+    const mapped = verifiedSourceRange(from, to);
+    if (!mapped) { options.message('This link cannot be mapped safely to Markdown.'); return; }
+    let match = null;
+    markdownParser.configure(GFM).parse(model.source).iterate({ enter(node) {
+      if (node.name === 'Link' && node.from <= mapped.from && node.to >= mapped.to && (!match || node.to - node.from < match.to - match.from)) match = { from: node.from, to: node.to };
+    } });
+    if (!match) { options.message('This link cannot be mapped safely to Markdown.'); return; }
+    const use = model.source.slice(match.from, match.to);
+    const reference = /^\[([^\[\]\\]+)\](?:\[([^\[\]\\]*)\])?$/.exec(use);
+    if (reference) {
+      const normalize = label => label.trim().replace(/\s+/g, ' ').toLowerCase();
+      const label = normalize(reference[2] || reference[1]);
+      let definition = null;
+      markdownParser.configure(GFM).parse(model.source).iterate({ enter(node) {
+        if (node.name !== 'LinkReference' || definition) return;
+        const raw = model.source.slice(node.from, node.to);
+        const found = /^\[([^\[\]\\]+)\]:/.exec(raw);
+        if (found && normalize(found[1]) === label) definition = { from: node.from, to: node.to };
+      } });
+      if (!definition) { options.message('This reference definition cannot be mapped safely.'); return; }
+      match = definition;
+    }
+    const { from: start, to: end } = match, original = model.source.slice(start, end), openedRevision = revision;
+    const input = document.createElement('textarea'); input.className = 'inline-markdown-source link-markdown-source'; input.setAttribute('aria-label', 'Link Markdown');
+    input.value = original; input.rows = 1; input.spellcheck = false;
+    const box = anchor.getBoundingClientRect();
+    input.style.left = `${box.left}px`; input.style.top = `${box.top}px`;
+    document.body.append(input); input.focus();
+    let finished = false;
+    const finish = apply => {
+      if (finished) return; finished = true;
+      if (apply && input.value !== original && !options.isLocked()) {
+        if (revision !== openedRevision || model.source.slice(start, end) !== original) options.message('The link changed while editing; the draft was not applied.');
+        else replaceLogicalSelection(input.value, 'command', { from: start, to: end, all: false, collapsed: false });
+      }
+      input.remove();
+    };
+    input.addEventListener('keydown', e => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { finish(true); return; }
+      e.stopPropagation();
+      if (e.key === 'Escape') { e.preventDefault(); finish(false); view.focus(); }
+      else if (e.key === 'Enter') { e.preventDefault(); finish(true); view.focus(); }
+    });
+    input.addEventListener('blur', () => finish(true));
+  }
   function revealAtomSource(pmPos, attrText, image = false) {
     if (options.isLocked()) return;
     const mapped = richMapping(model, pmPos, { bias: 'right' });
@@ -662,6 +710,35 @@ export function createRichEditor(parent, options) {
   }
   function imageView(node, editorView, getPos) {
     const dom = document.createElement('span'); dom.className = 'image-widget'; dom.contentEditable = 'false'; let generation = 0;
+    dom.addEventListener('dblclick', event => {
+      if (options.isLocked() || event.target.closest('button,textarea')) return;
+      let pos;
+      try { pos = getPos(); } catch { return; }
+      const owner = richMapping(model, pos, { bias: 'right' })?.owner;
+      if (!owner || owner.confidence !== 'exact' || owner.supported === false || !Number.isInteger(owner.sourceFrom) || !Number.isInteger(owner.sourceTo)) return;
+      const from = owner.sourceFrom, to = owner.sourceTo, original = model.source.slice(from, to), openedRevision = revision;
+      if (!original.startsWith('![')) return;
+      event.preventDefault(); event.stopPropagation();
+      const previous = [...dom.childNodes]; previous.forEach(child => { if (child instanceof HTMLElement) child.hidden = true; });
+      const input = document.createElement('textarea'); input.className = 'inline-markdown-source'; input.setAttribute('aria-label', 'Image Markdown');
+      input.rows = 1; input.value = original; input.spellcheck = false; dom.append(input); input.focus();
+      let finished = false;
+      const finish = apply => {
+        if (finished) return; finished = true;
+        if (apply && input.value !== original && !options.isLocked()) {
+          if (revision !== openedRevision || model.source.slice(from, to) !== original) options.message('The image changed while editing; the draft was not applied.');
+          else if (replaceLogicalSelection(input.value, 'command', { from, to, all: false, collapsed: false }).committed) { view.focus(); return; }
+        }
+        input.remove(); previous.forEach(child => { if (child instanceof HTMLElement) child.hidden = false; });
+      };
+      input.addEventListener('keydown', e => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { finish(true); return; }
+        e.stopPropagation();
+        if (e.key === 'Escape') { e.preventDefault(); finish(false); view.focus(); }
+        else if (e.key === 'Enter') { e.preventDefault(); finish(true); view.focus(); }
+      });
+      input.addEventListener('blur', () => finish(true));
+    });
     const lease = options.reserveImage();
     const edit = button('Edit image', () => {
       if (options.isLocked()) return;
@@ -695,6 +772,85 @@ export function createRichEditor(parent, options) {
   }
   function codeView(node, editor, getPos) {
     const dom = document.createElement('div'); dom.className = 'code-container';
+    let codeSourceEditing = false;
+    dom.addEventListener('dblclick', event => {
+      if (options.isLocked() || codeSourceEditing || event.target.closest('input,textarea,button')) return;
+      let pos;
+      try { pos = getPos(); } catch { return; }
+      let ledger = model.ledger;
+      if (!ledger) { try { ledger = model.ledger = buildLedger(model.source, model.doc, { segments: model.segments }); } catch { return; } }
+      const owner = ledger?.owners?.find(entry => entry.pmFrom === pos && entry.type === 'code_block');
+      if (!owner || owner.confidence !== 'exact' || owner.supported === false) return;
+      const from = owner.sourceFrom;
+      let to = owner.sourceTo;
+      while (to > from && /[\r\n]/.test(model.source[to - 1])) to--;
+      const original = model.source.slice(from, to);
+      if (!/^( {0,3})(`{3,}|~{3,})/.test(original)) return;
+      event.preventDefault(); event.stopPropagation();
+      codeSourceEditing = true;
+      const draft = document.createElement('textarea');
+      draft.className = 'code-markdown-source'; draft.setAttribute('aria-label', 'Edit code block Markdown');
+      draft.value = original; draft.rows = Math.max(3, original.split('\n').length); draft.spellcheck = false;
+      dom.replaceChildren(draft); draft.focus();
+      let finished = false;
+      const finish = apply => {
+        if (finished) return;
+        finished = true; codeSourceEditing = false;
+        if (apply && !options.isLocked() && model.source.slice(from, to) === original && draft.value !== original) {
+          if (replaceLogicalSelection(draft.value, 'command', { from, to, all: false, collapsed: false }).committed) { view.focus(); return; }
+        }
+        render(); view.focus();
+      };
+      draft.addEventListener('keydown', e => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { finish(true); return; }
+        e.stopPropagation();
+        if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+        else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); finish(true); }
+      });
+      draft.addEventListener('blur', () => finish(true));
+    });
+    const fenceInfo = document.createElement('input');
+    fenceInfo.className = 'code-fence-info'; fenceInfo.type = 'text';
+    fenceInfo.setAttribute('aria-label', 'Code fence info');
+    fenceInfo.title = 'Edit code fence info (Enter to apply, Escape to cancel)'; fenceInfo.placeholder = 'Language';
+    fenceInfo.spellcheck = false; fenceInfo.contentEditable = 'false';
+    function fenceRange() {
+      let pos;
+      try { pos = getPos(); } catch { return null; }
+      if (!Number.isInteger(pos)) return null;
+      let ledger = model.ledger;
+      if (!ledger) {
+        try { ledger = model.ledger = buildLedger(model.source, model.doc, { segments: model.segments }); } catch { return null; }
+      }
+      const owner = ledger?.owners?.find(entry => entry.pmFrom === pos && entry.type === 'code_block');
+      if (!owner || owner.confidence !== 'exact' || owner.supported === false) return null;
+      const lineEnd = model.source.indexOf('\n', owner.sourceFrom);
+      const end = lineEnd < 0 ? owner.sourceTo : Math.min(lineEnd, owner.sourceTo);
+      const line = model.source.slice(owner.sourceFrom, end).replace(/\r$/, '');
+      const match = /^( {0,3})(`{3,}|~{3,})([^\r\n]*)$/.exec(line);
+      if (!match) return null;
+      const from = owner.sourceFrom + match[1].length + match[2].length;
+      return { from, to: owner.sourceFrom + line.length, value: match[3], fence: match[2] };
+    }
+    function syncFenceInfo() {
+      const range = fenceRange();
+      fenceInfo.hidden = !range; fenceInfo.disabled = options.isLocked();
+      if (range && document.activeElement !== fenceInfo) fenceInfo.value = range.value;
+    }
+    function commitFenceInfo() {
+      const range = fenceRange();
+      if (!range || options.isLocked()) return;
+      const value = fenceInfo.value;
+      if (range.fence[0] === '`' && value.includes('`')) { options.message('Backticks are not allowed in a backtick fence info string.'); fenceInfo.value = range.value; return; }
+      if (value !== range.value) replaceLogicalSelection(value, 'command', { from: range.from, to: range.to, all: false, collapsed: false });
+      try { view.focus(); } catch {}
+    }
+    fenceInfo.addEventListener('keydown', event => {
+      event.stopPropagation();
+      if (event.key === 'Enter') { event.preventDefault(); commitFenceInfo(); }
+      else if (event.key === 'Escape') { event.preventDefault(); const range = fenceRange(); if (range) fenceInfo.value = range.value; try { view.focus(); } catch {} }
+    });
+    fenceInfo.addEventListener('blur', () => { const range = fenceRange(); if (range) fenceInfo.value = range.value; });
     const drawing = document.createElement('div');
     // The native renderer already owns a safe, sanitized syntax highlighter.
     // Keep its tokens in a non-editable backing layer and leave the real
@@ -761,13 +917,14 @@ export function createRichEditor(parent, options) {
       }, 60);
     };
     const render = async () => {
+      syncFenceInfo();
       const language = node.attrs.params.trim().split(/\s/)[0]; dom.dataset.language = language;
       if (language === 'math') {
         clearHighlight(); clearTimeout(renderTimer); renderTimer = 0; abortController?.abort(); source = null; theme = null;
         dom.classList.remove('mermaid-host'); delete dom.dataset.mermaidSource; delete dom.dataset.diagramState;
         summary.textContent = 'Math source';
         if (pre.parentNode !== details) details.append(summary, pre);
-        if (!drawing.isConnected || !details.isConnected) dom.replaceChildren(drawing, details);
+        if (!drawing.isConnected || !details.isConnected) dom.replaceChildren(fenceInfo, drawing, details);
         const current = ++generation, tex = node.textContent;
         drawing.className = 'math-block math-formula'; drawing.textContent = tex;
         try {
@@ -785,7 +942,7 @@ export function createRichEditor(parent, options) {
         generation++; clearTimeout(renderTimer); renderTimer = 0; abortController?.abort(); source = null; theme = null;
         dom.classList.remove('mermaid-host'); delete dom.dataset.mermaidSource; delete dom.dataset.diagramState;
         code.className = /^[a-z0-9_+#.-]+$/i.test(language) ? `language-${language}` : '';
-        if (pre.parentNode !== dom || highlight.nextSibling !== pre) dom.replaceChildren(highlight, pre);
+        if (pre.parentNode !== dom || highlight.nextSibling !== pre) dom.replaceChildren(fenceInfo, highlight, pre);
         scheduleHighlight(language);
         return;
       }
@@ -793,7 +950,7 @@ export function createRichEditor(parent, options) {
       summary.textContent = 'Diagram source';
       dom.classList.add('mermaid-host'); dom.dataset.mermaidSource = node.textContent;
       if (pre.parentNode !== details) details.append(summary, pre);
-      if (!drawing.isConnected || !details.isConnected) dom.replaceChildren(drawing, details);
+      if (!drawing.isConnected || !details.isConnected) dom.replaceChildren(fenceInfo, drawing, details);
       const text = node.textContent, nextTheme = options.themeRevision();
       if (source === text && theme === nextTheme) return;
       // A keystroke changes the exact source, so any render still in flight is
@@ -838,7 +995,7 @@ export function createRichEditor(parent, options) {
       }, hadDiagram ? 120 : 0);
     };
     render(); refreshers.add(render);
-    return { dom, contentDOM: code, update(next) { if (next.type !== node.type) return false; if (next.sameMarkup(node) && next.textContent === node.textContent) { node = next; return true; } node = next; render(); return true; }, ignoreMutation: mutation => mutation.type === 'attributes' || !pre.contains(mutation.target), destroy() { generation++; clearTimeout(renderTimer); clearTimeout(highlightTimer); highlightGeneration++; abortController?.abort(); refreshers.delete(render); } };
+    return { dom, contentDOM: code, update(next) { if (next.type !== node.type) return false; if (next.sameMarkup(node) && next.textContent === node.textContent) { node = next; return true; } node = next; render(); return true; }, stopEvent: event => event.target === fenceInfo || event.target.classList?.contains('code-markdown-source'), ignoreMutation: mutation => mutation.type === 'attributes' || !pre.contains(mutation.target), destroy() { generation++; clearTimeout(renderTimer); clearTimeout(highlightTimer); highlightGeneration++; abortController?.abort(); refreshers.delete(render); } };
   }
   // Reading selections may start, cross and end inside a rendered projection
   // or inline element. ProseMirror maps any DOM position inside an atom to
@@ -1174,10 +1331,39 @@ export function createRichEditor(parent, options) {
       try { dom.contentEditable = String(!options.isUserLocked()); } catch {}
     };
     syncEditability();
-    const guardMutation = event => { event.preventDefault(); };
+    const guardMutation = event => { if (!event.target.closest?.('.inline-markdown-source')) event.preventDefault(); };
     dom.addEventListener('beforeinput', guardMutation);
     dom.addEventListener('drop', guardMutation);
     dom.addEventListener('dragstart', guardMutation);
+    dom.addEventListener('dblclick', event => {
+      if (options.isLocked() || event.target.closest('textarea')) return;
+      let pos;
+      try { pos = getPos(); } catch { return; }
+      const owner = richMapping(model, pos, { bias: 'right' })?.owner;
+      if (!owner || owner.confidence !== 'exact' || owner.supported === false) return;
+      const from = owner.sourceFrom, to = owner.sourceTo, original = model.source.slice(from, to), openedRevision = revision;
+      if (original !== node.attrs.source) return;
+      event.preventDefault(); event.stopPropagation();
+      const prior = document.createDocumentFragment(); while (dom.firstChild) prior.append(dom.firstChild);
+      const input = document.createElement('textarea'); input.className = 'inline-markdown-source'; input.setAttribute('aria-label', 'Inline HTML source');
+      input.rows = 1; input.value = original; input.spellcheck = false; dom.append(input); input.focus();
+      let finished = false;
+      const finish = apply => {
+        if (finished) return; finished = true;
+        if (apply && input.value !== original && !options.isLocked()) {
+          if (revision !== openedRevision || model.source.slice(from, to) !== original) options.message('The HTML changed while editing; the draft was not applied.');
+          else if (replaceLogicalSelection(input.value, 'command', { from, to, all: false, collapsed: false }).committed) { view.focus(); return; }
+        }
+        input.remove(); dom.append(prior);
+      };
+      input.addEventListener('keydown', e => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { finish(true); return; }
+        e.stopPropagation();
+        if (e.key === 'Escape') { e.preventDefault(); finish(false); view.focus(); }
+        else if (e.key === 'Enter') { e.preventDefault(); finish(true); view.focus(); }
+      });
+      input.addEventListener('blur', () => finish(true));
+    });
     // Author links behave like Markdown links: plain click reveals the exact
     // source in the source presentation for editing, Ctrl/Cmd-click opens.
     // Other inline elements have no click action; the atom selects normally.
@@ -1353,9 +1539,11 @@ export function createRichEditor(parent, options) {
       if (options.isLocked()) return;
       const frame = sourceFrame();
       if (!frame) { options.message('Could not safely locate this block in the source.'); return; }
-      if (sourceInput.value === model.source.slice(frame.from, frame.to)) { panel.hidden = true; edit.focus(); return; }
+      if (sourceInput.value === model.source.slice(frame.from, frame.to)) { panel.hidden = true; projection.hidden = false; edit.focus(); return; }
+      projection.hidden = false;
       const outcome = replaceLogicalSelection(sourceInput.value, 'command', { from: frame.from, to: frame.to, all: false, collapsed: false });
       if (outcome.committed) { panel.hidden = true; editor.focus(); }
+      else projection.hidden = true;
     };
     // Only reachable when the ledger cannot prove an exact byte range for this
     // block. Kept until the source presentation is removed.
@@ -1384,6 +1572,7 @@ export function createRichEditor(parent, options) {
       const frame = sourceFrame();
       if (!frame) { revealFallback(); return; }
       sourceInput.value = model.source.slice(frame.from, frame.to);
+      projection.hidden = true;
       panel.hidden = false;
       sourceInput.focus();
       sourceInput.select();
@@ -1392,11 +1581,11 @@ export function createRichEditor(parent, options) {
     edit.setAttribute('aria-label', `${editLabel} for this block`);
     edit.title = 'Edit this block’s Markdown in place';
     sourceInput.addEventListener('keydown', event => {
-      if (event.key === 'Escape') { event.preventDefault(); panel.hidden = true; edit.focus(); return; }
+      if (event.key === 'Escape') { event.preventDefault(); panel.hidden = true; projection.hidden = false; edit.focus(); return; }
       if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); commitSource(); }
     });
     const applySource = button('Apply', commitSource);
-    const cancelSource = button('Cancel', () => { panel.hidden = true; edit.focus(); });
+    const cancelSource = button('Cancel', () => { panel.hidden = true; projection.hidden = false; edit.focus(); });
     panel.append(sourceInput, applySource, cancelSource);
     actions.append(edit);
     dom.append(projection, actions, panel);
@@ -1835,13 +2024,15 @@ export function createRichEditor(parent, options) {
           let composing = false;
           const commit = () => {
             if (composing || !input.value || options.isLocked()) return;
-            if (input.value === '/') { input.value = ''; openSlashMenu(input, true); return; }
             const text = input.value;
             const source = model.source, newline = source.includes('\r\n') ? '\r\n' : '\n';
             const separator = !source || /(?:\r?\n){2}$/.test(source) ? '' : /\n$/.test(source) ? newline : newline + newline;
             const end = source.length;
             const result = replaceLogicalSelection(separator + text, 'typing', { from: end, to: end, all: false, collapsed: true });
-            if (result.committed) { input.value = ''; view.focus(); }
+            if (result.committed) {
+              input.value = ''; view.focus();
+              if (text === '/') openSlashMenu(view.dom);
+            }
           };
           input.addEventListener('compositionstart', () => { composing = true; });
           input.addEventListener('compositionend', () => { composing = false; commit(); });
@@ -1926,7 +2117,8 @@ export function createRichEditor(parent, options) {
   let headingPress = null;
   function closePopup(restore = false) {
     if (!activePopup) return;
-    const { menu, trigger } = activePopup; activePopup = null;
+    const { menu, trigger, cleanup } = activePopup; activePopup = null;
+    cleanup?.();
     trigger?.setAttribute('aria-expanded', 'false'); menu.remove();
     if (restore) trigger?.focus();
   }
@@ -2049,14 +2241,17 @@ export function createRichEditor(parent, options) {
       return true;
     } catch { return false; }
   }
-  function openSlashMenu(trigger, tail, coordinates = null) {
+  function openSlashMenu(trigger) {
     if (options.isLocked()) return;
     closePopup();
+    const initial = sourceSelection(view.state);
+    const start = initial.head - 1;
+    if (initial.anchor !== initial.head || model.source.slice(start, initial.head) !== '/') return;
     const menu = document.createElement('div'); menu.className = 'folio-slash-menu';
-    menu.setAttribute('role', 'dialog'); menu.setAttribute('aria-label', 'Insert block');
-    const search = document.createElement('input'); search.type = 'search';
-    search.setAttribute('aria-label', 'Search blocks'); search.placeholder = 'Search blocks…';
-    menu.append(search);
+    menu.id = 'folio-block-suggestions';
+    menu.setAttribute('role', 'listbox'); menu.setAttribute('aria-label', 'Insert block');
+    const heading = document.createElement('div'); heading.className = 'folio-slash-heading';
+    heading.textContent = 'Insert block'; heading.setAttribute('aria-hidden', 'true'); menu.append(heading);
     const list = document.createElement('div'); menu.append(list);
     const choices = [
       ['Paragraph', 'paragraph', ''], ...Array.from({ length: 6 }, (_, i) => [`Heading ${i + 1}`, `heading${i + 1}`, `${'#'.repeat(i + 1)} Heading`]),
@@ -2064,17 +2259,15 @@ export function createRichEditor(parent, options) {
       ['Quote', 'quote', '> Quote'], ['Table', 'table', '| Column 1 | Column 2 |\n| --- | --- |\n|  |  |'],
       ['Horizontal line', 'rule', '---']
     ];
-    const choose = ([, command, literal]) => {
+    let selected = 0;
+    let matches = choices;
+    const choose = ([, command]) => {
+      const end = sourceSelection(view.state).head;
       closePopup();
-      if (tail) {
-        if (!literal) { trigger.focus(); return; }
-        const source = model.source, newline = source.includes('\r\n') ? '\r\n' : '\n';
-        const separator = !source || /(?:\r?\n){2}$/.test(source) ? '' : /\n$/.test(source) ? newline : newline + newline;
-        const end = source.length;
-        const result = replaceLogicalSelection(separator + literal.replace(/\n/g, newline), 'command', { from: end, to: end, all: false, collapsed: true });
-        if (result.committed) view.focus();
-        return;
-      }
+      const caret = view.state.selection.from;
+      const length = end - start;
+      if (!view.state.selection.empty || length < 1 || view.state.selection.$from.parentOffset < length) return;
+      view.dispatch(view.state.tr.delete(caret - length, caret));
       view.focus();
       const commands = {
         paragraph: setBlockType(schema.nodes.paragraph), bullet: wrapInList(schema.nodes.bullet_list),
@@ -2089,23 +2282,43 @@ export function createRichEditor(parent, options) {
       } else commands[command]?.(view.state, view.dispatch, view);
     };
     function render() {
+      const selection = sourceSelection(view.state);
+      if (selection.anchor !== selection.head || selection.head < start + 1 || model.source[start] !== '/') { closePopup(); return; }
+      const query = model.source.slice(start + 1, selection.head).toLowerCase();
+      matches = choices.filter(item => item[0].toLowerCase().includes(query));
+      if (!matches.length) { closePopup(); return; }
+      selected = Math.min(selected, matches.length - 1);
       list.replaceChildren();
-      const query = search.value.trim().toLowerCase();
-      for (const choice of choices.filter(item => item[0].toLowerCase().includes(query))) {
-        const item = document.createElement('button'); item.type = 'button'; item.textContent = choice[0];
+      for (const [index, choice] of matches.entries()) {
+        const item = document.createElement('button'); item.type = 'button';
+        const icon = document.createElement('span'); icon.className = 'folio-slash-icon'; icon.setAttribute('aria-hidden', 'true');
+        const command = choice[1];
+        icon.textContent = /^heading[1-6]$/.test(command) ? `H${command.slice(-1)}` :
+          ({ paragraph: '¶', bullet: '•', numbered: '1.', quote: '❞', table: '▦', rule: '—' }[command] || '');
+        const label = document.createElement('span'); label.textContent = choice[0];
+        item.append(icon, label);
+        item.id = `folio-block-option-${index}`;
+        item.setAttribute('role', 'option'); item.setAttribute('aria-selected', String(index === selected));
+        item.addEventListener('mousedown', event => event.preventDefault());
         item.addEventListener('click', () => choose(choice)); list.append(item);
       }
+      trigger.setAttribute('aria-activedescendant', `folio-block-option-${selected}`);
     }
-    search.addEventListener('input', render);
-    menu.addEventListener('keydown', event => {
-      if (event.key === 'Escape') { event.preventDefault(); closePopup(true); }
-      else if (event.key === 'ArrowDown') { event.preventDefault(); (document.activeElement.nextElementSibling || list.firstElementChild)?.focus(); }
-      else if (event.key === 'ArrowUp') { event.preventDefault(); (document.activeElement.previousElementSibling || search)?.focus(); }
-      else if (event.key === 'Enter' && event.target === search) { event.preventDefault(); list.firstElementChild?.click(); }
-    });
-    render(); activePopup = { menu, trigger };
-    const rect = coordinates ? { left: coordinates.left, bottom: coordinates.bottom } : trigger.getBoundingClientRect();
-    positionPopup(menu, rect); search.focus();
+    trigger.setAttribute('aria-controls', menu.id);
+    trigger.setAttribute('aria-expanded', 'true');
+    activePopup = { menu, trigger, update: render, cleanup() {
+      trigger.removeAttribute('aria-controls'); trigger.removeAttribute('aria-activedescendant');
+    }, keydown(event) {
+      if (event.key === 'Escape') { closePopup(); return true; }
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        selected = (selected + (event.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length;
+        render(); list.children[selected]?.scrollIntoView({ block: 'nearest' }); return true;
+      }
+      if (event.key === 'Enter') { choose(matches[selected]); return true; }
+      return false;
+    } };
+    render();
+    if (activePopup) positionPopup(menu, view.coordsAtPos(view.state.selection.from));
   }
   view = new EditorView(parent, {
     // Keep the view focusable during temporary transition protection; the
@@ -2136,6 +2349,7 @@ export function createRichEditor(parent, options) {
         setBookmark(commit.selection.anchor, commit.selection.head, result.state);
         commitOutcome = true;
         options.onChange(model.source, sourceSelection(result.state), beforeSelection, commit.typing);
+        activePopup?.update?.();
         return;
       }
       const nextModel = changed ? tryTextEdits(model, result.transactions, result.state.doc) || updateSource(result.state.doc, model) : model;
@@ -2149,9 +2363,11 @@ export function createRichEditor(parent, options) {
         const typing = !tr.getMeta('folio-action') && tr.steps.every(step => { const json = step.toJSON(); return json.stepType === 'replace' && (!json.slice || json.slice.content?.every(node => node.type === 'text')); });
         options.onChange(model.source, sourceSelection(result.state), beforeSelection, typing);
       }
+      activePopup?.update?.();
     },
     handleKeyDown(editor, event) {
       if (event.isComposing) return false;
+      if (activePopup?.keydown?.(event)) return true;
       // A projection-only trailing input must not steal the browser's end of
       // document navigation from a final editable code block.
       if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key === 'End') {
@@ -2171,7 +2387,8 @@ export function createRichEditor(parent, options) {
       if (editor.composing) return false;
       if (text === '/' && from === to && editor.state.selection.$from.parent.type === schema.nodes.paragraph &&
           editor.state.selection.$from.parent.content.size === 0 && !options.isLocked()) {
-        openSlashMenu(editor.dom, false, editor.coordsAtPos(from));
+        editor.dispatch(editor.state.tr.insertText(text, from, to));
+        openSlashMenu(editor.dom);
         return true;
       }
       // A formatting command (Ctrl+B/Ctrl+I or a toolbar mark) sets stored
@@ -2328,7 +2545,8 @@ export function createRichEditor(parent, options) {
         let from = ranges[index].from, to = ranges[index].to;
         for (let i = index - 1; i >= 0 && ranges[i].to === from; i--) from = ranges[i].from;
         for (let i = index + 1; i < ranges.length && ranges[i].from === to; i++) to = ranges[i].to;
-        revealLinkSource(from, to, href);
+        if (event.altKey) editLinkMarkdown(anchor, from, to);
+        else revealLinkSource(from, to, href);
       }
       return true;
     }, auxclick(editor, event) { const anchor = event.target.closest('a'); if (!anchor || event.button !== 1) return false; event.preventDefault(); options.openLink(anchor.getAttribute('href') || ''); return true; } }
@@ -2527,15 +2745,33 @@ export function createRichEditor(parent, options) {
   function updateHoverAnchor(clientX, clientY, rawTarget) {
     if (handleDrag) return;
     const target = rawTarget instanceof Element ? rawTarget : null;
-    if (!target || !view.dom.contains(target)) { scheduleHoverClear(); return; }
-    const wrapper = target.closest ? target.closest('.tableWrapper') : null;
-    if (!wrapper || !view.dom.contains(wrapper)) { scheduleHoverClear(); return; }
+    if (target && (handlesLayer.contains(target) || target === addRowBtn || target === addColBtn)) { cancelHoverClear(); return; }
+    const reader = view.dom.closest('.reader-scroll');
+    if (!target || !reader?.contains(target)) { scheduleHoverClear(); return; }
+    let wrapper = target.closest('.tableWrapper');
+    if (!wrapper || !view.dom.contains(wrapper)) {
+      // A narrow, non-intercepting gutter makes controls discoverable even
+      // when the pointer approaches from outside the table.
+      wrapper = null;
+      for (const candidate of view.dom.querySelectorAll('.tableWrapper')) {
+        const bounds = candidate.getBoundingClientRect();
+        const insideX = clientX >= bounds.left && clientX <= bounds.right;
+        const insideY = clientY >= bounds.top && clientY <= bounds.bottom;
+        if ((insideY && clientX >= bounds.left - HOVER_EDGE && clientX <= bounds.right + HOVER_EDGE) ||
+            (insideX && clientY >= bounds.top - HOVER_EDGE && clientY <= bounds.bottom + HOVER_EDGE)) {
+          wrapper = candidate; break;
+        }
+      }
+    }
+    if (!wrapper) { scheduleHoverClear(); return; }
     cancelHoverClear();
     const rect = wrapper.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return;
     const x = clientX, y = clientY;
     let zone = 'cell';
-    if (y <= rect.top + HOVER_EDGE) zone = 'top';
+    if (x < rect.left) zone = 'left';
+    else if (x > rect.right) zone = 'right';
+    else if (y <= rect.top + HOVER_EDGE) zone = 'top';
     else if (y >= rect.bottom - HOVER_EDGE) zone = 'bottom';
     else if (x <= rect.left + HOVER_EDGE) zone = 'left';
     else if (x >= rect.right - HOVER_EDGE) zone = 'right';
@@ -2558,9 +2794,7 @@ export function createRichEditor(parent, options) {
     hoverAnchor = anchor;
     try { syncTableChrome(); } catch {}
   }
-  view.dom.addEventListener('pointerover', onTablePointerOver);
-  view.dom.addEventListener('pointermove', onTablePointerOver);
-  view.dom.addEventListener('pointerleave', scheduleHoverClear);
+  document.addEventListener('pointermove', onTablePointerOver);
   function pinChromeOnHover(element) {
     element.addEventListener('pointerenter', cancelHoverClear);
     element.addEventListener('pointerleave', scheduleHoverClear);
@@ -2665,6 +2899,7 @@ export function createRichEditor(parent, options) {
     btn.setAttribute('aria-expanded', 'false');
     const grip = document.createElement('span');
     grip.className = 'folio-table-grip';
+    grip.textContent = kind === 'row' ? '↕' : '↔';
     grip.setAttribute('aria-hidden', 'true');
     btn.append(grip);
     btn.addEventListener('mousedown', event => event.preventDefault());
@@ -3045,10 +3280,6 @@ export function createRichEditor(parent, options) {
   function openTableMenuFor(kind, index, trigger, coords) {
     const info = actionInfo();
     if (!info) return;
-    if (!options.isLocked()) {
-      if (kind === 'row') selectTableCell(index, info.col, info);
-      else selectTableCell(info.row, index, info);
-    }
     let anchor = null;
     if (coords && Number.isFinite(coords.left) && Number.isFinite(coords.bottom)) anchor = coords;
     else if (trigger) {
@@ -3056,6 +3287,15 @@ export function createRichEditor(parent, options) {
         const rect = trigger.getBoundingClientRect();
         anchor = { left: rect.left, bottom: rect.bottom };
       } catch {}
+    }
+    // Selecting a different cell rebuilds the handle layer. Measure the
+    // original button first, then use its replacement for focus restoration.
+    if (!options.isLocked()) {
+      if (kind === 'row') selectTableCell(index, info.col, info);
+      else selectTableCell(info.row, index, info);
+    }
+    if (trigger && !trigger.isConnected) {
+      trigger = handlesLayer.querySelector(kind === 'row' ? `[data-handle-row="${index}"]` : `[data-handle-col="${index}"]`);
     }
     openTableMenu(trigger || null, anchor);
   }
@@ -3290,8 +3530,7 @@ export function createRichEditor(parent, options) {
       document.removeEventListener('pointermove', onHandlePointerMove);
       document.removeEventListener('pointerup', onHandlePointerUp);
       document.removeEventListener('pointercancel', onHandlePointerCancel);
-      try { view.dom.removeEventListener('pointerover', onTablePointerOver); } catch {}
-      try { view.dom.removeEventListener('pointerleave', scheduleHoverClear); } catch {}
+      try { document.removeEventListener('pointermove', onTablePointerOver); } catch {}
       cancelHoverClear();
       hoverAnchor = null;
       document.removeEventListener('pointerdown', dismissPopup, true);

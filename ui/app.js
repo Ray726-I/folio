@@ -9,7 +9,7 @@ let remoteImages = preferences.get('remoteImages', false) === true;
 let readingFont = preferences.get('readingFont', 'serif') === 'sans' ? 'sans' : 'serif';
 const legacyOutline = preferences.get('outline', null);
 if (preferences.get('outlineWidth', null) === null && typeof legacyOutline === 'number') preferences.set('outlineWidth', legacyOutline);
-let outlineVisible = preferences.get('outlineVisible', typeof legacyOutline === 'boolean' ? legacyOutline : false), toastTimer;
+let outlineVisible = preferences.get('outlineVisible', typeof legacyOutline === 'boolean' ? legacyOutline : true), toastTimer;
 let wideLayout = preferences.get('wideLayout', false);
 let formatToolbarVisible = preferences.get('formatToolbarVisible', true);
 function filePicker() { const value = preferences.get('filePicker', 'folio'); return value === 'native' ? 'native' : 'folio'; }
@@ -133,7 +133,11 @@ function showDocument() {
   document.querySelectorAll('.document-control').forEach(control => { control.hidden = !current.active; });
   setFormatToolbarVisible(formatToolbarVisible, false);
   if (!current.active) editorPresentation(false, false, false);
-  $('disk-banner').hidden = true; saveStatus = null; updateTitle(); updateStats(); setOutline(outlineVisible);
+  $('disk-banner').hidden = true; saveStatus = null; updateTitle(); updateStats();
+  // Opening a file keeps whichever dock mode is open, so picking from the tree
+  // does not yank the tree away from under the pointer.
+  if (!current.active && activeFolder) setFolderVisible(true);
+  else renderNavigationDock();
   $('folder-empty').hidden = current.active || !activeFolder;
   syncFolderSelection();
 }
@@ -144,7 +148,7 @@ function showWelcome() {
   $('preview').replaceChildren(); $('folder-empty').hidden = true;
   $('disk-banner').hidden = true; $('find-bar').hidden = true;
   $('outline').hidden = true; $('outline-divider').hidden = true;
-  $('file-browser').hidden = true; $('folder-divider').hidden = true; $('folder-toggle').hidden = true;
+  $('file-browser').hidden = true; $('folder-divider').hidden = true;
   document.body.classList.remove('focus-mode');
   document.querySelectorAll('.document-control').forEach(control => { control.hidden = true; });
   setFormatToolbarVisible(formatToolbarVisible, false); editorPresentation(false, false, false);
@@ -172,14 +176,49 @@ function goHome() {
     }
   });
 }
-const narrowDrawers = () => window.matchMedia('(max-width:960px)').matches;
-function setOutline(visible, persist = true) {
-  outlineVisible = visible;
-  if (visible && narrowDrawers() && !$('file-browser').hidden) setFolderVisible(false);
-  $('outline').hidden = !visible || !current.active;
+const narrowDrawers = () => window.matchMedia('(max-width:640px)').matches;
+let dockTab = 'outline', dockVisible = outlineVisible;
+function renderNavigationDock() {
+  const show = dockVisible && !$('document-view').hidden;
+  $('outline').hidden = !(show && dockTab === 'outline' && current.active);
+  $('file-browser').hidden = !(show && dockTab === 'files');
   $('outline-divider').hidden = $('outline').hidden;
-  $('outline-toggle').setAttribute('aria-pressed', String(visible));
-  $('outline-toggle').setAttribute('aria-expanded', String(visible && current.active));
+  $('folder-divider').hidden = $('file-browser').hidden;
+  $('dock-open-folder').hidden = Boolean(activeFolder);
+  $('folder-refresh').hidden = !activeFolder;
+  for (const tab of document.querySelectorAll('[data-dock-tab]')) {
+    // Contents has nothing to list without a document; keep the rail honest
+    // instead of exposing a mode that would open an empty panel.
+    const available = tab.dataset.dockTab !== 'outline' || current.active;
+    tab.disabled = !available;
+    tab.setAttribute('aria-pressed', String(available && show && tab.dataset.dockTab === dockTab));
+  }
+  syncFindControl();
+}
+// The rail's search button is an action, not a pane: it opens the in-document
+// find bar and keeps its pressed state in step with that bar.
+function syncFindControl() {
+  const button = document.querySelector('[data-rail-action="find"]');
+  if (!button) return;
+  button.disabled = !current.active;
+  button.setAttribute('aria-pressed', String(!$('find-bar').hidden));
+}
+// The rail is the only sidebar control: pressing the active mode closes the
+// dock, pressing the other mode switches to it.
+function toggleDock(tab) {
+  if (dockVisible && dockTab === tab) {
+    if (tab === 'outline') setOutline(false);
+    else setFolderVisible(false);
+  } else if (tab === 'outline') setOutline(true);
+  else setFolderVisible(true);
+}
+function setOutline(visible, persist = true) {
+  // Contents needs a document; the rail disables the mode before this runs.
+  if (visible && !current.active) return;
+  outlineVisible = visible;
+  if (visible) { dockTab = 'outline'; dockVisible = true; folderVisible = false; }
+  else if (dockTab === 'outline') dockVisible = false;
+  renderNavigationDock();
   if (persist) preferences.set('outlineVisible', visible);
   if (visible && !$('outline').hidden && typeof refreshEditorOutline === 'function') refreshEditorOutline();
 }
@@ -235,8 +274,8 @@ function setupSidebarResize(sidebarId, dividerId, key, defaultWidth, styleName =
     preferences.set(key, appliedWidth);
   });
 }
-setupSidebarResize('file-browser', 'folder-divider', 'folder', 250);
-setupSidebarResize('outline', 'outline-divider', 'outlineWidth', 248, 'outline');
+setupSidebarResize('file-browser', 'folder-divider', 'dockWidth', 250, 'dock');
+setupSidebarResize('outline', 'outline-divider', 'dockWidth', 250, 'dock');
 // The shell always shows the formatted editor; opening a document only needs
 // the editor mounted and the find matches refreshed.
 async function refreshEditorSurface() {
@@ -301,8 +340,8 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () 
   if (selectedTheme === 'system') { updatePreviewPalette(); refreshMermaid(); editor?.refreshMedia(); }
 });
 // The outline steps aside for the file tree on narrow screens; give it back when there is room.
-window.matchMedia('(max-width:960px)').addEventListener('change', event => {
-  if (!event.matches && outlineVisible && $('outline').hidden) setOutline(true);
+window.matchMedia('(max-width:640px)').addEventListener('change', event => {
+  renderNavigationDock();
 });
 function ask(title, message, choices) {
   return new Promise(resolve => {
@@ -451,13 +490,9 @@ async function openNative(kind) {
 }
 function setFolderVisible(visible) {
   folderVisible = visible;
-  if (visible && narrowDrawers() && !$('outline').hidden) setOutline(false, false);
-  const shown = Boolean(activeFolder && visible);
-  $('file-browser').hidden = !shown;
-  $('folder-divider').hidden = !shown;
-  $('folder-toggle').hidden = !activeFolder;
-  $('folder-toggle').setAttribute('aria-pressed', String(shown));
-  $('folder-toggle').setAttribute('aria-expanded', String(shown));
+  if (visible) { dockTab = 'files'; dockVisible = true; outlineVisible = false; }
+  else if (dockTab === 'files') dockVisible = false;
+  renderNavigationDock();
 }
 function expandParentsOf(path) {
   let expanded = false;
@@ -483,7 +518,7 @@ function entryIsVisible(entry) {
   return true;
 }
 function renderFolderEntries() {
-  setFolderVisible(folderVisible);
+  renderNavigationDock();
   const list = $('folder-items');
   const scrollTop = $('folder-items').scrollTop;
   const previousFocus = document.activeElement?.closest?.('.folder-entry')?.dataset.path || null;
@@ -502,11 +537,11 @@ function renderFolderEntries() {
       const expanded = expandedFolders.has(pathKey(entry.path));
       button.setAttribute('aria-expanded', String(expanded));
       const chevron = icon('chevron'); chevron.classList.add('tree-chevron'); button.append(chevron);
-      button.append(icon('open'));
+      const folderIcon = icon('folder'); folderIcon.classList.add('tree-folder'); button.append(folderIcon);
       button.onclick = () => { expanded ? expandedFolders.delete(pathKey(entry.path)) : expandedFolders.add(pathKey(entry.path)); renderFolderEntries(); };
     } else {
       const spacer = document.createElement('span'); spacer.className = 'tree-spacer'; button.append(spacer);
-      button.append(icon('file'));
+      const fileIcon = icon('file'); fileIcon.classList.add('tree-file'); button.append(fileIcon);
       if (samePath(current.path, entry.path)) button.setAttribute('aria-current', 'page');
       button.onclick = () => requestOpen(entry.path);
     }
@@ -712,7 +747,7 @@ $('command-search').addEventListener('keydown', event => {
 for (const id of ['command-dialog']) $(id).addEventListener('click', event => { const bounds = $(id).getBoundingClientRect(); if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) $(id).close(); });
 
 let matches = [], findIndex = -1, findSource = null;
-function openFind() { if (!current.active) return; $('find-bar').hidden = false; $('find-input').focus(); $('find-input').select(); updateFind(); }
+function openFind() { if (!current.active) return; $('find-bar').hidden = false; $('find-input').focus(); $('find-input').select(); updateFind(); syncFindControl(); }
 function clearHighlights() { editor?.clearHighlight?.(); }
 function findMatches(query) {
   const result = [];
@@ -757,7 +792,7 @@ function nextFind(direction) {
   editor?.highlightRange?.(match.from, match.to);
   $('find-result').textContent = `${findIndex + 1} / ${matches.length}`;
 }
-function closeFind() { $('find-bar').hidden = true; clearHighlights(); editor?.focus(); }
+function closeFind() { $('find-bar').hidden = true; clearHighlights(); editor?.focus(); syncFindControl(); }
 function toggleFocus() { document.body.classList.toggle('focus-mode'); }
 function setDocumentWidth(full, persist = true) {
   // Anchor on what the reader is actually looking at, not on the first block.
@@ -779,6 +814,7 @@ function setDocumentWidth(full, persist = true) {
 function toggleDocumentWidth() { setDocumentWidth(!wideLayout); }
 function setFormatToolbarVisible(visible, persist = true) {
   formatToolbarVisible = visible !== false;
+  if (!formatToolbarVisible) closeAllMenus();
   $('format-tools').hidden = !formatToolbarVisible || !current.active;
   const button = $('format-toggle');
   button.setAttribute('aria-pressed', String(formatToolbarVisible));
@@ -790,7 +826,7 @@ function setFormatToolbarVisible(visible, persist = true) {
 }
 
 function closeAllMenus(returnFocus = false) {
-  for (const id of ['open-menu', 'view-menu']) {
+  for (const id of ['open-menu', 'view-menu', 'format-menu']) {
     const menu = $(id);
     if (menu && !menu.hidden) {
       menu.hidden = true;
@@ -839,10 +875,11 @@ function setupMenu(triggerId, menuId) {
   });
 }
 document.addEventListener('pointerdown', event => {
-  if (!event.target.closest('.menu') && !event.target.closest('[aria-controls="open-menu"],[aria-controls="view-menu"]')) closeAllMenus();
+  if (!event.target.closest('.menu') && !event.target.closest('[aria-controls="open-menu"],[aria-controls="view-menu"],[aria-controls="format-menu"]')) closeAllMenus();
 });
 setupMenu('open-chevron', 'open-menu');
 setupMenu('view-menu-button', 'view-menu');
+setupMenu('format-more', 'format-menu');
 
 $('home').onclick = goHome;
 $('open').onclick = $('welcome-open').onclick = openEntry;
@@ -864,11 +901,18 @@ $('open-dialog').addEventListener('keydown', event => { if (event.altKey && even
 $('open-confirm').onclick = confirmOpenPicker;
 $('open-cancel').onclick = $('open-dialog-close').onclick = () => $('open-dialog').close();
 $('folder-close').onclick = () => setFolderVisible(false);
-$('folder-toggle').onclick = () => setFolderVisible(!folderVisible);
+for (const tab of document.querySelectorAll('[data-dock-tab]')) {
+  tab.addEventListener('click', () => toggleDock(tab.dataset.dockTab));
+}
+document.querySelector('[data-rail-action="find"]').addEventListener('click', () => {
+  if ($('find-bar').hidden) openFind();
+  else closeFind();
+});
+$('dock-open-folder').onclick = openFolderEntry;
 $('folder-refresh').onclick = () => activeFolder && enqueue(async () => { const listing = await invoke('open_folder', { path: activeFolder.path }); activeFolder = { path: listing.path, name: listing.name }; folderEntries = listing.entries; renderFolderEntries(); });
 $('new').onclick = () => newDocument(); $('sample').onclick = () => newDocument(true);
 $('save').onclick = () => requestSave();
-$('palette-open').onclick = () => openCommands(); $('outline-toggle').onclick = () => setOutline(!outlineVisible); $('outline-close').onclick = () => setOutline(false);
+$('outline-close').onclick = () => setOutline(false);
 $('width-toggle').onclick = toggleDocumentWidth;
 $('format-toggle').onclick = () => setFormatToolbarVisible(!formatToolbarVisible);
 $('format-toolbar-close').onclick = () => {

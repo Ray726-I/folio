@@ -13,7 +13,7 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
   const { page, errors } = session;
   try {
     await page.waitForFunction(() => !editor.isSource());
-    await page.evaluate(() => { if (document.getElementById('outline').hidden) document.getElementById('outline-toggle').click(); });
+    await page.evaluate(() => { if (document.getElementById('outline').hidden) setOutline(true); });
     await page.waitForFunction(() => document.querySelectorAll('#outline-items .outline-link').length === 4);
     await page.waitForFunction(() => document.querySelector('#outline-items .outline-link')?.textContent === '😄 Welcome');
 

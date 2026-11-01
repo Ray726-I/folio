@@ -47,6 +47,10 @@ function setActiveOutline(index) {
   };
   paint(previous);
   paint(active);
+  const list = $('outline-items'), selected = outlineEntries[active].button;
+  const bounds = list.getBoundingClientRect(), item = selected.getBoundingClientRect();
+  if (item.top < bounds.top) list.scrollTop += Math.floor(item.top - bounds.top) - 1;
+  else if (item.bottom > bounds.bottom) list.scrollTop += Math.ceil(item.bottom - bounds.bottom) + 1;
 }
 function updateActiveOutline() {
   if (!outlineEntries.length) return;

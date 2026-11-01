@@ -8,6 +8,7 @@ const { openEditor } = require('./editor-browser.cjs');
     const block = page.locator('.extension-block').nth(1);
     await block.hover();
     await block.locator('.extension-edit').click();
+    assert.equal(await block.locator('.extension-preview').isHidden(), true, 'editing replaces the rendered block rather than adding a second view');
     const input = block.locator('.extension-source-editor textarea');
     await input.waitFor({ state: 'visible' });
     await input.fill('<div>changed</div>');

@@ -101,12 +101,12 @@ let errors = [];
   await page.locator('#preview .ProseMirror').waitFor({ state: 'visible' });
   assert.equal(await page.locator('#lock-document').getAttribute('aria-pressed'), 'false');
   assert.equal(await page.locator('#view-menu #source-snapshot').count(), 1, 'the source snapshot lives in the View menu');
-  await page.locator('#outline-toggle').click();
+  if (await page.locator('#outline').isHidden()) await page.getByRole('button', { name: 'Contents', exact: true }).click();
   await page.waitForFunction(() => !document.getElementById('outline').hidden);
   await page.waitForFunction(() => document.querySelectorAll('#outline-items .outline-link[aria-current="location"]').length === 1);
-  assert.equal(await page.evaluate(() => getComputedStyle(document.body).getPropertyValue('--outline-sidebar-width').trim()), '248px', 'the contents sidebar width should drive its CSS variable');
+  assert.equal(await page.evaluate(() => getComputedStyle(document.body).getPropertyValue('--dock-sidebar-width').trim()), '250px', 'the navigation dock width should drive its CSS variable');
   assert((await page.locator('#outline-items .outline-link').count()) > 0, 'the outline should list headings');
-  assert.deepEqual(await page.evaluate(() => ({ visible: localStorage.getItem('folio.outlineVisible'), width: localStorage.getItem('folio.outlineWidth') })), { visible: 'true', width: '248' }, 'outline visibility and width should use separate preferences');
+  assert.equal(await page.evaluate(() => localStorage.getItem('folio.dockWidth')), '250', 'dock width is persisted');
   await page.locator('#outline-close').click();
   // The Formatted/Markdown mode switch was removed; there are no mode-switch
   // steps left to verify preview reuse.
@@ -213,10 +213,10 @@ let errors = [];
 
   await page.setViewportSize({ width: 720, height: 800 });
   await page.waitForFunction(() => window.matchMedia('(max-width:960px)').matches);
-  await page.locator('#outline-toggle').click();
+  if (await page.locator('#outline').isHidden()) await page.getByRole('button', { name: 'Contents', exact: true }).click();
   await page.waitForFunction(() => document.getElementById('outline').hidden === false);
   assert.equal(await page.locator('#file-browser').getAttribute('hidden'), '', 'on narrow screens the outline takes over from the file tree');
-  await page.locator('#folder-toggle').click();
+  await page.getByRole('button', { name: 'Files', exact: true }).click();
   await page.waitForFunction(() => document.getElementById('file-browser').hidden === false);
   assert.equal(await page.locator('#outline').getAttribute('hidden'), '', 'on narrow screens the file tree takes over from the outline');
 

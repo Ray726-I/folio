@@ -134,9 +134,9 @@ const px = value => {
     }
 
     // Desktop (fine pointer) keeps the compact chrome: the coarse 44px floor
-    // must not leak into the base rules. #palette-open is always visible,
+    // must not leak into the base rules. The home button is always visible,
     // unlike the document controls that stay hidden until a file opens.
-    const desktopBox = await page.locator('#palette-open.icon-button').boundingBox();
+    const desktopBox = await page.locator('#home.icon-button').boundingBox();
     assert(desktopBox, 'expected the header icon button to be measurable on desktop');
     assert(
       desktopBox.width < TARGET && desktopBox.height < TARGET,
