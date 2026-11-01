@@ -163,7 +163,15 @@ tokenizer.core.ruler.after('inline', 'folio_structure', state => {
       // Only balanced extension delimiters qualify. A plain comparison
       // (`x == y`), a clock time (`12:30:`) or a setext underline (`=====`)
       // must stay ordinary Markdown, not become a raw read-only block.
-      if (/\[\^[^\]]+\]|\[\[[^\]]*\]\]|==(?=\S)(?:(?!==)[^\n])+?(?<=\S)==|(?<![+\p{L}\p{N}_])\+\+(?=\S)(?:(?!\+\+)[^\n])+?(?<=\S)\+\+(?![+\p{L}\p{N}_])|(?:^|\n)\s*:\s|(?:^|\n)>\s*\[!|\^[^\s^]+\^|(?<!~)~[^~\n]+~(?!~)|(?<!\\):[a-z_][a-z0-9_+-]*:/iu.test(raw)) {
+      // Inline math already has a rich node. Do not mistake its TeX exponent
+      // or tilde characters for unsupported superscript/subscript syntax.
+      // Mask only the same bounded, single-line dollar spans accepted by the
+      // inline rule above; retain line breaks and never mutate the source.
+      const extensionCandidate = raw.replace(/(?<![\\$])\$(?![$\s])(?:[^$\\\n]|\\.)*?(?<!\s)\$(?!\d)/g, match => {
+        if (/^\$\d/.test(match) && /[-.,]\$$/.test(match)) return match;
+        return ' '.repeat(match.length);
+      });
+      if (/\[\^[^\]]+\]|\[\[[^\]]*\]\]|==(?=\S)(?:(?!==)[^\n])+?(?<=\S)==|(?<![+\p{L}\p{N}_])\+\+(?=\S)(?:(?!\+\+)[^\n])+?(?<=\S)\+\+(?![+\p{L}\p{N}_])|(?:^|\n)\s*:\s|(?:^|\n)>\s*\[!|\^[^\s^]+\^|(?<!~)~[^~\n]+~(?!~)|(?<!\\):[a-z_][a-z0-9_+-]*:/iu.test(extensionCandidate)) {
         const fallback = new state.Token('raw_block', '', 0); fallback.content = raw; fallback.map = token.map;
         result.push(fallback);
         // Skip the whole original block by nesting depth.  Synthetic level-0

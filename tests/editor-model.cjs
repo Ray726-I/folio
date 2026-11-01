@@ -2,6 +2,11 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 require('esbuild').buildSync({ entryPoints: ['ui/editor/model.js'], bundle: true, platform: 'node', format: 'cjs', outfile: 'target/editor-model.cjs', logLevel: 'silent' });
 const { parseSource, updateSource, schema, sourceToRich, richToSource } = require(path.resolve('target/editor-model.cjs'));
+for (const source of ['- [ ] Inline formula $a^2+b^2=c^2$ survives a tick\n', '- [ ] Math $a~b~c$\n']) {
+  const parsed = parseSource(source);
+  assert.equal(parsed.doc.firstChild.type.name, 'bullet_list', 'supported inline math must not turn a task list into a raw block');
+  assert.equal(updateSource(parsed.doc, parsed).source, source);
+}
 for (const source of ['hello:smile:\n', '==one=two==\n', '++one+two++\n']) {
   const parsed = parseSource(source);
   assert.equal(parsed.doc.firstChild.type.name, 'raw_block', `native extension preserved: ${source}`);

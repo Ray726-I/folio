@@ -1,12 +1,12 @@
 const assert = require('node:assert/strict');
 const { openEditor } = require('./editor-browser.cjs');
 
-// A caret in inline math is Comrak syntax the rich schema does not represent,
-// so the whole task list becomes one raw_block projection. Its checkboxes are
-// native HTML (`disabled`) and must still toggle the exact source marker.
+// Genuine Comrak highlight syntax is not represented by the rich schema, so
+// this list remains a raw projection. Its checkboxes must still toggle exact
+// source markers, including on a neighboring item containing inline math.
 const source = `# Raw task projection
 
-- [x] Already done
+- [x] Already ==done==
 - [ ] **Bold** task with $a^2+b^2=c^2$
   - [ ] Nested task
     - [x] Deep done
@@ -34,7 +34,7 @@ const source = `# Raw task projection
     assert.equal(await listBoxes.count(), 6, 'escaped marker and fenced sample are not tasks');
     assert.equal(await listBoxes.nth(1).isDisabled(), false, 'unlocked raw task is interactive');
 
-    // Toggle directly after the inline math that caused the raw fallback.
+    // Toggle the item containing inline math inside the raw fallback.
     const before = await page.evaluate(() => current.content);
     await listBoxes.nth(1).check();
     const checked = before.replace('- [ ] **Bold** task with $a^2+b^2=c^2$', '- [x] **Bold** task with $a^2+b^2=c^2$');

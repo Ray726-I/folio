@@ -74,6 +74,95 @@
 .table-tools { position:relative; font-size:12px; }
 .table-tools summary { cursor:pointer; padding:6px 10px; }
 .table-tools>div { position:absolute; top:100%; right:0; z-index:10; display:grid; gap:5px; padding:10px; min-width:140px; border:1px solid var(--line); border-radius:8px; background:var(--panel); box-shadow:0 8px 20px #0002; }
+/* Contextual table tools: hidden by default, shown by the editor when the
+   caret is inside a table. Same buttons, spacing, and tokens as the static
+   toolbar so they read as one control. A faint divider separates them from
+   the always-visible actions. */
+#context-table-tools { display:flex; align-items:center; flex-wrap:wrap; gap:4px; padding-left:8px; margin-left:4px; border-left:1px solid var(--line); }
+/* Formatting toolbar close: pinned to the right end of the toolbar so it stays
+   reachable whether or not the contextual table group is shown. An
+   auto margin absorbs free space on the row; flex-shrink keeps the 30px touch
+   target intact when the toolbar wraps on narrow screens. Matches the existing
+   icon-button close controls (contents, file tree, search). */
+#format-toolbar-close { margin-left:auto; flex-shrink:0; }
+/* Contextual table system (JS-generated overlays): unobtrusive + buttons
+   below/right append a row/column; slim grips on the table's top/left edges
+   arrange rows/columns by dragging; a cell menu carries the full Row/Column/
+   Sort/Align/Table operations. All overlays live outside the document, share
+   the menu tokens, and only fade in on hover/focus — hover never mutates
+   source and control labels never enter copied text. */
+.folio-table-add { position:fixed; inset:auto; z-index:29; display:grid; place-items:center; width:28px; height:28px; margin:0; padding:0; border:1px solid var(--line); border-radius:50%; background:var(--panel); color:var(--muted); box-shadow:0 4px 14px #0003; cursor:pointer; user-select:none; -webkit-user-select:none; font:600 16px/1 var(--font-ui); opacity:.55; }
+.folio-table-add[hidden] { display:none; }
+.folio-table-add:hover:not(:disabled),.folio-table-add:focus-visible { opacity:1; color:var(--fg); }
+.folio-table-add:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.folio-table-add:disabled { opacity:.35; cursor:default; }
+.folio-table-handles { position:fixed; inset:0; z-index:28; margin:0; padding:0; pointer-events:none; }
+.folio-table-handles[hidden] { display:none; }
+.folio-table-handle { position:absolute; display:grid; place-items:center; width:24px; height:24px; margin:0; padding:0; border:1px solid var(--line); border-radius:7px; background:var(--panel); color:var(--muted); box-shadow:0 4px 14px #0002; cursor:grab; user-select:none; -webkit-user-select:none; pointer-events:auto; opacity:1; }
+.folio-table-handle:active { cursor:grabbing; }
+.folio-table-handle.drop-target { opacity:1; color:var(--accent-ink,#fff); background:var(--accent); border-color:transparent; }
+.folio-table-handles:hover .folio-table-handle,.folio-table-handle:hover,.folio-table-handle:focus-visible,.folio-table-handle.dragging { opacity:1; }
+.folio-table-handle:hover { color:var(--fg); }
+.folio-table-handle:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.folio-table-handle:disabled { opacity:0; cursor:default; }
+.folio-table-grip { display:block; width:10px; height:14px; background-image:radial-gradient(circle,currentColor 1.2px,transparent 1.3px); background-size:5px 5px; background-position:center; pointer-events:none; }
+.folio-table-drop-line { position:fixed; inset:auto; z-index:31; margin:0; padding:0; border:0; border-radius:2px; background:var(--accent); pointer-events:none; }
+.folio-table-drop-line[hidden] { display:none; }
+.folio-table-menu { position:fixed; inset:auto; z-index:30; min-width:208px; max-width:min(260px,calc(100vw - 32px)); max-height:min(360px,calc(100vh - 16px)); overflow:auto; margin:0; padding:4px; border:1px solid var(--line); border-radius:10px; background:var(--panel); box-shadow:0 12px 34px #0003,0 2px 6px #0002; }
+.folio-table-menu button { display:flex; align-items:center; gap:8px; width:100%; box-sizing:border-box; padding:7px 9px; border:0; border-radius:6px; background:transparent; color:var(--fg); font:500 12px/1.35 var(--font-ui); text-align:left; white-space:nowrap; cursor:pointer; }
+.folio-table-menu button:hover:not(:disabled) { background:var(--hover); }
+.folio-table-menu button:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; background:var(--hover); }
+.folio-table-menu button:disabled { opacity:.4; cursor:default; }
+.folio-table-menu button[data-table-menu-danger="true"] { color:var(--red); }
+/* Submenu branch: the wrap anchors the flyout so the pointer crosses with
+   no gap (4px overlap); a short leave delay in JS covers the seam. */
+.folio-table-subwrap { position:relative; margin:0; padding:0; }
+.folio-table-subwrap.sub-open>button { background:var(--hover); }
+.folio-table-arrow { margin-left:auto; flex:none; color:var(--muted); font-size:13px; line-height:1; }
+.folio-table-submenu { position:absolute; top:-5px; left:calc(100% - 4px); z-index:31; min-width:196px; max-width:min(250px,calc(100vw - 32px)); max-height:min(340px,calc(100vh - 16px)); overflow:auto; margin:0; padding:4px; border:1px solid var(--line); border-radius:10px; background:var(--panel); box-shadow:0 12px 34px #0003,0 2px 6px #0002; }
+.folio-table-submenu[hidden] { display:none; }
+.folio-table-submenu.open-left { left:auto; right:calc(100% - 4px); }
+@media(pointer:coarse) { .folio-table-add { width:44px; height:44px; font-size:20px; } .folio-table-handle { width:44px; height:44px; } .folio-table-menu button { min-height:44px; } }
+@media(prefers-reduced-motion:reduce) { .folio-table-add,.folio-table-handle { transition:none; } }
+@media(forced-colors:active) { .folio-table-add,.folio-table-handle,.folio-table-menu,.folio-table-drop-line { forced-color-adjust:auto; } .folio-table-add:focus-visible,.folio-table-handle:focus-visible { outline:2px solid CanvasText; } }
+/* Trailing writable area: a future textarea mounted by the parent past the
+   last block. Unfocused it stays invisible yet clickable — no placeholder,
+   no border, no hover wash — so the page ends calmly. On focus it shows only
+   a subtle paragraph cue (soft wash + inset accent tick) and the placeholder,
+   if the parent set one. The focus cue is a background wash rather than an
+   outline ring, so the reading surface never gains a box. */
+.editor-trailing-input { display:block; width:100%; box-sizing:border-box; min-height:3em; margin:0; padding:8px 4px; color:var(--fg); background:transparent; border:0; border-radius:0 5px 5px 0; font-family:var(--font-reading); font-size:var(--text-size); line-height:1.7; white-space:pre-wrap; overflow-wrap:break-word; resize:none; overflow:hidden; cursor:text; caret-color:var(--fg); }
+.markdown .editor-trailing-input { margin-bottom:1.15em; }
+.editor-trailing-input::placeholder { color:transparent; opacity:0; }
+.editor-trailing-input:hover { background:transparent; }
+.editor-trailing-input:focus { outline:none; }
+.editor-trailing-input:focus-visible { outline:none; background:var(--hover); box-shadow:inset 2px 0 var(--accent); }
+.editor-trailing-input:focus::placeholder { color:var(--muted); opacity:.65; }
+@media(max-width:760px) { #context-table-tools { padding-left:0; margin-left:0; border-left:0; } }
+/* Inline heading marker (JS-generated): when the caret sits inside a heading,
+   its exact Markdown marker (#/##/…) appears as a small editable input
+   before the heading text — no popup, no toolbar. Folio treatment: muted
+   mono that takes the accent when focused; the reading size and measure are
+   untouched. */
+.folio-heading-source { display:inline-block; box-sizing:content-box; width:auto; max-width:100%; margin:0 .45em 0 0; padding:1px 6px; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--muted); font:500 .72em/1.5 var(--font-mono); vertical-align:baseline; cursor:text; }
+.folio-heading-source:hover { border-color:var(--line); color:var(--fg); background:var(--hover); }
+.folio-heading-source:focus { outline:none; border-color:var(--accent); color:var(--accent); background:color-mix(in srgb,var(--accent) 9%,var(--bg)); }
+.folio-heading-source:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+.folio-heading-source:disabled { opacity:.45; cursor:default; }
+/* While the inline source input is open, the rendered heading text it
+   mirrors is hidden so the line reads exactly once, as pure Markdown.
+   Class-only paint: the document, selection and copy output are untouched. */
+.folio-heading-source-dim { display:none; }
+.folio-slash-menu { position:fixed; inset:auto; z-index:30; min-width:190px; max-width:min(280px,calc(100vw - 32px)); max-height:min(320px,calc(100vh - 16px)); overflow:auto; margin:0; padding:6px; border:1px solid var(--line); border-radius:10px; background:var(--panel); box-shadow:0 12px 34px #0003,0 2px 6px #0002; }
+.folio-slash-menu button { display:flex; align-items:center; gap:10px; width:100%; box-sizing:border-box; padding:9px 10px; border:0; border-radius:7px; background:transparent; color:var(--fg); font:500 12.5px/1.4 var(--font-ui); text-align:left; white-space:nowrap; cursor:pointer; }
+.folio-slash-menu button small { margin-left:auto; color:var(--muted); font-size:11px; }
+.folio-slash-menu button:hover { background:var(--hover); }
+.folio-slash-menu button:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; background:var(--hover); }
+.folio-slash-menu button[aria-selected="true"] { background:var(--selection); }
+@media(max-width:640px) { .folio-slash-menu { min-width:min(220px,calc(100vw - 32px)); } }
+@media(pointer:coarse) { .folio-heading-source { font-size:16px; } .folio-slash-menu button { min-height:44px; } }
+@media(prefers-reduced-motion:reduce) { .folio-heading-source { transition:none; } }
+@media(forced-colors:active) { .folio-heading-source,.folio-slash-menu,.editor-trailing-input { forced-color-adjust:auto; } .folio-heading-source:focus-visible { outline:2px solid CanvasText; } .editor-trailing-input:focus-visible { outline:2px solid CanvasText; box-shadow:none; } }
 .ProseMirror { outline:none; white-space:pre-wrap; overflow-wrap:break-word; min-height:50vh; }
 .ProseMirror>:first-child { margin-top:0; }
 .markdown .ProseMirror table { display:table; width:100%; max-width:none; table-layout:auto; margin:0; }

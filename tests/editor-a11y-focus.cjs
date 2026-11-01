@@ -43,7 +43,7 @@ const source = [
 
     // 3. The formula editor is reachable from the keyboard and Escape/Cancel
     //    returns focus to the formula itself.
-    const formulaButton = page.locator('.math-inline .math-edit');
+    const formulaButton = page.locator('.math-inline .math-formula');
     assert.equal(await formulaButton.count(), 1, 'each formula exposes a labelled edit button');
     await formulaButton.click();
     await page.locator('.math-inline textarea').waitFor({ state: 'visible' });

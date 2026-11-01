@@ -1,10 +1,11 @@
 import { Fragment } from 'prosemirror-model';
 import { EditorState, Plugin, TextSelection, Selection, AllSelection } from 'prosemirror-state';
-import { EditorView } from 'prosemirror-view';
+import { EditorView, Decoration, DecorationSet } from 'prosemirror-view';
 import { keymap } from 'prosemirror-keymap';
 import { baseKeymap, toggleMark, setBlockType, wrapIn, chainCommands, exitCode } from 'prosemirror-commands';
 import { splitListItem, sinkListItem, liftListItem, wrapInList } from 'prosemirror-schema-list';
-import { fixTables, goToNextCell, addRowAfter, addColumnAfter, deleteRow, deleteColumn, deleteTable, TableView, CellSelection, isInTable, cellAround, nextCell } from 'prosemirror-tables';
+import { fixTables, goToNextCell, addRowAfter, addRowBefore, addColumnAfter, addColumnBefore, deleteRow, deleteColumn, deleteTable, TableView, TableMap, findCell, CellSelection, selectedRect, moveTableRow, moveTableColumn, isInTable, cellAround, nextCell } from 'prosemirror-tables';
+import { tableOperation } from './table-operations.js';
 import { inputRules, wrappingInputRule, textblockTypeInputRule, InputRule } from 'prosemirror-inputrules';
 import MarkdownIt from 'markdown-it';
 import { decodeHTML, decodeHTMLAttribute } from 'entities';
@@ -559,8 +560,8 @@ export function createRichEditor(parent, options) {
   }
   function mathView(node, editor, getPos) {
     const dom = document.createElement(node.isInline ? 'span' : 'div'); dom.className = node.isInline ? 'math-inline' : 'math-block'; dom.contentEditable = 'false';
-    const formula = document.createElement('span'); formula.className = 'math-formula'; formula.title = 'Double-click to edit formula';
-    formula.setAttribute('role', 'button'); formula.setAttribute('aria-label', 'Edit formula (double-click, or press Enter)'); formula.tabIndex = 0;
+    const formula = document.createElement('span'); formula.className = 'math-formula'; formula.title = 'Click to edit formula';
+    formula.setAttribute('role', 'button'); formula.setAttribute('aria-label', 'Edit formula'); formula.tabIndex = 0;
     const panel = document.createElement('span'); panel.className = 'math-local-editor'; panel.hidden = true;
     const input = document.createElement('textarea'); input.setAttribute('aria-label', 'Formula source'); input.rows = node.isInline ? 2 : 4;
     const cancel = button('Cancel', () => { panel.hidden = true; formula.focus(); });
@@ -618,20 +619,15 @@ export function createRichEditor(parent, options) {
       if (canScrollX) input.scrollLeft = Math.max(0, Math.min(maximumLeft, input.scrollLeft + deltaX));
     }, { passive: false });
     panel.append(input, apply, cancel);
-    const toggleEditor = () => {
+    const openEditor = () => {
       if (options.isLocked()) return;
-      if (!panel.hidden) { panel.hidden = true; render(); return; }
+      if (!panel.hidden) return;
       input.value = node.attrs.tex; panel.hidden = false; input.focus();
     };
-    // A quiet affordance so editing is discoverable without a double-click.
-    // It is a real button: focusable, labelled, and disabled under Lock.
-    const edit = button('Edit formula', toggleEditor);
-    edit.classList.add('math-edit');
-    edit.setAttribute('aria-label', 'Edit formula'); edit.title = 'Edit formula';
-    // One click selects the formula so a run of formulas can be selected
-    // (shift-click, drag) without every click opening its editor. Editing is
-    // the deliberate gesture: double-click, or Enter/Space on a focused formula.
-    formula.addEventListener('dblclick', event => { if (event.button !== 0) return; event.preventDefault(); event.stopPropagation(); toggleEditor(); });
+    formula.addEventListener('click', event => {
+      if (event.button !== 0 || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
+      event.preventDefault(); event.stopPropagation(); openEditor();
+    });
     // Shift-click on a formula extends the selection *through* it. Letting the
     // editor resolve the click on its own lands the head on the atom boundary,
     // which excludes the formula the pointer is actually over.
@@ -644,8 +640,8 @@ export function createRichEditor(parent, options) {
       const from = Math.min(state.selection.from, pos), to = Math.max(state.selection.to, pos + node.nodeSize);
       editor.dispatch(state.tr.setSelection(TextSelection.create(state.doc, from, to)));
     });
-    formula.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleEditor(); } });
-    dom.append(formula, edit, panel); let generation = 0;
+    formula.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openEditor(); } });
+    dom.append(formula, panel); let generation = 0;
     const render = async () => {
       const tex = panel.hidden ? node.attrs.tex : input.value;
       const current = ++generation; formula.textContent = tex; formula.classList.remove('math-error');
@@ -655,7 +651,7 @@ export function createRichEditor(parent, options) {
     };
     input.addEventListener('input', render);
     cancel.addEventListener('click', render);
-    render(); const refresh = () => { formula.setAttribute('aria-disabled', String(options.isLocked())); edit.disabled = options.isLocked(); input.disabled = options.isLocked(); apply.disabled = options.isLocked(); }; refreshers.add(refresh);
+    render(); const refresh = () => { formula.setAttribute('aria-disabled', String(options.isLocked())); input.disabled = options.isLocked(); apply.disabled = options.isLocked(); }; refreshers.add(refresh);
     return { dom, update(next) { if (next.type !== node.type) return false; if (next.sameMarkup(node) && next.textContent === node.textContent) { node = next; return true; } node = next; render(); return true; }, stopEvent: event => {
       // The local editor's own controls keep their events; pointer events on
       // the formula itself must reach the editor so a single click selects the
@@ -1725,6 +1721,135 @@ export function createRichEditor(parent, options) {
   ];
   function stateFor(doc, selection) {
     return EditorState.create({ doc, selection: selection ? selectionAt(doc, sourceToRich(model, selection.anchor), sourceToRich(model, selection.head)) : undefined, plugins: [
+      // A projection-only input gives the document a writable tail without
+      // inserting an empty paragraph (and changing the file) on open or focus.
+      new Plugin({ props: { decorations(state) {
+        const widgets = [];
+        // Inline heading source: when the caret (or selection anchor) sits
+        // inside a heading, reveal its exact Markdown line (marker AND text,
+        // e.g. `### Slide …`) as an editable input before the heading text —
+        // no popup, no toolbar. The input is a decoration widget outside the
+        // document: it never joins heading text, copy output or the
+        // ProseMirror selection, so the marker cannot leak into the canonical
+        // text. While open, the rendered heading text is hidden by CSS so the
+        // line reads exactly once, as pure Markdown. Committing replaces the
+        // verified line bytes through the source-first path (reparse + undo
+        // preserved, keystrokes commit live with caret kept); Escape or blur
+        // cancels without touching the file. Non-ATX sources fail closed
+        // with a message.
+        let activeHeading = -1;
+        try {
+          const $from = state.selection.$from;
+          for (let depth = $from.depth; depth > 0; depth--) {
+            if ($from.node(depth).type === schema.nodes.heading) { activeHeading = $from.before(depth); break; }
+          }
+        } catch {}
+        state.doc.descendants((node, pos) => {
+          if (node.type !== schema.nodes.heading || pos !== activeHeading) return;
+          const line = headingLineRange(pos);
+          if (!line) return;
+          if (node.content.size > 0) {
+            widgets.push(Decoration.inline(pos + 1, pos + 1 + node.content.size, { class: 'folio-heading-source-dim' }));
+          }
+          widgets.push(Decoration.widget(pos + 1, () => {
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'folio-heading-source';
+            input.setAttribute('aria-label', `Heading source, level ${node.attrs.level}`);
+            input.title = 'Edit heading Markdown (Enter to apply, Escape to cancel)';
+            input.spellcheck = false;
+            input.autocomplete = 'off';
+            const original = line.text;
+            input.value = original;
+            input.size = Math.max(1, Math.min(72, original.length));
+            let done = false;
+            let composing = false;
+            const revert = () => { input.value = original; input.size = Math.max(1, Math.min(72, original.length)); };
+            const commit = () => {
+              if (options.isLocked()) { revert(); return; }
+              done = commitHeadingLine(pos, input.value, original);
+              if (!done) revert();
+            };
+            const refresh = () => { input.disabled = options.isLocked(); };
+            input.folioRefresh = refresh; refreshers.add(refresh); refresh();
+            const updateSourceWhileTyping = () => {
+              input.size = Math.max(1, Math.min(72, input.value.length));
+              if (composing || options.isLocked() || !/^( {0,3})(#{1,6})[ \t]+/.test(input.value)) return;
+              const value = input.value, start = input.selectionStart, end = input.selectionEnd;
+              if (value === original) return;
+              if (!commitHeadingLine(pos, value, original, { typing: true, start, end })) return;
+              // Trailing source whitespace has no rich position and can map
+              // to the next block. Keep the projection anchored to this
+              // heading while its source input remains active.
+              const heading = view.state.doc.nodeAt(pos);
+              if (heading?.type === schema.nodes.heading && view.state.selection.$from.parent !== heading) {
+                const caret = Math.min(pos + heading.nodeSize - 1, pos + 1 + heading.content.size);
+                view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, caret)));
+              }
+              const dom = view.nodeDOM(pos);
+              const next = dom instanceof HTMLElement ? dom.querySelector('.folio-heading-source') : null;
+              if (next instanceof HTMLInputElement) {
+                next.focus(); next.setSelectionRange(Math.min(start, next.value.length), Math.min(end, next.value.length));
+              }
+            };
+            input.addEventListener('compositionstart', () => { composing = true; });
+            input.addEventListener('compositionend', () => { composing = false; updateSourceWhileTyping(); });
+            input.addEventListener('input', updateSourceWhileTyping);
+            input.addEventListener('keydown', event => {
+              event.stopPropagation();
+              // Undo/redo from inside the input goes through the shell history
+              // (the rebuilt input owns no native undo stack after a live
+              // commit). The caret is restored onto the rebuilt input so
+              // repeated undo keeps typing context instead of dropping focus.
+              const mod = event.ctrlKey || event.metaKey;
+              if (mod && !event.altKey && (event.key === 'z' || event.key === 'Z' || event.key === 'y' || event.key === 'Y') && !composing) {
+                event.preventDefault();
+                if (options.isLocked()) return;
+                const caret = typeof input.selectionStart === 'number' ? input.selectionStart : input.value.length;
+                try { options.undo(event.key.toLowerCase() === 'y' || event.shiftKey); } catch {}
+                try {
+                  const dom = view.nodeDOM(pos);
+                  const next = dom instanceof HTMLElement ? dom.querySelector('.folio-heading-source') : null;
+                  if (next instanceof HTMLInputElement) {
+                    next.focus();
+                    const at = Math.max(0, Math.min(next.value.length, caret));
+                    next.setSelectionRange(at, at);
+                  }
+                } catch {}
+                return;
+              }
+              if (event.key === 'Enter') { event.preventDefault(); commit(); }
+              else if (event.key === 'Escape') { event.preventDefault(); done = true; revert(); try { view.focus(); } catch {} }
+            });
+            input.addEventListener('blur', () => { if (!done) revert(); });
+            return input;
+          }, { side: -1, stopEvent: () => true, destroy: node => refreshers.delete(node.folioRefresh) }));
+        });
+        widgets.push(Decoration.widget(state.doc.content.size, () => {
+          const input = document.createElement('textarea');
+          input.className = 'editor-trailing-input'; input.rows = 1;
+          input.setAttribute('aria-label', 'Write a new paragraph at the end of the document');
+          input.placeholder = 'Type / for blocks…';
+          const refresh = () => { input.disabled = options.isLocked(); };
+          input.folioRefresh = refresh; refreshers.add(refresh); refresh();
+          let composing = false;
+          const commit = () => {
+            if (composing || !input.value || options.isLocked()) return;
+            if (input.value === '/') { input.value = ''; openSlashMenu(input, true); return; }
+            const text = input.value;
+            const source = model.source, newline = source.includes('\r\n') ? '\r\n' : '\n';
+            const separator = !source || /(?:\r?\n){2}$/.test(source) ? '' : /\n$/.test(source) ? newline : newline + newline;
+            const end = source.length;
+            const result = replaceLogicalSelection(separator + text, 'typing', { from: end, to: end, all: false, collapsed: true });
+            if (result.committed) { input.value = ''; view.focus(); }
+          };
+          input.addEventListener('compositionstart', () => { composing = true; });
+          input.addEventListener('compositionend', () => { composing = false; commit(); });
+          input.addEventListener('input', commit);
+          return input;
+        }, { side: 1, stopEvent: () => true, destroy: node => refreshers.delete(node.folioRefresh) }));
+        return DecorationSet.create(state.doc, widgets);
+      } } }),
       // A locked transition must also reject transactions that only set
       // stored marks (for example Ctrl+B at an empty selection). Otherwise the
       // mark survives the rejected open and bolds the user's next typing.
@@ -1740,7 +1865,7 @@ export function createRichEditor(parent, options) {
       inputRules({ rules }),
       keymap({
         'Mod-b': toggleMark(schema.marks.strong), 'Mod-i': toggleMark(schema.marks.em), 'Mod-`': toggleMark(schema.marks.code),
-        'Mod-a': selectAllLogical,
+        'Mod-a': selectAllLogical, 'F2': () => focusHeadingMarker(),
         Backspace: deleteLogical(true), Delete: deleteLogical(false),
         'Shift-Enter': insertSoftBreak,
         Enter: chainCommands(enterLogical, tableEnter, completeDivider, splitListItem(schema.nodes.list_item), baseKeymap.Enter),
@@ -1782,6 +1907,206 @@ export function createRichEditor(parent, options) {
     if (current.eq(next)) return;
     view.dispatch(view.state.tr.setSelection(next));
   }
+  function currentContext(state) {
+    const $from = state.selection.$from;
+    let heading = null;
+    for (let depth = $from.depth; depth > 0; depth--) {
+      if ($from.node(depth).type === schema.nodes.heading) {
+        heading = { pos: $from.before(depth), level: $from.node(depth).attrs.level };
+        break;
+      }
+    }
+    return { table: isInTable(state), heading };
+  }
+  let activePopup = null;
+  // Pending plain-press on a heading for click-to-edit: a plain left press
+  // (no modifiers) records its point so the later click can tell a tap from
+  // a drag. Anything else (modifiers, lock, the source input itself) leaves
+  // this null and the click path below does nothing.
+  let headingPress = null;
+  function closePopup(restore = false) {
+    if (!activePopup) return;
+    const { menu, trigger } = activePopup; activePopup = null;
+    trigger?.setAttribute('aria-expanded', 'false'); menu.remove();
+    if (restore) trigger?.focus();
+  }
+  function positionPopup(menu, rect) {
+    document.body.append(menu);
+    const width = menu.offsetWidth, height = menu.offsetHeight;
+    menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - height - 8))}px`;
+  }
+  // Exact first source line of the heading at `pos`, verified against the
+  // ledger owner. The range covers the line bytes only (never the line
+  // break), and the text must be single-line ATX; anything else (setext,
+  // unprovable or unsafe ranges, CR bytes) returns null so the inline editor
+  // never appears and the source presentation stays the only path.
+  function headingLineRange(pos) {
+    try {
+      const owner = model.ledger?.owners?.find(item => item.type === 'heading' && item.pmFrom === pos && item.confidence === 'exact' && item.supported !== false);
+      if (!owner || !Number.isInteger(owner.sourceFrom) || !Number.isInteger(owner.sourceTo)) return null;
+      if (owner.sourceFrom < 0 || owner.sourceTo > model.source.length || owner.sourceFrom >= owner.sourceTo) return null;
+      let end = model.source.indexOf('\n', owner.sourceFrom);
+      if (end < 0 || end > owner.sourceTo) end = owner.sourceTo;
+      const text = model.source.slice(owner.sourceFrom, end);
+      if (!text || /[\r]/.test(text)) return null;
+      if (!/^( {0,3})(#{1,6})([ \t]+|$)/.test(text)) return null;
+      return { from: owner.sourceFrom, to: end, text };
+    } catch { return null; }
+  }
+  // Write an inline heading-line edit through the exact source splice. The
+  // verified line range is replaced wholesale and reparsed, so levels, text
+  // and spacing all round-trip with shell undo; every other byte is
+  // preserved. A hashes-only value (`###`) is a level change: only the marker
+  // bytes are replaced and the rest of the line is kept. Empty values,
+  // multi-line values and non-heading values are rejected; stale seeds (the
+  // line changed under the open editor) fail closed.
+  function commitHeadingLine(pos, value, original, typing = null) {
+    if (options.isLocked()) return false;
+    if (!value || !value.trim()) {
+      if (!typing) options.message('Heading text cannot be empty. Press Escape to cancel.');
+      return false;
+    }
+    if (/[\r\n]/.test(value)) {
+      if (!typing) options.message('A heading is a single line. Press Escape to cancel.');
+      return false;
+    }
+    const range = headingLineRange(pos);
+    if (!range) { if (!typing) options.message('This heading cannot be edited safely in place.'); return false; }
+    if (model.source.slice(range.from, range.to) !== original) {
+      if (!typing) options.message('This heading changed while editing. Your edit was not applied.');
+      return false;
+    }
+    let from = range.from, to = range.to, insert = value;
+    const hashesOnly = /^(#{1,6})$/.exec(value);
+    if (hashesOnly) {
+      const marker = /^( {0,3})(#{1,6})([ \t]+|$)/.exec(original);
+      if (!marker) return false;
+      from = range.from + marker[1].length;
+      to = from + marker[2].length;
+      insert = hashesOnly[1];
+    } else if (!/^( {0,3})(#{1,6})([ \t]+|$)/.test(value)) {
+      if (!typing) options.message('Headings need 1 to 6 # characters followed by a space.');
+      return false;
+    }
+    const result = replaceLogicalSelection(insert, typing ? 'typing' : 'command', { from, to, all: false, collapsed: false }, typing ? { anchor: typing.start, head: typing.end } : null);
+    if (result.committed && !typing) view.focus();
+    return result.committed;
+  }
+  // Keyboard path to the inline source: with the caret in a heading, F2
+  // focuses its source input for direct editing (Enter commits, Esc cancels).
+  function focusHeadingMarker() {
+    if (options.isLocked() || !view) return false;
+    try {
+      const $from = view.state.selection.$from;
+      let pos = -1;
+      for (let depth = $from.depth; depth > 0; depth--) {
+        if ($from.node(depth).type === schema.nodes.heading) { pos = $from.before(depth); break; }
+      }
+      if (pos < 0) return false;
+      const dom = view.nodeDOM(pos);
+      const input = dom instanceof HTMLElement ? dom.querySelector('.folio-heading-source') : null;
+      if (!(input instanceof HTMLInputElement)) return false;
+      input.focus();
+      input.select();
+      return true;
+    } catch { return false; }
+  }
+  // Click-to-edit handoff: after a plain click lands the caret in a heading,
+  // move DOM focus into its inline source input at the offset matching the
+  // click point, so typing edits the visible Markdown at once. Only plain
+  // primary taps qualify (recorded by mousedown, minimal travel, collapsed
+  // selection, unlocked, trusted event); modifier/drag/multi-click gestures
+  // and the input itself are left to their native behavior, and programmatic
+  // selection changes never reach this path because there is no click.
+  function focusHeadingInputAtPoint(clientX, clientY) {
+    if (!view || options.isLocked()) return false;
+    try {
+      const selection = view.state.selection;
+      if (!(selection instanceof TextSelection) || !selection.empty) return false;
+      const $from = selection.$from;
+      let pos = -1;
+      for (let depth = $from.depth; depth > 0; depth--) {
+        if ($from.node(depth).type === schema.nodes.heading) { pos = $from.before(depth); break; }
+      }
+      if (pos < 0) return false;
+      const line = headingLineRange(pos);
+      if (!line) return false;
+      const dom = view.nodeDOM(pos);
+      const input = dom instanceof HTMLElement ? dom.querySelector('.folio-heading-source') : null;
+      if (!(input instanceof HTMLInputElement)) return false;
+      if (document.activeElement === input) return true;
+      let offset = line.text.length;
+      try {
+        const hit = view.posAtCoords({ left: clientX, top: clientY });
+        if (hit && Number.isInteger(hit.pos)) {
+          const source = richToSource(model, Math.max(0, Math.min(view.state.doc.content.size, hit.pos)));
+          if (Number.isInteger(source)) offset = Math.max(0, Math.min(line.text.length, source - line.from));
+        }
+      } catch {}
+      input.focus();
+      try { input.setSelectionRange(offset, offset); } catch {}
+      return true;
+    } catch { return false; }
+  }
+  function openSlashMenu(trigger, tail, coordinates = null) {
+    if (options.isLocked()) return;
+    closePopup();
+    const menu = document.createElement('div'); menu.className = 'folio-slash-menu';
+    menu.setAttribute('role', 'dialog'); menu.setAttribute('aria-label', 'Insert block');
+    const search = document.createElement('input'); search.type = 'search';
+    search.setAttribute('aria-label', 'Search blocks'); search.placeholder = 'Search blocks…';
+    menu.append(search);
+    const list = document.createElement('div'); menu.append(list);
+    const choices = [
+      ['Paragraph', 'paragraph', ''], ...Array.from({ length: 6 }, (_, i) => [`Heading ${i + 1}`, `heading${i + 1}`, `${'#'.repeat(i + 1)} Heading`]),
+      ['Bullet list', 'bullet', '- Item'], ['Numbered list', 'numbered', '1. Item'],
+      ['Quote', 'quote', '> Quote'], ['Table', 'table', '| Column 1 | Column 2 |\n| --- | --- |\n|  |  |'],
+      ['Horizontal line', 'rule', '---']
+    ];
+    const choose = ([, command, literal]) => {
+      closePopup();
+      if (tail) {
+        if (!literal) { trigger.focus(); return; }
+        const source = model.source, newline = source.includes('\r\n') ? '\r\n' : '\n';
+        const separator = !source || /(?:\r?\n){2}$/.test(source) ? '' : /\n$/.test(source) ? newline : newline + newline;
+        const end = source.length;
+        const result = replaceLogicalSelection(separator + literal.replace(/\n/g, newline), 'command', { from: end, to: end, all: false, collapsed: true });
+        if (result.committed) view.focus();
+        return;
+      }
+      view.focus();
+      const commands = {
+        paragraph: setBlockType(schema.nodes.paragraph), bullet: wrapInList(schema.nodes.bullet_list),
+        numbered: wrapInList(schema.nodes.ordered_list), quote: wrapIn(schema.nodes.blockquote),
+      };
+      if (/^heading[1-6]$/.test(command)) commands[command] = setBlockType(schema.nodes.heading, { level: Number(command.slice(-1)) });
+      if (command === 'rule') view.dispatch(view.state.tr.replaceSelectionWith(schema.nodes.horizontal_rule.create()));
+      else if (command === 'table') {
+        const cell = header => schema.nodes[header ? 'table_header' : 'table_cell'].createAndFill();
+        const table = schema.nodes.table.create(null, [schema.nodes.table_row.create(null, [cell(true), cell(true)]), schema.nodes.table_row.create(null, [cell(false), cell(false)])]);
+        view.dispatch(view.state.tr.replaceSelectionWith(table));
+      } else commands[command]?.(view.state, view.dispatch, view);
+    };
+    function render() {
+      list.replaceChildren();
+      const query = search.value.trim().toLowerCase();
+      for (const choice of choices.filter(item => item[0].toLowerCase().includes(query))) {
+        const item = document.createElement('button'); item.type = 'button'; item.textContent = choice[0];
+        item.addEventListener('click', () => choose(choice)); list.append(item);
+      }
+    }
+    search.addEventListener('input', render);
+    menu.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { event.preventDefault(); closePopup(true); }
+      else if (event.key === 'ArrowDown') { event.preventDefault(); (document.activeElement.nextElementSibling || list.firstElementChild)?.focus(); }
+      else if (event.key === 'ArrowUp') { event.preventDefault(); (document.activeElement.previousElementSibling || search)?.focus(); }
+      else if (event.key === 'Enter' && event.target === search) { event.preventDefault(); list.firstElementChild?.click(); }
+    });
+    render(); activePopup = { menu, trigger };
+    const rect = coordinates ? { left: coordinates.left, bottom: coordinates.bottom } : trigger.getBoundingClientRect();
+    positionPopup(menu, rect); search.focus();
+  }
   view = new EditorView(parent, {
     // Keep the view focusable during temporary transition protection; the
     // transaction filter below enforces the effective lock for document edits.
@@ -1806,6 +2131,8 @@ export function createRichEditor(parent, options) {
         revision++;
         model = attachModel(commit.model, result.state.doc);
         view.updateState(result.state);
+        options.onContext?.(currentContext(result.state));
+        try { syncTableChrome(); } catch {}
         setBookmark(commit.selection.anchor, commit.selection.head, result.state);
         commitOutcome = true;
         options.onChange(model.source, sourceSelection(result.state), beforeSelection, commit.typing);
@@ -1815,6 +2142,8 @@ export function createRichEditor(parent, options) {
       if (changed && nextModel.source !== model.source) { revision++; bookmark = null; }
       model = nextModel;
       view.updateState(result.state);
+      options.onContext?.(currentContext(result.state));
+      try { syncTableChrome(); } catch {}
       if (tabMeta) tabSelection = { from: result.state.selection.from, to: result.state.selection.to, anchor: result.state.selection.anchor, head: result.state.selection.head };
       if (changed) {
         const typing = !tr.getMeta('folio-action') && tr.steps.every(step => { const json = step.toJSON(); return json.stepType === 'replace' && (!json.slice || json.slice.content?.every(node => node.type === 'text')); });
@@ -1823,6 +2152,15 @@ export function createRichEditor(parent, options) {
     },
     handleKeyDown(editor, event) {
       if (event.isComposing) return false;
+      // A projection-only trailing input must not steal the browser's end of
+      // document navigation from a final editable code block.
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key === 'End') {
+        const $from = editor.state.selection.$from;
+        if ($from.parent.type === schema.nodes.code_block && $from.after() === editor.state.doc.content.size) {
+          editor.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, $from.end())));
+          return true;
+        }
+      }
       if (NAVIGATION_KEYS.has(event.key)) { releaseBookmark(); tabSelection = null; }
       if (event.key === 'Enter' || event.key === 'Tab') captureDOMSelection();
       const key = event.key.toLowerCase();
@@ -1831,6 +2169,11 @@ export function createRichEditor(parent, options) {
     },
     handleTextInput(editor, from, to, text) {
       if (editor.composing) return false;
+      if (text === '/' && from === to && editor.state.selection.$from.parent.type === schema.nodes.paragraph &&
+          editor.state.selection.$from.parent.content.size === 0 && !options.isLocked()) {
+        openSlashMenu(editor.dom, false, editor.coordsAtPos(from));
+        return true;
+      }
       // A formatting command (Ctrl+B/Ctrl+I or a toolbar mark) sets stored
       // marks on the ProseMirror state. The logical source splice below would
       // reparse the document and silently discard them, so an explicit mark
@@ -1877,6 +2220,37 @@ export function createRichEditor(parent, options) {
         // rendered projections, and the guard settles on pointer-up. A plain
         // new caret still syncs on release via the pointer-up flush below.
         if (event.button === 0) { setSelectionGuarded(true); releaseBookmark(); tabSelection = null; }
+        // A press inside a table hands anchoring back to the selection: the
+        // click lands the caret, the selection-anchored controls appear, and
+        // later pointer movement re-evaluates the hover zone from there.
+        if (event.target instanceof Element && event.target.closest
+            && event.target.closest('.tableWrapper') && editor.dom.contains(event.target)) {
+          hoverAnchor = null;
+          hoverPending = null;
+        }
+        // Record a plain-press candidate for heading click-to-edit. Any
+        // modifier, a locked document, or a press starting in the source
+        // input itself clears it so those gestures keep native behavior.
+        // A press landing on rendered heading text while its source input
+        // holds focus first yields: blur the input (pending keystrokes are
+        // discarded, exactly like Escape without the refocus) so the native
+        // gesture — caret move, shift-extend, drag, word select — proceeds
+        // on the document instead of fighting the island.
+        headingPress = null;
+        if (event.target instanceof Element && !event.target.closest('.folio-heading-source')) {
+          try {
+            const heading = event.target.closest ? event.target.closest('h1,h2,h3,h4,h5,h6') : null;
+            const open = heading && editor.dom.contains(heading) ? heading.querySelector('.folio-heading-source') : null;
+            if (open && document.activeElement === open) open.blur();
+          } catch {}
+        }
+        if (event.button === 0 && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
+            && !options.isLocked() && event.target instanceof Element && event.isTrusted !== false) {
+          const heading = event.target.closest ? event.target.closest('h1,h2,h3,h4,h5,h6') : null;
+          if (heading && editor.dom.contains(heading) && !event.target.closest('.folio-heading-source')) {
+            headingPress = { x: event.clientX, y: event.clientY };
+          }
+        }
         return false;
       },
       keydown(editor, event) {
@@ -1931,6 +2305,18 @@ export function createRichEditor(parent, options) {
         return true;
       },
       click(editor, event) {
+      // Heading click-to-edit runs before link handling: a plain tap on
+      // heading text hands focus to the inline source input at the tapped
+      // offset. Modifier taps, drags (pointer travelled), non-collapsed
+      // selections and taps already inside the input fall through untouched.
+      if (headingPress && event.button === 0 && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
+          && event.isTrusted !== false && !options.isLocked()
+          && Math.hypot(event.clientX - headingPress.x, event.clientY - headingPress.y) < 6) {
+        headingPress = null;
+        if (!(event.target instanceof Element && event.target.closest('.folio-heading-source'))) {
+          focusHeadingInputAtPoint(event.clientX, event.clientY);
+        }
+      } else headingPress = null;
       const anchor = event.target.closest('a'); if (!anchor) return false;
       event.preventDefault(); const href = anchor.getAttribute('href') || '';
       if (event.ctrlKey || event.metaKey || options.isLocked()) options.openLink(href);
@@ -1947,6 +2333,860 @@ export function createRichEditor(parent, options) {
       return true;
     }, auxclick(editor, event) { const anchor = event.target.closest('a'); if (!anchor || event.button !== 1) return false; event.preventDefault(); options.openLink(anchor.getAttribute('href') || ''); return true; } }
   });
+  // Folio-original contextual table system (Obsidian-style, Folio-built): an
+  // unobtrusive + control below/right appends a row/column, hover-revealed
+  // grips on the top/left arrange rows/columns by dragging, and a cell context
+  // menu carries Row/Column insert/move/duplicate/delete, sorting and
+  // alignment. All chrome lives in document.body overlays — never inside the
+  // ProseMirror document — so hovering, focusing, dragging or copying never
+  // adds control text to the clipboard and never dispatches a transaction.
+  // Structural edits reuse the stock TableView/PM table commands plus the
+  // shared table-operations module, so cell editing, native selection, lock,
+  // undo and Markdown integrity stay authoritative. No tableEditing plugin is
+  // added; visibility is selection-driven and hover only fades chrome in.
+  const TABLE_OP_NAMES = ['move-row-up', 'move-row-down', 'move-column-left', 'move-column-right',
+    'duplicate-row', 'duplicate-column', 'sort-ascending', 'sort-descending',
+    'align-left', 'align-center', 'align-right'];
+  // The shared table-operations module is the only authority for structural
+  // rewrites (move/duplicate/sort/align). It refuses merged cells and keeps
+  // the header row fixed. There is deliberately no local fallback: running a
+  // weaker local rewrite after it returns false (or throws) would bypass the
+  // header and unsafe-table safeguards. Unknown names fail closed.
+  function resolveTableOp(name) {
+    let command = null;
+    try { command = tableOperation(name); } catch { command = null; }
+    if (typeof command !== 'function') return () => false;
+    return (state, dispatch, v) => {
+      if (options.isLocked()) return false;
+      try {
+        return command(state, dispatch, v);
+      } catch { return false; }
+    };
+  }
+  // Same safeguards as the table-operations module, enforced for pointer
+  // drags (which move directly via moveTableRow/moveTableColumn): the table
+  // must be rectangular (no merged/rowspan/colspan cells) and neither the
+  // dragged row nor its destination may be the header row. Columns travel
+  // whole, so they need only the rectangularity check.
+  function rectangularTableGuard(info) {
+    try {
+      const { table, map } = info;
+      if (!table || table.type.spec.tableRole !== 'table') return null;
+      if (!map || map.width < 1 || map.height < 1) return null;
+      if (map.height !== table.childCount) return null;
+      for (let r = 0; r < table.childCount; r++) {
+        const row = table.child(r);
+        if (row.type.spec.tableRole !== 'row' || row.childCount !== map.width) return null;
+        for (let c = 0; c < row.childCount; c++) {
+          const cell = row.child(c);
+          const role = cell.type.spec.tableRole;
+          if (role !== 'cell' && role !== 'header_cell') return null;
+          if ((cell.attrs.colspan ?? 1) !== 1 || (cell.attrs.rowspan ?? 1) !== 1) return null;
+        }
+      }
+      let headerRows = 0;
+      const first = table.firstChild;
+      if (first && first.childCount > 0) {
+        let allHeader = true;
+        first.forEach(cell => { if (cell.type.spec.tableRole !== 'header_cell') allHeader = false; });
+        if (allHeader) headerRows = 1;
+      }
+      return { headerRows };
+    } catch { return null; }
+  }
+  function runTableCommand(command) {
+    if (options.isLocked() || !view) return false;
+    let ok = false;
+    try { ok = command(view.state, view.dispatch, view); } catch { ok = false; }
+    try { syncTableChrome(); } catch {}
+    return ok;
+  }
+  function chromeAppendButton(action, label) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `folio-table-add folio-table-add-${action}`;
+    btn.dataset.tableAppend = action;
+    btn.textContent = '+';
+    btn.setAttribute('aria-label', label);
+    btn.title = label;
+    btn.addEventListener('mousedown', event => event.preventDefault());
+    btn.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (action === 'row') appendTableRow();
+      else appendTableColumn();
+    });
+    btn.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { event.preventDefault(); try { view?.focus(); } catch {} }
+    });
+    return btn;
+  }
+  const addRowBtn = chromeAppendButton('row', 'Add row');
+  const addColBtn = chromeAppendButton('column', 'Add column');
+  document.body.append(addRowBtn, addColBtn);
+  pinChromeOnHover(addRowBtn);
+  pinChromeOnHover(addColBtn);
+  const handlesLayer = document.createElement('div');
+  handlesLayer.className = 'folio-table-handles';
+  handlesLayer.hidden = true;
+  document.body.append(handlesLayer);
+  const dropLine = document.createElement('div');
+  dropLine.className = 'folio-table-drop-line';
+  dropLine.hidden = true;
+  dropLine.setAttribute('aria-hidden', 'true');
+  document.body.append(dropLine);
+  // Hover anchor: the table (and row/column/edge zone) under the pointer.
+  // Hovering positions chrome but never dispatches — no selection change, no
+  // source mutation — so merely pointing at a table is always free. Actions
+  // move the caret into the hovered cell first (a pure navigation step).
+  let hoverAnchor = null;
+  let hoverClearTimer = 0;
+  function cancelHoverClear() {
+    try { clearTimeout(hoverClearTimer); } catch {}
+    hoverClearTimer = 0;
+  }
+  function scheduleHoverClear() {
+    cancelHoverClear();
+    hoverClearTimer = setTimeout(() => {
+      hoverClearTimer = 0;
+      // A focused control pins its chrome: hiding under keyboard focus would
+      // drop focus to the body mid-operation.
+      if (handlesLayer.contains(document.activeElement)
+          || document.activeElement === addRowBtn || document.activeElement === addColBtn) return;
+      hoverAnchor = null;
+      try { syncTableChrome(); } catch {}
+    }, 120);
+  }
+  // Geometry for the table under a pointer position, resolved without
+  // touching the selection. Row/column come from the table map so merged
+  // cells still anchor to their covering row/column. Coordinates (not
+  // element mapping) are used because custom table DOM does not always
+  // resolve through posAtDOM.
+  function infoFromPoint(clientX, clientY, wrapper) {
+    try {
+      if (!wrapper || !wrapper.isConnected) return null;
+      const hit = view.posAtCoords({ left: clientX, top: clientY });
+      if (!hit) return null;
+      const pos = Math.max(0, Math.min(view.state.doc.content.size, hit.pos));
+      const $pos = view.state.doc.resolve(pos);
+      let depth = -1;
+      for (let d = $pos.depth; d > 0; d--) {
+        if ($pos.node(d).type.spec.tableRole === 'table') { depth = d; break; }
+      }
+      if (depth < 0) return null;
+      const tablePos = $pos.before(depth);
+      const table = view.state.doc.nodeAt(tablePos);
+      if (!table) return null;
+      let dom = null;
+      try { dom = view.nodeDOM(tablePos); } catch {}
+      const own = dom instanceof HTMLElement ? (dom.closest?.('.tableWrapper') || dom) : null;
+      if (own !== wrapper) return null;
+      const map = TableMap.get(table);
+      const tableStart = $pos.start(depth);
+      // findCell needs an exact cell start; coords can land anywhere inside
+      // a cell (or its gap), so settle onto the covering cell first.
+      let found = null;
+      try { found = findCell($pos); }
+      catch {
+        try { found = findCell(cellAround($pos)); }
+        catch { return null; }
+      }
+      return {
+        table, map, tableStart,
+        row: Math.max(0, Math.min(map.height - 1, found.top)),
+        col: Math.max(0, Math.min(map.width - 1, found.left)),
+        height: map.height, width: map.width, wrapper, zone: 'cell'
+      };
+    } catch { return null; }
+  }
+  function sameHover(a, b) {
+    if (!a || !b) return false;
+    return a.wrapper === b.wrapper && a.row === b.row && a.col === b.col && a.zone === b.zone;
+  }
+  // Edge zones are 30px strips; controls sit flush on the table edge so the
+  // pointer crosses straight from the table onto the control with no gap.
+  // Zones are re-evaluated on every pointermove (rAF-throttled): resting the
+  // pointer inside one cell must still notice the edge strip, which
+  // enter-only tracking would miss.
+  const HOVER_EDGE = 30;
+  let hoverRaf = 0, hoverPending = null;
+  function queueHover(clientX, clientY, target) {
+    hoverPending = { clientX, clientY, target };
+    if (hoverRaf) return;
+    hoverRaf = requestAnimationFrame(() => {
+      hoverRaf = 0;
+      const pending = hoverPending;
+      hoverPending = null;
+      if (pending) updateHoverAnchor(pending.clientX, pending.clientY, pending.target);
+    });
+  }
+  function onTablePointerOver(event) {
+    if (handleDrag) return;
+    queueHover(event.clientX, event.clientY, event.target instanceof Element ? event.target : null);
+  }
+  function updateHoverAnchor(clientX, clientY, rawTarget) {
+    if (handleDrag) return;
+    const target = rawTarget instanceof Element ? rawTarget : null;
+    if (!target || !view.dom.contains(target)) { scheduleHoverClear(); return; }
+    const wrapper = target.closest ? target.closest('.tableWrapper') : null;
+    if (!wrapper || !view.dom.contains(wrapper)) { scheduleHoverClear(); return; }
+    cancelHoverClear();
+    const rect = wrapper.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const x = clientX, y = clientY;
+    let zone = 'cell';
+    if (y <= rect.top + HOVER_EDGE) zone = 'top';
+    else if (y >= rect.bottom - HOVER_EDGE) zone = 'bottom';
+    else if (x <= rect.left + HOVER_EDGE) zone = 'left';
+    else if (x >= rect.right - HOVER_EDGE) zone = 'right';
+    let anchor = infoFromPoint(x, y, wrapper);
+    if (anchor) anchor.zone = zone;
+    if (!anchor) {
+      // Coordinates missed the table (wrapper padding, scrollbar, or a snap
+      // outside it): reuse the table under the pointer when provable, else
+      // keep the previous state instead of flickering.
+      const probe = infoFromPoint(
+        Math.max(rect.left + 1, Math.min(rect.right - 1, x)),
+        Math.max(rect.top + 1, Math.min(rect.bottom - 1, y)),
+        wrapper
+      );
+      if (probe) anchor = { ...probe, zone };
+      else if (hoverAnchor && hoverAnchor.wrapper === wrapper) anchor = { ...hoverAnchor, zone };
+      else return;
+    }
+    if (!anchor || sameHover(hoverAnchor, anchor)) return;
+    hoverAnchor = anchor;
+    try { syncTableChrome(); } catch {}
+  }
+  view.dom.addEventListener('pointerover', onTablePointerOver);
+  view.dom.addEventListener('pointermove', onTablePointerOver);
+  view.dom.addEventListener('pointerleave', scheduleHoverClear);
+  function pinChromeOnHover(element) {
+    element.addEventListener('pointerenter', cancelHoverClear);
+    element.addEventListener('pointerleave', scheduleHoverClear);
+    element.addEventListener('focusin', cancelHoverClear);
+  }
+  // Anchor info for the table holding the selection: node/map geometry for
+  // commands plus the rendered wrapper for overlay positioning.
+  function tableInfo() {
+    try {
+      if (!isInTable(view.state)) return null;
+      const rect = selectedRect(view.state);
+      const $from = view.state.selection.$from;
+      let depth = -1;
+      for (let d = $from.depth; d > 0; d--) {
+        if ($from.node(d).type.spec.tableRole === 'table') { depth = d; break; }
+      }
+      if (depth < 0) return null;
+      let wrapper = null;
+      try {
+        const dom = view.nodeDOM($from.before(depth));
+        if (dom instanceof HTMLElement) wrapper = dom.closest?.('.tableWrapper') || dom;
+      } catch {}
+      return {
+        table: rect.table, map: rect.map, tableStart: rect.tableStart,
+        row: rect.top, col: rect.left, height: rect.map.height, width: rect.map.width,
+        wrapper
+      };
+    } catch { return null; }
+  }
+  // Move the caret into one cell without touching content. Selection-only
+  // transactions pass the lock filter and create no history entry, so this
+  // stays a pure navigation step even under Lock.
+  function selectTableCell(row, col, base) {
+    const info = base || tableInfo();
+    if (!info || !view) return false;
+    try {
+      const r = Math.max(0, Math.min(info.height - 1, row));
+      const c = Math.max(0, Math.min(info.width - 1, col));
+      const pos = info.tableStart + info.map.map[r * info.width + c];
+      const selection = Selection.near(view.state.doc.resolve(Math.max(0, pos + 1)));
+      if (!view.state.selection.eq(selection)) view.dispatch(view.state.tr.setSelection(selection));
+      return true;
+    } catch { return false; }
+  }
+  // The table actions act on: the hovered table when the pointer is over
+  // one (no prior cell click needed), otherwise the selected table. Hover
+  // never dispatches by itself; the selection move happens only when an
+  // action runs, exactly like focusing a cell first.
+  function actionInfo() {
+    if (hoverAnchor && hoverAnchor.wrapper && hoverAnchor.wrapper.isConnected && hoverAnchor.table) return hoverAnchor;
+    return tableInfo();
+  }
+  function appendTableRow() {
+    const info = actionInfo();
+    if (!info || !selectTableCell(info.height - 1, info.col, info)) return false;
+    return runTableCommand(addRowAfter);
+  }
+  function appendTableColumn() {
+    const info = actionInfo();
+    if (!info || !selectTableCell(info.row, info.width - 1, info)) return false;
+    return runTableCommand(addColumnAfter);
+  }
+  function cellDomAt(info, row, col) {
+    try {
+      const dom = view.nodeDOM(info.tableStart + info.map.map[row * info.width + col]);
+      return dom instanceof HTMLElement ? dom : null;
+    } catch { return null; }
+  }
+  function refocusHandle(kind, index) {
+    try {
+      const next = handlesLayer.querySelector(kind === 'row'
+        ? `[data-handle-row="${index}"]`
+        : `[data-handle-col="${index}"]`);
+      if (next) next.focus();
+    } catch {}
+  }
+  // Suppress only the click the browser synthesizes on the dragged handle
+  // itself after a drag (identified by element + recency, so a later click
+  // on any handle — including the same one — still opens its menu).
+  let suppressHandleClick = null;
+  function consumeDragClick(btn) {
+    if (suppressHandleClick && suppressHandleClick.el === btn &&
+        performance.now() - suppressHandleClick.t < 750) {
+      suppressHandleClick = null;
+      return true;
+    }
+    if (suppressHandleClick && suppressHandleClick.el === btn) suppressHandleClick = null;
+    return false;
+  }
+  function makeHandle(kind, index) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `folio-table-handle folio-table-handle-${kind}`;
+    if (kind === 'row') btn.dataset.handleRow = String(index);
+    else btn.dataset.handleCol = String(index);
+    const label = kind === 'row' ? `Row ${index + 1} handle` : `Column ${index + 1} handle`;
+    btn.setAttribute('aria-label', label);
+    btn.title = kind === 'row'
+      ? `Row ${index + 1}: drag to move, arrow keys move, Enter for menu`
+      : `Column ${index + 1}: drag to move, arrow keys move, Enter for menu`;
+    btn.setAttribute('aria-haspopup', 'menu');
+    btn.setAttribute('aria-expanded', 'false');
+    const grip = document.createElement('span');
+    grip.className = 'folio-table-grip';
+    grip.setAttribute('aria-hidden', 'true');
+    btn.append(grip);
+    btn.addEventListener('mousedown', event => event.preventDefault());
+    btn.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (consumeDragClick(event.currentTarget)) return;
+      if (options.isLocked()) return;
+      openTableMenuFor(kind, index, btn);
+    });
+    btn.addEventListener('keydown', event => handleKeyFor(kind, index, event));
+    btn.addEventListener('pointerdown', event => startHandleDrag(kind, index, event));
+    pinChromeOnHover(btn);
+    btn.addEventListener('contextmenu', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      openTableMenuFor(kind, index, btn, { left: event.clientX, bottom: event.clientY });
+    });
+    return btn;
+  }
+  // Keyboard equivalents for every drag: arrows move the row/column by one
+  // through the same table operations, Enter opens the menu, Escape refocuses.
+  function handleKeyFor(kind, index, event) {
+    const key = event.key;
+    if (key === 'Escape') { event.preventDefault(); try { view?.focus(); } catch {} return; }
+    if (key === 'Enter' || key === ' ') {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!options.isLocked()) openTableMenuFor(kind, index, event.target.closest?.('button'));
+      return;
+    }
+    if (options.isLocked()) return;
+    const step = key === 'ArrowUp' || key === 'ArrowLeft' ? -1 : key === 'ArrowDown' || key === 'ArrowRight' ? 1 : 0;
+    if (!step) return;
+    if (kind === 'row' && (key === 'ArrowLeft' || key === 'ArrowRight')) return;
+    if (kind === 'col' && (key === 'ArrowUp' || key === 'ArrowDown')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const info = actionInfo();
+    if (!info) return;
+    if (kind === 'row') {
+      if (!selectTableCell(index, info.col, info)) return;
+      if (!runTableCommand(resolveTableOp(step < 0 ? 'move-row-up' : 'move-row-down'))) return;
+      refocusHandle(kind, Math.max(0, Math.min(info.height - 1, index + step)));
+    } else {
+      if (!selectTableCell(info.row, index, info)) return;
+      if (!runTableCommand(resolveTableOp(step < 0 ? 'move-column-left' : 'move-column-right'))) return;
+      refocusHandle(kind, Math.max(0, Math.min(info.width - 1, index + step)));
+    }
+  }
+  let handleDrag = null;
+  function rowColEdges(info) {
+    const wrapRect = info.wrapper.getBoundingClientRect();
+    const rows = [], cols = [];
+    for (let r = 0; r < info.height; r++) {
+      const dom = cellDomAt(info, r, 0);
+      const b = dom ? dom.getBoundingClientRect() : null;
+      rows.push(b ? b.bottom : wrapRect.top + wrapRect.height * ((r + 1) / info.height));
+    }
+    for (let c = 0; c < info.width; c++) {
+      const dom = cellDomAt(info, 0, c);
+      const b = dom ? dom.getBoundingClientRect() : null;
+      cols.push(b ? b.right : wrapRect.left + wrapRect.width * ((c + 1) / info.width));
+    }
+    return { top: wrapRect.top, left: wrapRect.left, bottom: wrapRect.bottom, right: wrapRect.right, rows, cols };
+  }
+  function slotFromCoord(boundaries, edge, coord) {
+    let slot = 0;
+    const stops = [edge].concat(boundaries);
+    while (slot < stops.length - 1 && coord >= stops[slot + 1]) slot++;
+    return slot;
+  }
+  function startHandleDrag(kind, index, event) {
+    if (options.isLocked() || !view) return;
+    if (event.button !== 0) return;
+    const info = actionInfo();
+    if (!info || !info.wrapper) return;
+    if ((kind === 'row' ? info.height : info.width) < 2) return;
+    event.preventDefault();
+    try { event.currentTarget?.setPointerCapture?.(event.pointerId); } catch {}
+    handleDrag = { kind, from: index, slot: index, live: false, edges: rowColEdges(info), info };
+  }
+  function moveTargetFor(drag) {
+    const count = drag.kind === 'row' ? drag.edges.rows.length : drag.edges.cols.length;
+    const slot = Math.max(0, Math.min(count, drag.slot));
+    if (slot === drag.from || slot === drag.from + 1) return -1;
+    return slot > drag.from ? slot - 1 : slot;
+  }
+  // Drag destinations pass through the same safeguards as the operations
+  // module: rectangular tables only, and row drags may neither start from
+  // nor land on the header row. Anything else hides the indicator and drops
+  // as a no-op (the document is never touched).
+  function guardedDropTarget(drag) {
+    const target = moveTargetFor(drag);
+    if (target < 0) return -1;
+    const info = (drag.info && drag.info.wrapper && drag.info.wrapper.isConnected) ? drag.info : tableInfo();
+    if (!info) return -1;
+    const guard = rectangularTableGuard(info);
+    if (!guard) return -1;
+    if (drag.kind === 'row' && (drag.from < guard.headerRows || target < guard.headerRows)) return -1;
+    return target;
+  }
+  function paintDropHandle(target) {
+    try {
+      for (const btn of handlesLayer.querySelectorAll('.folio-table-handle')) {
+        const isRow = btn.hasAttribute('data-handle-row');
+        const mine = Number(isRow ? btn.getAttribute('data-handle-row') : btn.getAttribute('data-handle-col'));
+        const matches = target >= 0 && handleDrag &&
+          ((handleDrag.kind === 'row') === isRow) && mine === target;
+        btn.classList.toggle('drop-target', Boolean(matches));
+      }
+    } catch {}
+  }
+  function onHandlePointerMove(event) {
+    if (!handleDrag) return;
+    const drag = handleDrag;
+    drag.live = true;
+    const coord = drag.kind === 'row' ? event.clientY : event.clientX;
+    const boundaries = drag.kind === 'row' ? drag.edges.rows : drag.edges.cols;
+    const edge = drag.kind === 'row' ? drag.edges.top : drag.edges.left;
+    drag.slot = slotFromCoord(boundaries, edge, coord);
+    const target = guardedDropTarget(drag);
+    const info = (drag.info && drag.info.wrapper && drag.info.wrapper.isConnected) ? drag.info : tableInfo();
+    if (target < 0 || !info || !info.wrapper) { dropLine.hidden = true; paintDropHandle(-1); return; }
+    const wrapRect = info.wrapper.getBoundingClientRect();
+    if (drag.kind === 'row') {
+      const stops = [drag.edges.top].concat(drag.edges.rows);
+      const y = stops[Math.max(0, Math.min(stops.length - 1, drag.slot))];
+      dropLine.style.left = `${Math.round(wrapRect.left)}px`;
+      dropLine.style.width = `${Math.round(Math.max(0, wrapRect.width))}px`;
+      dropLine.style.top = `${Math.round(y - 1)}px`;
+      dropLine.style.height = '2px';
+      dropLine.style.bottom = '';
+    } else {
+      const stops = [drag.edges.left].concat(drag.edges.cols);
+      const x = stops[Math.max(0, Math.min(stops.length - 1, drag.slot))];
+      dropLine.style.top = `${Math.round(wrapRect.top)}px`;
+      dropLine.style.height = `${Math.round(Math.max(0, wrapRect.height))}px`;
+      dropLine.style.left = `${Math.round(x - 1)}px`;
+      dropLine.style.width = '2px';
+      dropLine.style.bottom = '';
+    }
+    dropLine.hidden = false;
+    paintDropHandle(target);
+  }
+  function endHandleDrag(commit) {
+    const drag = handleDrag;
+    handleDrag = null;
+    dropLine.hidden = true;
+    paintDropHandle(-1);
+    if (!drag || !commit || !drag.live) return;
+    const target = guardedDropTarget(drag);
+    if (target < 0 || !view || options.isLocked()) return;
+    hoverAnchor = null;
+    try {
+      suppressHandleClick = { el: document.querySelector(`[data-handle-${drag.kind}="${drag.from}"]`), t: performance.now() };
+    } catch { suppressHandleClick = null; }
+    const info = (drag.info && drag.info.wrapper && drag.info.wrapper.isConnected) ? drag.info : tableInfo();
+    if (info) {
+      if (drag.kind === 'row') selectTableCell(drag.from, info.col, info);
+      else selectTableCell(info.row, drag.from, info);
+    }
+    const moved = drag.kind === 'row'
+      ? runTableCommand(moveTableRow({ from: drag.from, to: target }))
+      : runTableCommand(moveTableColumn({ from: drag.from, to: target }));
+    if (moved) refocusHandle(drag.kind, target);
+  }
+  function onHandlePointerUp(event) {
+    if (!handleDrag) return;
+    event.preventDefault();
+    endHandleDrag(true);
+  }
+  function onHandlePointerCancel() {
+    endHandleDrag(false);
+  }
+  document.addEventListener('pointermove', onHandlePointerMove);
+  document.addEventListener('pointerup', onHandlePointerUp);
+  document.addEventListener('pointercancel', onHandlePointerCancel);
+  // Compact contextual menu: Row and Column fly out as submenus (insertion,
+  // move, duplicate, deletion, plus alignment for columns); sort and table
+  // deletion stay top-level. Leaf items keep the same
+  // `data-table-menu-action` hooks. Full keyboard model: arrows move within
+  // the open level, Right/Enter opens a submenu, Left/Escape steps back out,
+  // Home/End jump, focus auto-expands submenus, and focus leaving the menu
+  // dismisses it. Submenus flip to the left and clamp vertically so they
+  // never leave the viewport.
+  const TABLE_MENU_TREE = [
+    { label: 'Row', submenu: 'row', items: [
+      ['insert-row-above', 'Insert row above'], ['insert-row-below', 'Insert row below'],
+      ['move-row-up', 'Move row up'], ['move-row-down', 'Move row down'],
+      ['duplicate-row', 'Duplicate row'], ['delete-row', 'Delete row']
+    ] },
+    { label: 'Column', submenu: 'column', items: [
+      ['insert-column-left', 'Insert column left'], ['insert-column-right', 'Insert column right'],
+      ['move-column-left', 'Move column left'], ['move-column-right', 'Move column right'],
+      ['duplicate-column', 'Duplicate column'],
+      ['align-left', 'Align left'], ['align-center', 'Align center'], ['align-right', 'Align right'],
+      ['delete-column', 'Delete column']
+    ] },
+    { action: 'sort-ascending', label: 'Sort ascending' },
+    { action: 'sort-descending', label: 'Sort descending' },
+    { action: 'delete-table', label: 'Delete table', danger: true }
+  ];
+  function tableMenuCommand(action) {
+    switch (action) {
+      case 'insert-row-above': return addRowBefore;
+      case 'insert-row-below': return addRowAfter;
+      case 'insert-column-left': return addColumnBefore;
+      case 'insert-column-right': return addColumnAfter;
+      case 'delete-row': return deleteRow;
+      case 'delete-column': return deleteColumn;
+      case 'delete-table': return deleteTable;
+      default: return TABLE_OP_NAMES.includes(action) ? resolveTableOp(action) : null;
+    }
+  }
+  function closeTableMenu() {
+    if (activePopup && activePopup.menu.classList.contains('folio-table-menu')) closePopup();
+  }
+  function menuLeafButton(action, label, locked, danger) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.setAttribute('role', 'menuitem');
+    item.dataset.tableMenuAction = action;
+    item.textContent = label;
+    item.setAttribute('aria-label', label);
+    if (danger) item.dataset.tableMenuDanger = 'true';
+    item.disabled = locked;
+    item.addEventListener('click', () => {
+      closePopup();
+      if (options.isLocked()) return;
+      const cmd = tableMenuCommand(action);
+      if (cmd && runTableCommand(cmd)) { try { view.focus(); } catch {} }
+    });
+    return item;
+  }
+  function openTableMenu(trigger, anchor) {
+    if (!view) return;
+    closePopup();
+    if (!actionInfo()) return;
+    const locked = options.isLocked();
+    const menu = document.createElement('div');
+    menu.className = 'folio-table-menu';
+    menu.setAttribute('role', 'menu');
+    menu.setAttribute('aria-label', 'Table menu');
+    let openSub = null;
+    const topButtons = [];
+    function closeSubmenu(restoreFocus) {
+      if (!openSub) return;
+      const { wrap, btn, sub } = openSub;
+      openSub = null;
+      sub.hidden = true;
+      try { btn.setAttribute('aria-expanded', 'false'); } catch {}
+      wrap.classList.remove('sub-open');
+      if (restoreFocus) { try { btn.focus(); } catch {} }
+    }
+    function openSubmenu(wrap, focusFirst) {
+      const btn = wrap.querySelector(':scope > button');
+      const sub = wrap.querySelector(':scope > .folio-table-submenu');
+      if (!btn || !sub || btn.disabled) return;
+      if (openSub && openSub.wrap === wrap) {
+        if (focusFirst) {
+          const first = sub.querySelector('button:not(:disabled)');
+          if (first) first.focus();
+        }
+        return;
+      }
+      closeSubmenu(false);
+      sub.hidden = false;
+      // Clamp before measuring the flip: estimate below the parent, then
+      // shift up if the real box would leave the viewport.
+      const wrapRect = wrap.getBoundingClientRect();
+      sub.classList.remove('open-left');
+      sub.style.top = '';
+      const estimate = Math.min(360, sub.children.length * 38 + 12);
+      const top = Math.max(8, Math.min(wrapRect.top - 7, window.innerHeight - 8 - estimate));
+      sub.style.top = `${Math.round(top - wrapRect.top)}px`;
+      const box = sub.getBoundingClientRect();
+      if (box.right > window.innerWidth - 8) sub.classList.add('open-left');
+      if (box.bottom > window.innerHeight - 8) {
+        const excess = box.bottom - (window.innerHeight - 8);
+        sub.style.top = `${Math.round(top - wrapRect.top - excess)}px`;
+      }
+      openSub = { wrap, btn, sub };
+      try { btn.setAttribute('aria-expanded', 'true'); } catch {}
+      wrap.classList.add('sub-open');
+      if (focusFirst) {
+        const first = sub.querySelector('button:not(:disabled)');
+        if (first) first.focus();
+      }
+    }
+    menu.addEventListener('pointerleave', () => {
+      // Letting the pointer leave the whole menu dismisses any open branch
+      // (the menu itself stays until outside-dismissal).
+      closeSubmenu(false);
+    });
+    for (const node of TABLE_MENU_TREE) {
+      if (node.submenu) {
+        const wrap = document.createElement('div');
+        wrap.className = 'folio-table-subwrap';
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.dataset.tableSubmenu = node.submenu;
+        btn.setAttribute('aria-haspopup', 'true');
+        btn.setAttribute('aria-expanded', 'false');
+        const label = document.createElement('span');
+        label.textContent = node.label;
+        const arrow = document.createElement('span');
+        arrow.className = 'folio-table-arrow';
+        arrow.textContent = '›';
+        arrow.setAttribute('aria-hidden', 'true');
+        btn.append(label, arrow);
+        btn.setAttribute('aria-label', `${node.label} submenu`);
+        btn.title = `${node.label} submenu`;
+        btn.disabled = locked;
+        const sub = document.createElement('div');
+        sub.className = 'folio-table-submenu';
+        sub.setAttribute('role', 'menu');
+        sub.setAttribute('aria-label', `${node.label} actions`);
+        sub.hidden = true;
+        for (const [action, labelText] of node.items) {
+          sub.append(menuLeafButton(action, labelText, locked, /^delete-/.test(action)));
+        }
+        wrap.append(btn, sub);
+        btn.addEventListener('click', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (btn.disabled) return;
+          if (openSub && openSub.wrap === wrap) closeSubmenu(false);
+          else openSubmenu(wrap, true);
+        });
+        btn.addEventListener('pointerenter', () => { if (!btn.disabled) openSubmenu(wrap, false); });
+        btn.addEventListener('focus', () => { if (!btn.disabled) openSubmenu(wrap, false); });
+        wrap.addEventListener('pointerleave', () => closeSubmenu(false));
+        sub.addEventListener('pointerenter', () => cancelHoverClear());
+        menu.append(wrap);
+        topButtons.push(btn);
+      } else {
+        const item = menuLeafButton(node.action, node.label, locked, node.danger);
+        item.addEventListener('pointerenter', () => closeSubmenu(false));
+        item.addEventListener('focus', () => closeSubmenu(false));
+        menu.append(item);
+        topButtons.push(item);
+      }
+    }
+    menu.addEventListener('keydown', event => {
+      const inSub = openSub && openSub.sub.contains(document.activeElement);
+      const scope = inSub
+        ? Array.from(openSub.sub.querySelectorAll('button:not(:disabled)'))
+        : topButtons.filter(btn => !btn.disabled);
+      const current = scope.indexOf(document.activeElement);
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        if (inSub) closeSubmenu(true);
+        else closePopup(true);
+      } else if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        (scope[current + 1] || scope[0])?.focus();
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        (scope[current - 1] || scope[scope.length - 1])?.focus();
+      } else if (event.key === 'Home') { event.preventDefault(); scope[0]?.focus(); }
+      else if (event.key === 'End') { event.preventDefault(); scope[scope.length - 1]?.focus(); }
+      else if (event.key === 'ArrowRight' || (event.key === 'Enter' && !inSub && document.activeElement?.hasAttribute('aria-haspopup'))) {
+        const parent = document.activeElement?.closest?.('.folio-table-subwrap');
+        if (parent && !inSub) { event.preventDefault(); openSubmenu(parent, true); }
+      } else if (event.key === 'ArrowLeft') {
+        if (inSub) { event.preventDefault(); closeSubmenu(true); }
+      }
+    });
+    menu.addEventListener('focusout', event => {
+      if (!menu.contains(event.relatedTarget)) closeTableMenu();
+    });
+    activePopup = { menu, trigger: trigger || null };
+    try { trigger?.setAttribute?.('aria-expanded', 'true'); } catch {}
+    positionPopup(menu, anchor || { left: window.innerWidth / 2, bottom: 88 });
+    const first = menu.querySelector(':scope > button:not(:disabled), :scope > .folio-table-subwrap > button:not(:disabled)');
+    if (first) first.focus();
+  }
+  function openTableMenuFor(kind, index, trigger, coords) {
+    const info = actionInfo();
+    if (!info) return;
+    if (!options.isLocked()) {
+      if (kind === 'row') selectTableCell(index, info.col, info);
+      else selectTableCell(info.row, index, info);
+    }
+    let anchor = null;
+    if (coords && Number.isFinite(coords.left) && Number.isFinite(coords.bottom)) anchor = coords;
+    else if (trigger) {
+      try {
+        const rect = trigger.getBoundingClientRect();
+        anchor = { left: rect.left, bottom: rect.bottom };
+      } catch {}
+    }
+    openTableMenu(trigger || null, anchor);
+  }
+  view.dom.addEventListener('contextmenu', event => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target || !view.dom.contains(target)) return;
+    const cellEl = target.closest ? target.closest('td, th') : null;
+    if (!cellEl || !view.dom.contains(cellEl)) return;
+    let cell = null;
+    try {
+      cell = cellAround(view.state.doc.resolve(view.posAtDOM(cellEl, 0)));
+    } catch { cell = null; }
+    if (!cell) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!options.isLocked()) {
+      try {
+        const selection = Selection.near(cell);
+        if (!view.state.selection.eq(selection)) view.dispatch(view.state.tr.setSelection(selection));
+      } catch {}
+    }
+    const hasPoint = Number.isFinite(event.clientX) && Number.isFinite(event.clientY) && (event.clientX !== 0 || event.clientY !== 0);
+    let anchor = null;
+    if (hasPoint) anchor = { left: event.clientX, bottom: event.clientY };
+    else {
+      try {
+        const at = view.coordsAtPos(view.state.selection.from);
+        if (at) anchor = { left: at.left, bottom: at.bottom };
+      } catch {}
+    }
+    openTableMenu(null, anchor);
+  });
+  // Visibility follows one anchor: the hovered table/zone when the pointer
+  // is over a table or its chrome, otherwise the selected table (keyboard /
+  // touch path). Exactly one kind of control shows at a time: the hovered
+  // edge's control, or — for a caret without hover — the caret row/column
+  // handles plus both append buttons. Repositioning only moves overlays;
+  // hovering never dispatches, so the source is never touched by pointing.
+  function syncTableChrome() {
+    if (!view) return;
+    const locked = options.isLocked();
+    let anchor = null;
+    if (hoverAnchor && hoverAnchor.wrapper && hoverAnchor.wrapper.isConnected && hoverAnchor.table) {
+      anchor = hoverAnchor;
+    } else {
+      if (hoverAnchor) hoverAnchor = null;
+      const info = tableInfo();
+      if (info && info.wrapper && info.wrapper.isConnected) anchor = { ...info, zone: 'selection' };
+    }
+    // A focused control pins its chrome open for keyboard users even when
+    // the pointer is elsewhere.
+    if (anchor && (handlesLayer.contains(document.activeElement)
+        || document.activeElement === addRowBtn || document.activeElement === addColBtn)) {
+      const info = tableInfo();
+      if (info && info.wrapper && info.wrapper.isConnected) anchor = { ...info, zone: 'selection' };
+    }
+    addRowBtn.disabled = locked;
+    addColBtn.disabled = locked;
+    if (!anchor || !anchor.wrapper || !anchor.wrapper.isConnected) {
+      addRowBtn.hidden = true;
+      addColBtn.hidden = true;
+      handlesLayer.hidden = true;
+      dropLine.hidden = true;
+      closeTableMenu();
+      return;
+    }
+    const wrapRect = anchor.wrapper.getBoundingClientRect();
+    if (wrapRect.bottom < 0 || wrapRect.top > window.innerHeight || wrapRect.width <= 0 || wrapRect.height <= 0) {
+      addRowBtn.hidden = true;
+      addColBtn.hidden = true;
+      handlesLayer.hidden = true;
+      dropLine.hidden = true;
+      closeTableMenu();
+      return;
+    }
+    if (handleDrag && !tableInfo()) { endHandleDrag(false); return; }
+    const zone = anchor.zone || 'selection';
+    const showRowHandle = zone === 'left' || (zone === 'selection' && document.activeElement?.dataset?.handleRow !== undefined);
+    const showColHandle = zone === 'top' || (zone === 'selection' && document.activeElement?.dataset?.handleCol !== undefined);
+    const showAddRow = zone === 'bottom' || (zone === 'selection' && document.activeElement === addRowBtn);
+    const showAddCol = zone === 'right' || (zone === 'selection' && document.activeElement === addColBtn);
+    addRowBtn.hidden = !showAddRow;
+    addColBtn.hidden = !showAddCol;
+    if (showAddRow) {
+      const rowW = addRowBtn.offsetWidth || 28, rowH = addRowBtn.offsetHeight || 28;
+      const rowLeft = Math.max(8, Math.min(window.innerWidth - rowW - 8, wrapRect.left + wrapRect.width / 2 - rowW / 2));
+      let rowTop = wrapRect.bottom + 6;
+      if (rowTop + rowH > window.innerHeight - 8) rowTop = Math.max(8, wrapRect.bottom - rowH - 6);
+      addRowBtn.style.left = `${Math.round(rowLeft)}px`;
+      addRowBtn.style.top = `${Math.round(rowTop)}px`;
+    }
+    if (showAddCol) {
+      const colW = addColBtn.offsetWidth || 28, colH = addColBtn.offsetHeight || 28;
+      let colLeft = wrapRect.right + 6;
+      if (colLeft + colW > window.innerWidth - 8) colLeft = Math.max(8, wrapRect.right - colW - 6);
+      const colTop = Math.max(8, Math.min(window.innerHeight - colH - 8, wrapRect.top + wrapRect.height / 2 - colH / 2));
+      addColBtn.style.left = `${Math.round(colLeft)}px`;
+      addColBtn.style.top = `${Math.round(colTop)}px`;
+    }
+    handlesLayer.hidden = !(showRowHandle || showColHandle);
+    handlesLayer.replaceChildren();
+    if (showRowHandle) {
+      const r = Math.max(0, Math.min(anchor.height - 1, anchor.row));
+      const btn = makeHandle('row', r);
+      btn.disabled = locked;
+      const dom = cellDomAt(anchor, r, 0);
+      const b = dom ? dom.getBoundingClientRect() : null;
+      const y = b ? b.top + b.height / 2 : wrapRect.top + wrapRect.height * ((r + 0.5) / anchor.height);
+      btn.style.left = `${Math.round(Math.max(8, wrapRect.left - 30))}px`;
+      btn.style.top = `${Math.round(y - 12)}px`;
+      handlesLayer.append(btn);
+    }
+    if (showColHandle) {
+      const c = Math.max(0, Math.min(anchor.width - 1, anchor.col));
+      const btn = makeHandle('col', c);
+      btn.disabled = locked;
+      const dom = cellDomAt(anchor, 0, c);
+      const b = dom ? dom.getBoundingClientRect() : null;
+      const x = b ? b.left + b.width / 2 : wrapRect.left + wrapRect.width * ((c + 0.5) / anchor.width);
+      btn.style.left = `${Math.round(x - 12)}px`;
+      btn.style.top = `${Math.round(Math.max(8, wrapRect.top - 30))}px`;
+      handlesLayer.append(btn);
+    }
+  }
+  const syncTableChromeOnScroll = () => { try { syncTableChrome(); } catch {} };
+  window.addEventListener('scroll', syncTableChromeOnScroll, true);
+  window.addEventListener('resize', syncTableChromeOnScroll);
+  const refreshTableChrome = () => { try { syncTableChrome(); } catch {} };
+  refreshers.add(refreshTableChrome);
+  try { syncTableChrome(); } catch {}
   // A drag ending outside the editor (or cancelled) still settles the guard.
   window.addEventListener('pointerup', releaseSelectionGuard);
   window.addEventListener('pointercancel', releaseSelectionGuard);
@@ -1954,6 +3194,10 @@ export function createRichEditor(parent, options) {
   // Mirror the live DOM range into the folio-selection custom highlight (see
   // above). Document-level so ranges leaving the reader clear the mirror.
   document.addEventListener('selectionchange', syncFolioHighlight);
+  const dismissPopup = event => {
+    if (activePopup && !activePopup.menu.contains(event.target) && !activePopup.trigger?.contains(event.target)) closePopup();
+  };
+  document.addEventListener('pointerdown', dismissPopup, true);
   return {
     view,
     captureSelection() {
@@ -2001,6 +3245,7 @@ export function createRichEditor(parent, options) {
         view.dispatch(view.state.tr.setSelection(next).setMeta('folio-projection', true));
         if (meta.logical) setBookmark(selection.anchor, selection.head, view.state);
       }
+      try { syncTableChrome(); } catch {}
     },
     setLocked() { view.setProps({ editable: () => !options.isUserLocked() }); for (const refresh of refreshers) refresh(); },
     setTransitionLocked() { for (const refresh of refreshers) refresh(); },
@@ -2014,8 +3259,11 @@ export function createRichEditor(parent, options) {
         bold: toggleMark(schema.marks.strong), italic: toggleMark(schema.marks.em), code: toggleMark(schema.marks.code), strike: toggleMark(schema.marks.strike),
         paragraph: setBlockType(schema.nodes.paragraph), heading: setBlockType(schema.nodes.heading, { level: 2 }),
         bullet: wrapInList(schema.nodes.bullet_list), numbered: wrapInList(schema.nodes.ordered_list), quote: wrapIn(schema.nodes.blockquote),
-        row: addRowAfter, column: addColumnAfter, 'delete-row': deleteRow, 'delete-column': deleteColumn, 'delete-table': deleteTable
+        row: addRowAfter, column: addColumnAfter, 'delete-row': deleteRow, 'delete-column': deleteColumn, 'delete-table': deleteTable,
+        'insert-row-above': addRowBefore, 'insert-row-below': addRowAfter,
+        'insert-column-left': addColumnBefore, 'insert-column-right': addColumnAfter
       };
+      for (const op of TABLE_OP_NAMES) commands[op] = resolveTableOp(op);
       if (name === 'table') {
         const cell = header => schema.nodes[header ? 'table_header' : 'table_cell'].createAndFill();
         const table = schema.nodes.table.create(null, [schema.nodes.table_row.create(null, [cell(true), cell(true)]), schema.nodes.table_row.create(null, [cell(false), cell(false)])]);
@@ -2032,6 +3280,22 @@ export function createRichEditor(parent, options) {
       view.focus();
     },
     destroy() {
+      closePopup();
+      try { addRowBtn.remove(); } catch {}
+      try { addColBtn.remove(); } catch {}
+      try { handlesLayer.remove(); } catch {}
+      try { dropLine.remove(); } catch {}
+      refreshers.delete(refreshTableChrome);
+      window.removeEventListener('scroll', syncTableChromeOnScroll, true);
+      window.removeEventListener('resize', syncTableChromeOnScroll);
+      document.removeEventListener('pointermove', onHandlePointerMove);
+      document.removeEventListener('pointerup', onHandlePointerUp);
+      document.removeEventListener('pointercancel', onHandlePointerCancel);
+      try { view.dom.removeEventListener('pointerover', onTablePointerOver); } catch {}
+      try { view.dom.removeEventListener('pointerleave', scheduleHoverClear); } catch {}
+      cancelHoverClear();
+      hoverAnchor = null;
+      document.removeEventListener('pointerdown', dismissPopup, true);
       document.removeEventListener('selectionchange', syncFolioHighlight);
       try { window.CSS.highlights.delete('folio-selection'); } catch {}
       window.removeEventListener('pointerup', releaseSelectionGuard);

@@ -25,7 +25,7 @@ function editorPresentation(_show, locked, fallback) {
   lockButton.querySelector('use')?.setAttribute('href', locked ? '#i-lock' : '#i-unlock');
   $('editor-lock-note').hidden = !locked;
   $('editor-notice').hidden = !fallback;
-  $('format-tools').querySelectorAll('button,select').forEach(control => { control.disabled = locked; });
+  $('format-tools').querySelectorAll('button:not(#format-toolbar-close),select,input').forEach(control => { control.disabled = locked; });
 }
 // Kept for blocks whose exact byte range the ledger cannot prove. Atoms with a
 // provable range open their own in-place editor instead of reaching this.

@@ -871,6 +871,10 @@ $('save').onclick = () => requestSave();
 $('palette-open').onclick = () => openCommands(); $('outline-toggle').onclick = () => setOutline(!outlineVisible); $('outline-close').onclick = () => setOutline(false);
 $('width-toggle').onclick = toggleDocumentWidth;
 $('format-toggle').onclick = () => setFormatToolbarVisible(!formatToolbarVisible);
+$('format-toolbar-close').onclick = () => {
+  setFormatToolbarVisible(false);
+  $('view-menu-button').focus();
+};
 $('zoom-in').onclick = () => zoomWindow(.1); $('zoom-out').onclick = () => zoomWindow(-.1); $('zoom-reset').onclick = () => zoomWindow(0, true);
 $('reload').onclick = () => requestOpen(current.path); $('dismiss-disk').onclick = () => { $('disk-banner').hidden = true; };
 $('find-input').oninput = updateFind; $('find-next').onclick = () => nextFind(1); $('find-previous').onclick = () => nextFind(-1); $('find-close').onclick = closeFind;

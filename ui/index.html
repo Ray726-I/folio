@@ -202,13 +202,9 @@
           <button class="button small ghost" data-editor-command="image">Image</button>
           <button class="button small ghost" data-editor-command="math">Math</button>
           <button class="button small ghost" data-editor-command="table">Table</button>
-          <details class="table-tools"><summary>Table tools</summary><div>
-            <button class="button small" data-editor-command="row">Add row</button>
-            <button class="button small" data-editor-command="column">Add column</button>
-            <button class="button small" data-editor-command="delete-row">Delete row</button>
-            <button class="button small" data-editor-command="delete-column">Delete column</button>
-            <button class="button small" data-editor-command="delete-table">Delete table</button>
-          </div></details>
+          <button id="format-toolbar-close" class="icon-button" type="button" title="Hide formatting toolbar" aria-label="Hide formatting toolbar">
+            <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+          </button>
         </div>
         <div id="editor-lock-note" class="editor-note" role="status" hidden>Locked · You can select, copy, follow links and load images. Unlock to make changes.</div>
         <div id="editor-notice" class="editor-note" role="status" hidden>This document is too large or complex to format. Its complete Markdown is shown below, read-only; saving still writes the file unchanged.</div>

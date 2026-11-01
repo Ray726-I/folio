@@ -26,11 +26,11 @@ const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n
     await page.keyboard.press('Tab'); await page.keyboard.type('Next');
     assert.ok((await page.locator('#preview td').nth(1).innerText()).includes('Next'));
     const beforeStructure = await text();
-    await page.locator('.table-tools summary').click();
-    await page.locator('[data-editor-command=row]').click();
+    const tableBounds = await page.locator('#preview table').boundingBox();
+    await page.mouse.move(tableBounds.x + tableBounds.width / 2, tableBounds.y + tableBounds.height - 3);
+    await page.locator('.folio-table-add[data-table-append="row"]').click();
     assert.equal(await page.locator('#preview tr').count(), 6);
     await page.keyboard.press('Control+z'); assert.equal(await text(), beforeStructure);
-    await page.locator('.table-tools summary').click();
 
     // Select All/Delete in the single editor must not leave protected table
     // shells behind, and undo restores the exact bytes.
