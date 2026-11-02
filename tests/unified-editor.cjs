@@ -38,6 +38,7 @@ const fixture = process.env.FOLIO_FIXTURE || path.resolve('target/debug/examples
     await page.goto(pathToFileURL(path.resolve('ui/index.html')).href);
     await page.waitForFunction(() => typeof busy !== 'undefined' && !busy);
     await page.locator('#preview .ProseMirror').waitFor();
+    await page.evaluate(() => setDocumentMode('edit'));
     assert.equal(await page.locator('#view-switch').count(), 0, 'the Markdown/Formatted mode switch is gone');
     assert.equal(await page.locator('#source-editor').count(), 0, 'no second editor surface exists');
     assert.equal(await page.evaluate(() => current.content), source, 'opening preserves exact Markdown');
@@ -69,14 +70,14 @@ const fixture = process.env.FOLIO_FIXTURE || path.resolve('target/debug/examples
     assert.equal(snapshot, await page.evaluate(() => current.content));
     assert.equal(await page.locator('#source-snapshot-text').getAttribute('readonly'), '');
     await page.locator('#source-snapshot-close').click();
-    await page.locator('#lock-document').click();
+    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
     assert.equal(await page.locator('#preview .ProseMirror').getAttribute('contenteditable'), 'false');
     const locked = await page.evaluate(() => current.content);
     await page.locator('#preview h1').click(); await page.keyboard.type('NO'); await page.keyboard.press('Control+z');
     assert.equal(await page.evaluate(() => current.content), locked);
     assert.equal(await page.locator('#preview input[type=checkbox]').first().isDisabled(), true);
     assert.equal(external.length, 0, 'blocked remote image never fetches implicitly');
-    await page.locator('#lock-document').click();
+    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
     await page.keyboard.press('Control+s'); await page.waitForFunction(() => !busy && savedContent !== null);
     assert.equal(await page.evaluate(() => savedContent), await page.evaluate(() => current.content));
     assert.equal(await page.locator('#dirty-dot').isVisible(), false);

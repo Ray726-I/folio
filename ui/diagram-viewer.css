@@ -1,0 +1,20 @@
+.mermaid-host { position:relative; }
+.diagram-expand { position:absolute; z-index:3; top:8px; left:8px; margin:0; padding:5px 9px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--muted); font:500 12px/1.4 var(--font-ui); cursor:pointer; opacity:0; }
+.mermaid-host:hover>.diagram-expand,.mermaid-host:focus-within>.diagram-expand { opacity:1; }
+.diagram-expand:hover { color:var(--fg); background:var(--hover); }
+.diagram-expand:focus-visible,.diagram-viewer button:focus-visible,.diagram-viewer-viewport:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.diagram-viewer { box-sizing:border-box; width:calc(100vw - 48px); max-width:1440px; height:calc(100vh - 64px); max-height:1100px; margin:auto; padding:0; border:1px solid var(--line); border-radius:12px; background:var(--bg); color:var(--fg); overflow:hidden; box-shadow:0 16px 64px #0005; }
+.diagram-viewer[open] { display:flex; flex-direction:column; }
+.diagram-viewer::backdrop { background:#0008; }
+.diagram-viewer-toolbar { display:flex; flex-wrap:wrap; flex:none; align-items:center; justify-content:space-between; gap:8px 16px; padding:12px 16px; border-bottom:1px solid var(--line); background:var(--panel); font:13px var(--font-ui); }
+.diagram-viewer-toolbar h2 { margin:0; font:600 14px var(--font-ui); }
+.diagram-viewer-controls { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+.diagram-viewer-controls .button { min-width:32px; min-height:32px; padding:5px 9px; }
+.diagram-viewer-zoom { width:4.5ch; text-align:center; font-variant-numeric:tabular-nums; color:var(--muted); }
+.diagram-viewer-viewport { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; outline-offset:-3px; }
+.diagram-viewer-canvas { display:flex; align-items:center; justify-content:center; box-sizing:border-box; min-width:100%; min-height:100%; padding:24px; }
+.diagram-viewer-canvas>svg { display:block; flex:none; margin:0; }
+@media (hover:none) { .mermaid-host>.diagram-expand { opacity:1; } }
+@media (pointer:coarse) { .diagram-expand,.diagram-viewer-controls .button { min-width:44px; min-height:44px; } }
+@media (max-width:600px) { .diagram-viewer { width:calc(100vw - 16px); height:calc(100vh - 24px); } .diagram-viewer-toolbar { padding:10px; } }
+@media print { .diagram-expand,.diagram-viewer { display:none !important; } }

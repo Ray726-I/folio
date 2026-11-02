@@ -789,6 +789,12 @@ def main() -> int:
 
         keyboard = Keyboard(x11)
         smoke = Smoke(x11, keyboard, window, scratch)
+        # Files now open in Reading mode. Select Edit through the real command
+        # window before exercising OS-dispatched editor keystrokes.
+        keyboard.chord("p", ctrl=True, shift=True)
+        keyboard.type_text("Edit mode")
+        keyboard.chord("Return")
+        time.sleep(0.25)
         smoke.run()
         smoke.report()
         return 0

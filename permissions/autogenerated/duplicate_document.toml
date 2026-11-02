@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-duplicate-document"
+description = "Enables the duplicate_document command without any pre-configured scope."
+commands.allow = ["duplicate_document"]
+
+[[permission]]
+identifier = "deny-duplicate-document"
+description = "Denies the duplicate_document command without any pre-configured scope."
+commands.deny = ["duplicate_document"]

@@ -5,7 +5,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { execFileSync } = require('node:child_process');
 
-async function openEditor(source, viewport = { width: 1180, height: 900 }) {
+async function openEditor(source, viewport = { width: 1180, height: 900 }, options = {}) {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport });
   const errors = [], requests = [];
@@ -156,6 +156,9 @@ async function openEditor(source, viewport = { width: 1180, height: 900 }) {
   }, source);
   await page.goto(pathToFileURL(path.resolve('ui/index.html')).href);
   await page.waitForFunction(() => typeof editor !== 'undefined' && editor && !busy);
+  // Editor tests exercise editing; application tests can request Reading mode.
+  if (options.reading) await page.evaluate(() => setDocumentMode('reading'));
+  if (!options.reading && !options.defaultMode) await page.evaluate(() => { if (typeof setDocumentMode === 'function') setDocumentMode('edit'); });
   return {
     browser, page, errors, requests,
     async holdOpen(path, content, failure = null) { await page.evaluate(({ path, content, failure }) => holdOpen(path, content, failure), { path, content, failure }); },

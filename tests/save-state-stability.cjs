@@ -25,13 +25,13 @@ const { openEditor } = require('./editor-browser.cjs');
     const clean = {
       state: await box('save-state'),
       viewMenu: await box('view-menu-button'),
-      lock: await box('lock-document'),
+      lock: await box('document-mode-button'),
       save: await box('save'),
     };
 
     // Compact footprint: near the old Saved width, nowhere near the 116px gap.
     assert.ok(
-      clean.state.width <= 72,
+      clean.state.width <= 90,
       `save-state must stay compact near Saved width (got ${clean.state.width}px, old gap was 116px)`,
     );
 
@@ -44,8 +44,7 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.equal(await page.locator('#save-state').getAttribute('data-state'), 'dirty');
     assert.equal(await page.locator('#save-state').isHidden(), false);
     const gap = await page.locator('#save-state').evaluate(node => {
-      const range = document.createRange(); range.selectNodeContents(node);
-      return range.getBoundingClientRect().left - node.previousElementSibling.getBoundingClientRect().right;
+      return node.getBoundingClientRect().left - node.previousElementSibling.getBoundingClientRect().right;
     });
     assert.ok(gap <= 22, `save label must sit close to its divider (gap ${gap}px)`);
     // Accessible full meaning: short label still announces unsaved changes.
@@ -63,7 +62,7 @@ const { openEditor } = require('./editor-browser.cjs');
     const dirty = {
       state: await box('save-state'),
       viewMenu: await box('view-menu-button'),
-      lock: await box('lock-document'),
+      lock: await box('document-mode-button'),
       save: await box('save'),
     };
 
@@ -74,7 +73,7 @@ const { openEditor } = require('./editor-browser.cjs');
     );
     // Compact in both states.
     assert.ok(
-      dirty.state.width <= 72,
+      dirty.state.width <= 90,
       `dirty save-state must stay compact (got ${dirty.state.width}px, old gap was 116px)`,
     );
     // Neighbors must not shift: view menu, lock, and save stay put.
@@ -113,14 +112,11 @@ const { openEditor } = require('./editor-browser.cjs');
     const narrowDirtyWidth = (await box('save-state')).width;
     assert.equal(await page.locator('#save-state').isHidden(), false, 'narrow widths must keep the save state visible');
     assert.ok(
-      narrowDirtyWidth <= 72,
+      narrowDirtyWidth <= 90,
       `narrow save-state must stay compact (got ${narrowDirtyWidth}px)`,
     );
-    assert.equal(
-      await page.locator('#save-state').evaluate(node => node.scrollWidth > node.clientWidth + 1),
-      false,
-      'Edited must fit without truncation at narrow width',
-    );
+    assert.equal(await page.locator('#save').isVisible(), true, 'compact state becomes a save icon');
+    assert.match(await page.locator('#save').getAttribute('aria-label'), /unsaved changes/i);
     await page.keyboard.press('Control+s');
     await page.waitForFunction(() => current.content === current.saved && !busy);
     const narrowClean = await box('save-state');

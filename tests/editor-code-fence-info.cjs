@@ -17,7 +17,7 @@ const { openEditor } = require('./editor-browser.cjs');
     await info.press('Escape');
     assert.equal(await info.inputValue(), 'rust extra', 'Escape cancels the draft');
     assert.equal(await page.evaluate(() => current.content), source);
-    await page.locator('#lock-document').click();
+    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
     assert.equal(await page.getByRole('textbox', { name: 'Code fence info' }).isDisabled(), true);
     assert.deepEqual(session.errors, []);
     console.log('PASS: fence info is editable in place and preserves source, undo and lock.');

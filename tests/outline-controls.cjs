@@ -1,0 +1,52 @@
+const assert = require('node:assert/strict');
+const { openEditor } = require('./editor-browser.cjs');
+
+(async () => {
+  const source = '# Handbook\n\n## Planning\n\n### Research methods and detailed notes for the upcoming project\n\nText.\n\n### Budget\n\n## Delivery\n\n### Review\n';
+  const session = await openEditor(source);
+  const { page } = session;
+  try {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.waitForFunction(() => outlineEntries.length === 6);
+    assert.equal(await page.locator('#outline').evaluate(el => Math.round(el.getBoundingClientRect().width)), 280, 'new profiles start with the wider outline');
+    assert.equal(await page.locator('#outline-search').count(), 0, 'outline has no heading search');
+    const planning = page.locator('.outline-link').filter({ hasText: /^Planning$/ });
+    const research = page.locator('.outline-link').filter({ hasText: /^Research methods/ });
+    const toggle = page.getByRole('button', { name: 'Collapse Planning', exact: true });
+    await toggle.click();
+    assert.equal(await research.isVisible(), false, 'collapse hides descendants');
+    assert.equal(await planning.isVisible(), true);
+    await page.evaluate(() => refreshEditorOutline());
+    assert.equal(await research.isVisible(), false, 'collapse survives editor outline refresh');
+    await page.evaluate(() => setActiveOutline(2));
+    assert.equal(await planning.getAttribute('class').then(value => value.includes('active-ancestor')), true, 'collapsed parent indicates active descendants');
+    assert.equal(await research.isVisible(), false, 'following does not undo manual collapse');
+    await planning.focus();
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await research.isVisible(), true, 'keyboard expands a parent');
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await research.evaluate(el => document.activeElement === el), true, 'keyboard enters child');
+    await page.keyboard.press('ArrowLeft');
+    assert.equal(await planning.evaluate(el => document.activeElement === el), true, 'keyboard returns to parent');
+    const wrappedHeight = await research.evaluate(el => el.getBoundingClientRect().height);
+    await page.locator('#outline-wrap').click();
+    assert.ok(await research.evaluate(el => el.getBoundingClientRect().height) < wrappedHeight, 'title wrapping can be disabled');
+    assert.equal(await page.evaluate(() => preferences.get('outlineWrapTitles')), false, 'title preference is saved');
+    await page.locator('#outline-wrap').click();
+    await page.evaluate(() => setActiveOutline(2));
+    assert.equal(await research.evaluate(el => el.getBoundingClientRect().height), wrappedHeight, 'active state does not change row height');
+    assert.equal(await page.evaluate(() => current.content), source, 'outline controls never edit document');
+    await page.locator('#outline-divider').focus();
+    await page.keyboard.press('ArrowRight');
+    const resized = await page.locator('#outline').evaluate(el => Math.round(el.getBoundingClientRect().width));
+    await page.reload();
+    await page.waitForFunction(() => editor && outlineEntries.length === 6 && !busy);
+    assert.equal(await page.locator('#outline').evaluate(el => Math.round(el.getBoundingClientRect().width)), resized, 'saved sidebar width survives reload');
+    await page.getByRole('button', { name: 'Collapse Handbook', exact: true }).click();
+    await page.evaluate(() => { window.documentSource = '# Replacement document\n\n## Fresh section\n'; return requestOpenLocation('/tmp/fresh.md'); });
+    await page.waitForFunction(() => outlineEntries.length === 2);
+    assert.equal(await page.locator('.outline-link').filter({ hasText: 'Fresh section' }).isVisible(), true, 'new document is not hidden by previous collapse state');
+    assert.deepEqual(session.errors, []);
+    console.log('PASS: outline collapse, hierarchy, keyboard, title wrapping and document safety');
+  } finally { await session.close(); }
+})().catch(error => { console.error(error); process.exitCode = 1; });

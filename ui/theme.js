@@ -11,10 +11,10 @@ const themes = [
   { id: 'solarized', label: 'Solarized Light', detail: 'Warm paper', swatch: '#fdf6e3' }
 ];
 const cssProbe = document.createElement('div');
-cssProbe.style.position = 'fixed'; cssProbe.style.left = '-9999px'; cssProbe.style.pointerEvents = 'none';
+cssProbe.style.cssText = 'position:fixed;left:-9999px;width:1px;height:1px;pointer-events:none';
 document.body.append(cssProbe);
 function normalizeColor(value) {
-  if (!value) return 'transparent';
+  if (!value || value === 'transparent' || /^rgba?\([^,]+,[^,]+,[^,]+,\s*0(?:\.0*)?\s*\)$/.test(value) || /\/\s*0(?:\.0*)?\s*\)$/.test(value)) return 'transparent';
   const srgb = /^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\)$/.exec(value);
   const rgb = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/.exec(value);
   const channels = srgb ? srgb.slice(1, 4).map(channel => Number(channel) * 255) : rgb?.slice(1, 4).map(Number);
@@ -23,10 +23,21 @@ function normalizeColor(value) {
   return value;
 }
 function cssVarColor(name) {
+  // Read solid theme tokens directly. WebKit may report transparent for an
+  // off-screen probe before first layout, even while root tokens are valid.
+  const declared = getComputedStyle(root).getPropertyValue(name).trim();
+  if (!declared) return 'transparent';
+  if (/^#[0-9a-f]{6}$/i.test(declared)) return declared.toLowerCase();
+  if (/^#[0-9a-f]{3}$/i.test(declared)) return '#' + [...declared.slice(1)].map(value => value + value).join('').toLowerCase();
+  if (/^(?:rgba?\(|color\(srgb)/.test(declared)) return normalizeColor(declared);
   cssProbe.style.backgroundColor = '';
-  cssProbe.style.backgroundColor = `var(${name})`;
+  cssProbe.style.backgroundColor = declared || `var(${name})`;
+  // Mixed-color surface tokens still need CSS evaluation. Give the probe a
+  // real layout box and flush it before inspecting the resolved background.
+  cssProbe.getBoundingClientRect();
   return normalizeColor(getComputedStyle(cssProbe).backgroundColor);
 }
+
 function colorChannels(color) { return [1, 3, 5].map(index => parseInt(color.slice(index, index + 2), 16)); }
 function mixColors(first, second, amount) {
   const other = colorChannels(second);
@@ -52,23 +63,42 @@ function readableColor(color, background, minimum = 4.6) {
   }
   return mixColors(color, target, high);
 }
+let paletteFrame = 0, paletteRetries = 0;
 function updatePreviewPalette() {
+  const names = ['bg', 'fg', 'accent', 'blue', 'purple', 'green', 'yellow', 'red'];
+  const values = names.map(name => cssVarColor(`--${name}`));
+  if (!values.every(value => /^#[0-9a-f]{6}$/i.test(value))) {
+    // A native WebKit page can run deferred scripts before its first usable
+    // layout. Keep CSS foreground fallbacks until actual theme colors exist.
+    if (!paletteFrame && paletteRetries < 10) {
+      paletteRetries++;
+      paletteFrame = requestAnimationFrame(() => {
+        paletteFrame = 0;
+        if (updatePreviewPalette() && typeof refreshMermaid === 'function') refreshMermaid();
+      });
+    }
+    return false;
+  }
+  paletteRetries = 0;
+  if (paletteFrame) { cancelAnimationFrame(paletteFrame); paletteFrame = 0; }
   ++diagramThemeRevision;
-  const background = cssVarColor('--bg'), foreground = cssVarColor('--fg');
+  const [background, foreground] = values;
   const dark = colorLuminance(background) < .35;
-  const body = readableColor(mixColors(foreground, background, .18), background, colorContrast(foreground, background) >= 7 ? 7 : 4.6);
+  // Keep body text at full strength in both appearances.
+  const body = readableColor(foreground, background, 7);
   const strong = readableColor(mixColors(foreground, dark ? '#ffffff' : '#000000', dark ? .06 : .12), background, 7);
   root.style.setProperty('--read-body', body);
   root.style.setProperty('--read-strong', strong);
   for (const name of ['accent', 'blue', 'purple', 'green', 'yellow', 'red']) {
-    const color = cssVarColor(`--${name}`);
-    root.style.setProperty(`--read-${name}`, readableColor(dark ? mixColors(color, '#ffffff', .15) : color, background));
+    const color = values[names.indexOf(name)];
+    root.style.setProperty(`--read-${name}`, readableColor(color, background));
   }
 
   const node = mixColors(background, foreground, .045);
   root.style.setProperty('--diagram-node', node);
   root.style.setProperty('--diagram-border', readableColor(mixColors(foreground, background, .35), node, 3));
   root.style.setProperty('--diagram-line', readableColor(mixColors(foreground, background, .22), background, 3));
+  return true;
 }
 function mermaidThemeVariables() {
   const background = cssVarColor('--bg');
@@ -173,7 +203,8 @@ function applyTheme(id, persist = true) {
     for (const [variable, key] of Object.entries(map)) root.style.setProperty(variable, colors[key] || fallbacks[variable] || colors.accent || colors.foreground);
     root.style.colorScheme = omarchy.mode === 'light' ? 'light' : 'dark';
   }
-  updatePreviewPalette();
+  paletteRetries = 0;
+  const paletteReady = updatePreviewPalette();
   const accent = getComputedStyle(root).getPropertyValue('--accent').trim();
   if (/^#[0-9a-f]{6}$/i.test(accent)) {
     const channels = [1, 3, 5].map(index => parseInt(accent.slice(index, index + 2), 16) / 255).map(value => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4);
@@ -183,5 +214,5 @@ function applyTheme(id, persist = true) {
   $('theme-label').textContent = id === 'omarchy' && omarchy ? `Omarchy · ${omarchy.name}` : availableThemes().find(theme => theme.id === id)?.label || 'System';
   if (persist) preferences.set('theme', id);
   if ($('command-dialog').open) renderCommands();
-  refreshMermaid();
+  if (paletteReady) refreshMermaid();
 }

@@ -267,12 +267,25 @@ function shiftModel(previous, step, patch, insert, intendedDoc) {
 // linear run of one block. Everything else keeps the full-parse route.
 function tryIncremental(previousModel, step, intendedDoc) {
   if (!previousModel?.ledger || !Array.isArray(previousModel.segments)) return null;
+  // Keep this shortcut deliberately narrower than the source patch path. It
+  // is only safe when every existing text mapping is a direct 1:1 mapping and
+  // the insertion cannot introduce Markdown punctuation or whitespace. In
+  // particular, never retain stale character maps for entities or decoded
+  // escapes elsewhere in the document.
+  if (previousModel.ledger.runs.some(run => !run.linear || run.charMap) ||
+      previousModel.ledger.owners.some(owner => owner.confidence !== 'exact' || owner.supported === false)) return null;
   const applied = step.apply(previousModel.doc);
   if (applied.failed || !applied.doc.eq(intendedDoc)) return null;
   const json = typeof step.toJSON === 'function' ? step.toJSON() : null;
   if (!json || json.stepType !== 'replace' || json.structure) return null;
   const insert = textSlice(json);
-  if (insert === null || insert === '' || !PLAIN_TEXT.test(insert)) return null;
+  if (insert === null || !/^[A-Za-z0-9]+$/.test(insert)) return null;
+  // At text-run boundaries a letter can join Markdown syntax or change a
+  // block marker (for example, an ordered-list prefix). Keep the optimization
+  // to edits surrounded by existing text.
+  const run = previousModel.ledger.runs.find(candidate => candidate.linear &&
+    candidate.kind === 'text' && candidate.pmFrom < step.from && candidate.pmTo > step.to);
+  if (!run) return null;
   const patch = sourcePatchFor(previousModel.ledger, step);
   if (!patch) return null;
   return shiftModel(previousModel, step, patch, insert, intendedDoc);
@@ -283,9 +296,13 @@ export function tryTextEdits(previousModel, transactions, intendedDoc) {
   if (!intendedDoc || typeof intendedDoc.eq !== 'function') return null;
   const steps = stepsFrom(transactions);
   if (!steps) return null;
-  // The incremental projection cannot currently prove Markdown equivalence or
-  // correctly rebase every character map. Until it can, use the validated
-  // parse-and-compare path below rather than risk saving different semantics.
+  // Ordinary word typing in an unambiguous text run avoids reparsing and
+  // rebuilding the whole document ledger. Every other edit continues through
+  // the validated parse-and-compare path below.
+  if (steps.length === 1) {
+    const incremental = tryIncremental(previousModel, steps[0], intendedDoc);
+    if (incremental) return incremental;
+  }
 
   let doc = previousModel.doc;
   let source = previousModel.source;

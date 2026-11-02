@@ -1,31 +1,38 @@
 <!doctype html>
-<html lang="en" data-theme="system" data-mode="read" data-reading-font="serif">
+<html lang="en" data-theme="system" data-mode="read" data-reading-font="sans">
 <head>
   <meta charset="utf-8">
   <script src="prefs.js"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Folio</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="diagram-viewer.css">
   <link rel="preload" as="font" type="font/woff2" crossorigin href="fonts/inter-latin-wght-normal.woff2">
   <link rel="preload" as="font" type="font/woff2" crossorigin href="fonts/source-serif-4-latin-wght-normal.woff2">
   <script src="paths.js" defer></script>
   <script src="core.js" defer></script>
   <script src="theme.js" defer></script>
   <script src="preview.js" defer></script>
+  <script src="outline.js" defer></script>
+  <script src="diagram-viewer.js" defer></script>
   <script src="editor.js" defer></script>
+  <script src="chrome.js" defer></script>
+  <script src="folder-search.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
   <svg class="icon-definitions" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+    <!-- Adwaita symbolic icons © GNOME Project; see vendor/adwaita/README.md. -->
+    <symbol id="i-search" viewBox="0 0 16 16"><path style="fill:currentColor;stroke:none" d="M6.5 0C2.921875 0 0 2.921875 0 6.5s2.921875 6.496094 6.5 6.496094c1.429688 0 2.753906-.464844 3.828125-1.253906l2.945313 2.945312c.957031.9375 2.363281-.5 1.40625-1.4375L11.75 10.320312C12.535156 9.246094 13 7.925781 13 6.5 13 2.921875 10.078125 0 6.5 0m0 2C8.996094 2 11 4.003906 11 6.5s-2.003906 4.496094-4.5 4.496094S2 8.996094 2 6.5 4.003906 2 6.5 2m0 0"/></symbol>
     <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"/><path d="M5.5 9.5V21h13V9.5M9.5 21v-6h5v6"/></symbol>
     <symbol id="i-open" viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h5l3 3h6a2 2 0 0 1 2 2v3M3 8h18l-3 12H6L3 8Z"/></symbol>
     <symbol id="i-save" viewBox="0 0 24 24"><path d="M4 3h13l4 4v14H3V4a1 1 0 0 1 1-1Zm3 0v7h10V3M7 21v-7h10v7"/></symbol>
     <symbol id="i-edit" viewBox="0 0 24 24"><path d="m15 4 5 5M4 20l5-1L21 7a2 2 0 0 0-4-4L5 15l-1 5Z"/></symbol>
     <symbol id="i-read" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
-    <symbol id="i-outline" viewBox="0 0 24 24"><path d="M8 5h13M8 12h13M8 19h13M3 5h.01M3 12h.01M3 19h.01"/></symbol>
-    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H5v18h14V8l-5-5ZM14 3v5h5M8 12h8M8 16h6"/></symbol>
-    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.4A2.4 2.4 0 0 1 5.4 5h3.7l2.1 2.3h7.4A2.4 2.4 0 0 1 21 9.7v7.9a2.4 2.4 0 0 1-2.4 2.4H5.4A2.4 2.4 0 0 1 3 17.6V7.4Z"/></symbol>
+    <symbol id="i-outline" viewBox="0 0 16 16"><path style="fill:currentColor;stroke:none" d="M2.5 2.007812s-.5.222657-.5.5v.988282c0 .273437.5.5.5.5h1s.5-.226563.5-.5v-.988282c0-.277343-.5-.5-.5-.5zm4 0c-.277344 0-.5.222657-.5.5v.988282c0 .273437.222656.5.5.5h8c.277344 0 .5-.226563.5-.5v-.988282c0-.277343-.222656-.5-.5-.5zm-4 5s-.5.222657-.5.5v.988282c0 .273437.5.5.5.5h1s.5-.226563.5-.5v-.988282c0-.277343-.5-.5-.5-.5zm4 0s-.5.222657-.5.5v.988282c0 .273437.222656.5.5.5h8c.277344 0 .5-.226563.5-.5v-.988282c0-.277343-.5-.5-.5-.5zm-4 5c-.277344 0-.5.222657-.5.5v.988282c0 .273437.5.5.5.5h1s.5-.226563.5-.5v-.988282c0-.277343-.222656-.5-.5-.5zm4 0c-.277344 0-.5.222657-.5.5v.988282c0 .273437.222656.5.5.5h8c.277344 0 .5-.226563.5-.5v-.988282c0-.277343-.222656-.5-.5-.5zm0 0"/></symbol>
+    <symbol id="i-file" viewBox="0 0 16 16"><path style="fill:currentColor;stroke:none" d="M4.96875 1.003906c-1.644531 0-3 1.355469-3 3v9c0 1.644532 1.355469 3 3 3h6c1.644531 0 3-1.355468 3-3v-7.5c0-.265625-.105469-.519531-.292969-.707031l-3.5-3.5c-.1875-.1875-.441406-.292969-.707031-.292969zm0 2h4v1.5q0 1.5 1.5 1.5h1.5v7c0 .570313-.429688 1-1 1h-6c-.570312 0-1-.429687-1-1v-9c0-.570312.429688-1 1-1m0 0"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 16 16"><path style="fill:currentColor;stroke:none" d="M2.96875 1.003906c-1.644531 0-3 1.355469-3 3v8c0 1.644532 1.355469 3 3 3h10c1.644531 0 3-1.355468 3-3v-6c0-1.644531-1.355469-3-3-3H9.382812L7.675781 1.296875c-.1875-.1875-.441406-.292969-.707031-.292969zm0 2h3.585938l1 1H1.96875c0-.5625.4375-1 1-1m-1 2h11c.5625 0 1 .4375 1 1v6c0 .5625-.4375 1-1 1h-10c-.5625 0-1-.4375-1-1zm0 0"/></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
@@ -46,72 +53,14 @@
     <symbol id="i-view" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2.4"/><circle cx="15" cy="17" r="2.4"/></symbol>
   </svg>
 
-  <header class="headerbar">
-    <div class="header-start">
-      <button id="home" class="icon-button" title="Go to welcome screen" aria-label="Go to welcome screen" disabled>
-        <svg class="icon" aria-hidden="true"><use href="#i-home"/></svg>
-      </button>
-      <div class="open-group" id="open-group">
-        <button id="open" class="button ghost open-main" title="Open a file or folder (Ctrl+O)" aria-label="Open a file or folder (Ctrl+O)">
-          <svg class="icon" aria-hidden="true"><use href="#i-open"/></svg><span>Open</span>
-        </button>
-        <button id="open-chevron" class="button ghost open-chevron" title="More open options" aria-label="More open options" aria-haspopup="menu" aria-expanded="false" aria-controls="open-menu">
-          <svg class="icon" aria-hidden="true"><use href="#i-caret"/></svg>
-        </button>
-        <div id="open-menu" class="menu" role="menu" aria-label="Open options" hidden>
-          <button id="open-file" class="menu-item" role="menuitem">
-            <svg class="icon" aria-hidden="true"><use href="#i-file"/></svg><span class="menu-text">Open file or folder…</span><span class="menu-hint">Ctrl+O</span>
-          </button>
-          <button id="open-folder" class="menu-item" role="menuitem" hidden>
-            <svg class="icon" aria-hidden="true"><use href="#i-open"/></svg><span class="menu-text">Open folder…</span>
-          </button>
-          <div class="menu-separator" role="separator" aria-hidden="true"></div>
-          <button id="picker-toggle" class="menu-item" role="menuitem">
-            <svg class="icon" aria-hidden="true"><use href="#i-theme"/></svg><span class="menu-text">Use system file picker</span>
-          </button>
-        </div>
-      </div>
-    </div>
-    <div class="window-title">
-      <div class="window-title-line"><span id="document-name">Folio</span><span id="dirty-dot" class="dirty-dot" aria-label="Unsaved changes" hidden></span></div>
-      <div id="document-location" class="subtitle">Markdown, one file at a time</div>
-    </div>
-    <div class="header-end">
-      <button id="lock-document" class="icon-button document-control" aria-pressed="false" aria-label="Protect against accidental edits" title="Protect against accidental edits" hidden>
-        <svg class="icon" aria-hidden="true"><use href="#i-unlock"/></svg>
-      </button>
-      <div class="menu-group document-control" id="view-group" hidden>
-        <button id="view-menu-button" class="icon-button" title="View and appearance options" aria-label="View and appearance options" aria-haspopup="menu" aria-expanded="false" aria-controls="view-menu">
-          <svg class="icon" aria-hidden="true"><use href="#i-view"/></svg>
-        </button>
-        <div id="view-menu" class="menu menu-right" role="menu" aria-label="View and appearance" hidden>
-          <p class="menu-heading" aria-hidden="true">View</p>
-          <button id="width-toggle" class="menu-item" role="menuitem" aria-pressed="false" aria-label="Use full document width" title="Use full document width">
-            <svg class="icon" aria-hidden="true"><use href="#i-width-expand"/></svg><span class="menu-text">Full document width</span>
-          </button>
-          <button id="format-toggle" class="menu-item" role="menuitem" aria-pressed="true" aria-expanded="true" aria-controls="format-tools" aria-label="Hide formatting toolbar" title="Hide formatting toolbar">
-            <svg class="icon" aria-hidden="true"><use href="#i-format"/></svg><span class="menu-text">Formatting toolbar</span>
-          </button>
-          <div class="menu-separator" role="separator" aria-hidden="true"></div>
-          <p class="menu-heading" aria-hidden="true">Inspect</p>
-          <button id="source-snapshot" class="menu-item" role="menuitem" aria-label="Inspect and copy exact Markdown" title="Inspect and copy exact Markdown">
-            <svg class="icon" aria-hidden="true"><use href="#i-code"/></svg><span class="menu-text">Inspect exact Markdown</span>
-          </button>
-        </div>
-      </div>
-      <span class="header-divider" aria-hidden="true"></span>
-      <span id="save-state" class="save-state document-control" role="status" hidden></span>
-      <button id="save" class="icon-button document-control" title="Save (Ctrl+S)" aria-label="Save" hidden>
-        <svg class="icon" aria-hidden="true"><use href="#i-save"/></svg>
-      </button>
-    </div>
-  </header>
+<nav id="app-menubar" class="app-menubar" role="menubar" aria-label="Application"><div class="menu-group app-menu-group"><button id="menu-file-button" class="menubar-button" role="menuitem" aria-haspopup="menu" aria-expanded="false" aria-controls="open-menu">File</button><div id="open-menu" class="menu" role="menu" aria-label="File" hidden><button  class="menu-item" role="menuitem" data-app-action="new"><span class="menu-text">New document</span><span class="menu-hint">Ctrl+N</span></button><button id="open-file" class="menu-item" role="menuitem" data-app-action="open"><span class="menu-text">Open File…</span><span class="menu-hint">Ctrl+O</span></button><button id="open-folder" class="menu-item" role="menuitem" data-app-action="folder"><span class="menu-text">Open Folder…</span><span class="menu-hint">Ctrl+Shift+O</span></button><div class="recent-submenu"><button id="open-recent-button" class="menu-item" role="menuitem" aria-haspopup="menu" aria-expanded="false" aria-controls="open-recent-menu"><span class="menu-text">Open Recent</span><svg class="icon submenu-chevron" aria-hidden="true"><use href="#i-chevron"/></svg></button><div id="open-recent-menu" class="menu" role="menu" aria-label="Open Recent" hidden></div></div><div class="menu-separator" role="separator"></div><button  class="menu-item" role="menuitem" data-app-action="save"><span class="menu-text">Save</span><span class="menu-hint">Ctrl+S</span></button><button  class="menu-item" role="menuitem" data-app-action="save-as"><span class="menu-text">Save As…</span><span class="menu-hint">Ctrl+Shift+S</span></button><div class="menu-separator" role="separator"></div><button  class="menu-item" role="menuitem" data-app-action="close"><span class="menu-text">Close File</span><span class="menu-hint">Ctrl+W</span></button><button id="home" class="menu-item" role="menuitem" data-app-action="home"><span class="menu-text">Welcome screen</span></button><button class="menu-item" role="menuitem" data-app-action="commands"><span class="menu-text">Command window…</span><span class="menu-hint">Ctrl+Shift+P</span></button><button  class="menu-item" role="menuitem" data-app-action="quit"><span class="menu-text">Quit</span><span class="menu-hint">Ctrl+Q</span></button><div class="menu-separator" role="separator"></div><button id="picker-toggle" class="menu-item" role="menuitem"><svg class="icon" aria-hidden="true"><use href="#i-open"/></svg><span class="menu-text">Use system file picker</span></button></div></div><div class="menu-group app-menu-group"><button id="menu-edit-button" class="menubar-button" role="menuitem" aria-haspopup="menu" aria-expanded="false" aria-controls="edit-menu">Edit</button><div id="edit-menu" class="menu" role="menu" aria-label="Edit" hidden><button  class="menu-item" role="menuitem" data-app-action="undo"><span class="menu-text">Undo</span><span class="menu-hint">Ctrl+Z</span></button><button  class="menu-item" role="menuitem" data-app-action="redo"><span class="menu-text">Redo</span><span class="menu-hint">Ctrl+Shift+Z</span></button><button  class="menu-item" role="menuitem" data-app-action="cut"><span class="menu-text">Cut</span><span class="menu-hint">Ctrl+X</span></button><button  class="menu-item" role="menuitem" data-app-action="copy"><span class="menu-text">Copy</span><span class="menu-hint">Ctrl+C</span></button><button  class="menu-item" role="menuitem" data-app-action="paste"><span class="menu-text">Paste</span><span class="menu-hint">Ctrl+V</span></button><button  class="menu-item" role="menuitem" data-app-action="find"><span class="menu-text">Find</span><span class="menu-hint">Ctrl+F</span></button><button class="menu-item" role="menuitem" data-app-action="folder-search"><span class="menu-text">Search in Folder</span><span class="menu-hint">Ctrl+Shift+F</span></button><button  class="menu-item" role="menuitem" data-app-action="replace"><span class="menu-text">Find and Replace</span><span class="menu-hint">Ctrl+H</span></button><button  class="menu-item" role="menuitem" data-app-action="select-all"><span class="menu-text">Select All</span><span class="menu-hint">Ctrl+A</span></button></div></div><div class="menu-group app-menu-group"><button id="menu-view-button" class="menubar-button" role="menuitem" aria-haspopup="menu" aria-expanded="false" aria-controls="application-view-menu">View</button><div id="application-view-menu" class="menu" role="menu" aria-label="View" hidden><button  class="menu-item" role="menuitem" data-app-action="files"><span class="menu-text">Toggle File Explorer</span><span class="menu-hint">Ctrl+B</span></button><button  class="menu-item" role="menuitem" data-app-action="outline"><span class="menu-text">Toggle Outline</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="reading"><span class="menu-text">Toggle Reading Mode</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="focus"><span class="menu-text">Toggle Focus Mode</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="fullscreen"><span class="menu-text">Toggle Fullscreen</span><span class="menu-hint">F11</span></button><button  class="menu-item" role="menuitem" data-app-action="zoom-in"><span class="menu-text">Zoom In</span><span class="menu-hint">Ctrl++</span></button><button  class="menu-item" role="menuitem" data-app-action="zoom-out"><span class="menu-text">Zoom Out</span><span class="menu-hint">Ctrl+-</span></button><button  class="menu-item" role="menuitem" data-app-action="zoom-reset"><span class="menu-text">Reset Zoom</span><span class="menu-hint">Ctrl+0</span></button></div></div><div class="menu-group app-menu-group"><button id="menu-go-button" class="menubar-button" role="menuitem" aria-haspopup="menu" aria-expanded="false" aria-controls="go-menu">Go</button><div id="go-menu" class="menu" role="menu" aria-label="Go" hidden><button  class="menu-item" role="menuitem" data-app-action="back"><span class="menu-text">Back</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="forward"><span class="menu-text">Forward</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="heading"><span class="menu-text">Go to Heading</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="top"><span class="menu-text">Go to Top</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="bottom"><span class="menu-text">Go to Bottom</span><span class="menu-hint"></span></button></div></div><div class="menu-group app-menu-group"><button id="menu-help-button" class="menubar-button" role="menuitem" aria-haspopup="menu" aria-expanded="false" aria-controls="help-menu">Help</button><div id="help-menu" class="menu" role="menu" aria-label="Help" hidden><button  class="menu-item" role="menuitem" data-app-action="shortcuts"><span class="menu-text">Keyboard Shortcuts</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="documentation"><span class="menu-text">Documentation</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="issue"><span class="menu-text">Report an Issue</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="about"><span class="menu-text">About Folio</span><span class="menu-hint"></span></button></div></div></nav>
+
 
   <main id="workspace">
     <section id="welcome" class="welcome">
       <div class="welcome-inner">
         <div class="app-mark" aria-hidden="true">
-          <svg viewBox="0 0 48 48"><path d="M13 4.5h15L36 12v31.5H13z"/><path d="M28 4.5V12h8M19 21h12M19 27h12M19 33h8"/></svg>
+          <svg aria-hidden="true"><use href="#i-file"/></svg>
         </div>
         <p class="welcome-eyebrow">A quiet Markdown workspace</p>
         <h1>Open a Markdown file or folder.</h1>
@@ -136,21 +85,28 @@
     <div id="document-view" class="document-view" hidden>
       <nav class="navigation-rail" aria-label="Sidebar">
         <div class="rail-dock">
-          <button type="button" data-rail-action="find" aria-label="Search document" aria-controls="find-bar" aria-pressed="false" title="Search document (Ctrl+F)"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></button>
+          <button type="button" data-rail-action="find" aria-label="Search document" aria-controls="find-bar" aria-pressed="false" title="Search folder contents (Ctrl+Shift+F); find in document without a folder"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></button>
           <span class="rail-separator" aria-hidden="true"></span>
           <button type="button" data-dock-tab="outline" aria-label="Contents" aria-controls="outline" aria-pressed="false" title="Contents — click again to close"><svg class="icon" aria-hidden="true"><use href="#i-outline"/></svg></button>
           <button type="button" data-dock-tab="files" aria-label="Files" aria-controls="file-browser" aria-pressed="false" title="Files — click again to close"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg></button>
         </div>
       </nav>
+      <aside id="folder-search" class="sidebar" aria-label="Search in folder" hidden>
+        <div class="sidebar-head"><div class="sidebar-heading"><h2>Search</h2><p id="folder-search-root" class="sidebar-meta"></p></div><button id="folder-search-close" class="icon-button tiny" aria-label="Close folder search"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div>
+        <div class="folder-search-query"><input id="folder-search-input" type="search" aria-label="Search folder contents" placeholder="Search in files…" spellcheck="false"></div>
+        <p id="folder-search-status" class="folder-search-status" role="status" aria-live="polite">Type to search folder contents.</p>
+        <div id="folder-search-results" class="sidebar-scroll" aria-label="Folder content matches"></div>
+      </aside>
+      <div id="search-divider" class="sidebar-resizer" role="separator" aria-label="Resize search sidebar" aria-orientation="vertical" tabindex="0" hidden></div>
       <aside id="outline" class="sidebar" hidden aria-label="Document contents">
         <div class="sidebar-head">
           <div class="sidebar-heading">
-            <h2>Contents</h2>
-            <p id="outline-count" class="sidebar-meta">No headings</p>
+            <h2>Outline</h2>
+            <p id="outline-count" class="sidebar-meta" role="status" aria-live="polite" aria-atomic="true">No headings</p>
           </div>
-          <button id="outline-close" class="icon-button tiny" title="Close contents" aria-label="Close contents">
+          <div class="sidebar-actions"><button id="outline-wrap" class="outline-wrap-toggle" aria-label="Wrap outline titles" title="Wrap outline titles onto two lines" aria-pressed="true">Wrap</button><button id="outline-close" class="icon-button tiny" title="Close contents" aria-label="Close contents">
             <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
-          </button>
+          </button></div>
         </div>
         <nav id="outline-items" class="sidebar-scroll" aria-label="Document outline"></nav>
       </aside>
@@ -177,6 +133,56 @@
       <div id="folder-divider" class="sidebar-resizer" role="separator" aria-label="Resize folder sidebar" aria-orientation="vertical" tabindex="0" hidden></div>
 
       <div class="document-body">
+  <header class="headerbar">
+    <div class="header-start"><svg class="icon document-emblem" aria-hidden="true"><use href="#i-file"/></svg></div>
+    <div class="window-title"><div class="window-title-line"><span id="document-name">Folio</span><span id="dirty-dot" class="dirty-dot" aria-label="Unsaved changes" hidden></span></div><div id="document-location" class="subtitle">Markdown, one file at a time</div></div>
+    <div class="header-end">
+      <span id="filesystem-permission" class="permission-state" hidden>Filesystem permissions · read-only</span>
+      <div id="document-mode-group" class="menu-group document-control" hidden>
+        <button id="document-mode-button" class="button ghost mode-button" aria-haspopup="menu" aria-expanded="false" aria-controls="document-mode-menu"><svg class="icon" aria-hidden="true"><use href="#i-read"/></svg><span id="document-mode-label">Reading mode</span><svg class="icon mode-caret" aria-hidden="true"><use href="#i-caret"/></svg></button>
+        <div id="document-mode-menu" class="menu menu-right" role="menu" aria-label="Document mode" hidden>
+          <button class="menu-item" role="menuitemradio" aria-checked="true" data-document-mode="reading">Reading mode</button>
+          <button class="menu-item" role="menuitemradio" aria-checked="false" data-document-mode="edit">Edit mode</button>
+          <button class="menu-item" role="menuitemradio" aria-checked="false" data-document-mode="source">Source mode</button>
+          <div class="menu-separator" role="separator"></div>
+          <button id="lock-document" class="menu-item" role="menuitemcheckbox" aria-checked="false" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg><span>Open as read-only</span></button>
+          <p class="menu-description">Reading prevents accidental edits. Read-only protects the document in every mode.</p>
+        </div>
+      </div>
+      <div class="menu-group document-control" id="view-group" hidden><button id="view-menu-button" class="icon-button" title="Document preferences" aria-label="Document preferences" aria-haspopup="menu" aria-expanded="false" aria-controls="view-menu"><svg class="icon" aria-hidden="true"><use href="#i-view"/></svg></button>        <div id="view-menu" class="menu menu-right" role="menu" aria-label="View and appearance" hidden>
+          <p class="menu-heading">Document preferences</p>
+          <label class="preference-row">Font family<select id="preference-font"><option value="serif">Source Serif 4</option><option value="sans">Inter</option><option value="mono">JetBrains Mono</option></select></label>
+          <label class="preference-row">Font size<input id="preference-font-size" type="range" min="12" max="40" step="1"><output id="preference-font-size-value" for="preference-font-size"></output></label>
+          <label class="preference-row">Line height<input id="preference-line-height" type="range" min="1.2" max="2.4" step="0.1"><output id="preference-line-height-value" for="preference-line-height"></output></label>
+          <label class="preference-row">Content width<input id="preference-width" type="range" min="480" max="1400" step="40"><output id="preference-width-value" for="preference-width"></output></label>
+          <label class="preference-row">Paragraph spacing<input id="preference-spacing" type="range" min="0.4" max="2.4" step="0.1"><output id="preference-spacing-value" for="preference-spacing"></output></label>
+          <label class="preference-row">Appearance<select id="preference-theme"></select></label>
+          <label class="preference-row">Open documents in Edit mode<input id="preference-open-edit" type="checkbox" checked></label>
+          <details class="render-preferences"><summary>Markdown rendering</summary>
+            <label class="preference-row">Task lists<input id="preference-tasks" type="checkbox"></label>
+            <label class="preference-row">Tables<input id="preference-tables" type="checkbox"></label>
+            <label class="preference-row">Code blocks<input id="preference-code" type="checkbox"></label>
+          </details>
+          <button id="width-toggle" class="menu-item" role="menuitem" aria-pressed="false" aria-label="Use full document width" title="Use full document width">
+            <svg class="icon" aria-hidden="true"><use href="#i-width-expand"/></svg><span class="menu-text">Full document width</span>
+          </button>
+          <button id="format-toggle" class="menu-item" role="menuitem" aria-pressed="true" aria-expanded="true" aria-controls="format-tools" aria-label="Hide formatting toolbar" title="Hide formatting toolbar">
+            <svg class="icon" aria-hidden="true"><use href="#i-format"/></svg><span class="menu-text">Formatting toolbar</span>
+          </button>
+          <div class="menu-separator" role="separator" aria-hidden="true"></div>
+          <button id="preferences-reset" class="menu-item" role="menuitem">Reset document preferences</button>
+          <p class="menu-heading" aria-hidden="true">Inspect</p>
+          <button id="source-snapshot" class="menu-item" role="menuitem" aria-label="Inspect and copy exact Markdown" title="Inspect and copy exact Markdown">
+            <svg class="icon" aria-hidden="true"><use href="#i-code"/></svg><span class="menu-text">Inspect exact Markdown</span>
+          </button>
+        </div>
+</div>
+      <span class="header-divider" aria-hidden="true"></span>
+      <span id="save-state" class="save-state document-control" role="status" hidden></span>
+      <button id="save" class="icon-button document-control" title="Save (Ctrl+S)" aria-label="Save" hidden><svg class="icon" aria-hidden="true"><use href="#i-save"/></svg></button>
+      <div class="menu-group document-control" id="document-more-group" hidden><button id="document-more-button" class="icon-button" aria-label="Additional document actions" aria-haspopup="menu" aria-expanded="false" aria-controls="document-more-menu"><svg class="icon" aria-hidden="true"><use href="#i-more"/></svg></button><div id="document-more-menu" class="menu menu-right" role="menu" aria-label="Document actions" hidden><button class="menu-item" role="menuitem" data-app-action="find"><span class="menu-text">Find in document</span><span class="menu-hint">Ctrl+F</span></button><div class="menu-separator" role="separator"></div><button  class="menu-item" role="menuitem" data-app-action="copy-path"><span class="menu-text">Copy document path</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="reveal"><span class="menu-text">Reveal in file manager</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="rename"><span class="menu-text">Rename…</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="duplicate"><span class="menu-text">Duplicate…</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="pdf"><span class="menu-text">Export as PDF…</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="html"><span class="menu-text">Export as HTML…</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="close"><span class="menu-text">Close document</span><span class="menu-hint"></span></button></div></div>
+    </div>
+  </header>
         <div id="disk-banner" class="disk-banner" role="status" hidden>
           <span>This file changed on disk.</span>
           <button id="reload" class="button small">Reload</button>
@@ -190,6 +196,7 @@
           <button id="find-next" class="icon-button tiny" aria-label="Next match" title="Next match"><svg class="icon" aria-hidden="true"><use href="#i-arrow-down"/></svg></button>
           <button id="find-close" class="icon-button" aria-label="Close search"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
         </div>
+        <div id="replace-bar" class="find-bar" hidden><input id="replace-input" placeholder="Replace with…" aria-label="Replace with"><button id="replace-one" class="button small">Replace</button><button id="replace-all" class="button small">Replace all</button></div>
         <div id="format-tools" class="editor-toolbar" role="toolbar" aria-label="Document formatting">
           <button class="button small ghost" data-editor-command="bold" aria-label="Bold" title="Bold (Ctrl+B)"><strong>B</strong></button>
           <button class="button small ghost" data-editor-command="italic" aria-label="Italic" title="Italic (Ctrl+I)"><em>I</em></button>
@@ -214,6 +221,7 @@
         <div id="editor-lock-note" class="editor-note" role="status" hidden>Locked · You can select, copy, follow links and load images. Unlock to make changes.</div>
         <div id="editor-notice" class="editor-note" role="status" hidden>This document is too large or complex to format. Its complete Markdown is shown below, read-only; saving still writes the file unchanged.</div>
         <div id="reader-scroll" class="reader-scroll" tabindex="0" aria-label="Markdown document">
+          <textarea id="document-source" class="document-source" aria-label="Markdown source" spellcheck="false" hidden></textarea>
           <article id="preview" class="markdown"></article>
           <div id="folder-empty" class="folder-empty" hidden>
             <h1>Folder opened</h1>
@@ -246,6 +254,7 @@
     <div class="file-dialog-footer"><span id="open-selection-hint">Select a Markdown file or folder</span><button id="open-cancel" class="button">Cancel</button><button id="open-confirm" class="button suggested">Open</button></div>
   </dialog>
 
+  <dialog id="help-dialog" class="source-dialog" aria-labelledby="help-title"><div class="source-dialog-head"><h2 id="help-title">About Folio</h2><button id="help-close" class="icon-button" aria-label="Close help"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div><div id="help-content"></div></dialog>
   <div id="drop-overlay" hidden><div><svg class="icon" aria-hidden="true"><use href="#i-open"/></svg><h2>Drop to open</h2><p>One Markdown file. No setup.</p></div></div>
 
   <dialog id="command-dialog" class="command-dialog" aria-label="Command window">

@@ -11,6 +11,7 @@ let transitionLocked = false;
 function setTransitionLocked(next) {
   transitionLocked = Boolean(next);
   editor?.setTransitionLocked(transitionLocked);
+  if (typeof current !== 'undefined') syncDocumentMode();
 }
 function changeContent(content) { if (editor) editor.replaceContent(content); else { current.content = content; updateTitle(); scheduleStats(); } }
 function undoRedo(redo = false) { return editor?.undo(redo) || false; }
@@ -20,12 +21,12 @@ function editorPresentation(_show, locked, fallback) {
   const lockButton = $('lock-document');
   lockButton.setAttribute('aria-pressed', String(locked));
   const lockLabel = locked ? 'Unlock document editing' : 'Protect against accidental edits';
-  lockButton.setAttribute('aria-label', lockLabel);
+  lockButton.setAttribute('aria-label', 'Open as read-only');
   lockButton.title = lockLabel;
   lockButton.querySelector('use')?.setAttribute('href', locked ? '#i-lock' : '#i-unlock');
   $('editor-lock-note').hidden = !locked;
   $('editor-notice').hidden = !fallback;
-  if (locked) closeAllMenus();
+
   $('format-tools').querySelectorAll('button:not(#format-toolbar-close),select,input').forEach(control => { control.disabled = locked; });
 }
 // Kept for blocks whose exact byte range the ledger cannot prove. Atoms with a
@@ -92,11 +93,12 @@ function refreshEditorOutline() {
     seenIds.add(id);
     const button = document.createElement('button'); button.className = 'outline-link'; button.textContent = text; button.title = text;
     button.dataset.level = heading.level; button.style.setProperty('--indent', `${Math.min(heading.level - 1, 3) * 10}px`); button.tabIndex = outlineEntries.length ? -1 : 0;
-    button.onclick = () => { editor.selectRange(heading.offset); setActiveOutline(outlineEntries.indexOf(entry)); element?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); };
-    const entry = { id, element, button, offset: heading.offset };
-    $('outline-items').append(button); outlineEntries.push(entry);
+    button.onclick = () => { if (documentMode === 'source') { jumpToSource(heading.offset); setActiveOutline(outlineEntries.indexOf(entry)); return; } editor.selectRange(heading.offset); setActiveOutline(outlineEntries.indexOf(entry)); element?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); };
+    const entry = { id, element, button, offset: heading.offset, level: heading.level, text };
+    outlineEntries.push(entry);
   }
   $('outline-count').textContent = outlineEntries.length ? `${outlineEntries.length} ${outlineEntries.length === 1 ? 'section' : 'sections'}` : 'No headings';
+  buildOutlineTree();
   if (!outlineEntries.length) { const empty = document.createElement('p'); empty.className = 'sidebar-empty'; empty.textContent = 'Add a heading to build the outline.'; $('outline-items').append(empty); }
   requestAnimationFrame(updateActiveOutline);
 }
@@ -295,6 +297,7 @@ async function mountUnifiedEditor() {
     toast('This document could not be opened in the editor. Its Markdown is shown read-only; your file is unchanged.');
     return;
   }
+  syncDocumentMode();
   finishMounting();
   $('folder-empty').hidden = true; refreshEditorOutline(); status('');
 }

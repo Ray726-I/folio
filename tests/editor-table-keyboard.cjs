@@ -27,6 +27,7 @@ async function openIsolatedEditor(source, outfile) {
   });
   await session.page.reload();
   await session.page.waitForFunction(() => typeof editor !== 'undefined' && editor && !busy);
+  await session.page.evaluate(() => setDocumentMode('edit'));
   assert.equal(served, 1, 'table keyboard tests must run against the isolated editor bundle');
   // Real async work only: fixture render plus view mount. No sleeps anywhere.
   await session.page.locator('#preview table').first().waitFor();

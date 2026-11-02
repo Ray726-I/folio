@@ -13,12 +13,12 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
     assert.equal(await blocks.first().locator('details').getAttribute('open'), null);
     assert.notEqual(await blocks.nth(1).locator('details').getAttribute('open'), null, 'bad TeX shows editable source');
     assert.equal(await page.evaluate(() => current.content), source, 'rendering preserves exact fences');
-    await page.locator('#lock-document').click();
+    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
     await blocks.first().locator('summary').click();
     await blocks.first().locator('.code-surface code').click();
     await page.keyboard.type('Z');
     assert.equal(await page.evaluate(() => current.content), source, 'lock prevents editing math source');
-    await page.locator('#lock-document').click();
+    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
     await blocks.first().locator('.code-surface code').click();
     await page.keyboard.press('End');
     await page.keyboard.type('+1');

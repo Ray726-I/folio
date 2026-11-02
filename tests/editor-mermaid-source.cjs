@@ -62,7 +62,7 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
       'undo preserves the original fenced diagram source');
 
     // Lock still wins over an open source editor.
-    await page.locator('#lock-document').click();
+    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
     await code.click();
     await page.keyboard.type('Z');
     assert.equal(await page.evaluate(() => current.content), source, 'lock prevents diagram source edits');

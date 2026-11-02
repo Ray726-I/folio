@@ -238,7 +238,7 @@ async function deliverOk(page, id, tag) {
     const nomathContent = byName('nomath.md').content;
     assert.equal(await page.evaluate(() => current.content), mathmixContent, 'stale pass holds its content while suspended');
     await page.waitForFunction(() => window.__bridge.requests.at(-1)?.source === 'graph TD;\nM-->N;');
-    await page.evaluate(text => { changeContent(text); }, nomathContent);
+    await page.evaluate(text => { setDocumentMode('edit'); changeContent(text); }, nomathContent);
     await page.evaluate(() => renderPreview());
     const overlapped = (await requests()).at(-1);
     assert.equal(overlapped.source, 'graph TD;\nM-->N;', 'current pass issues its own request');

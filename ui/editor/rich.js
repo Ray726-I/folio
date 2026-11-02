@@ -1567,7 +1567,7 @@ export function createRichEditor(parent, options) {
       }
       revealCurrentSelection();
     };
-    const edit = button(editLabel, () => {
+    function exposeSource(selectAll = true) {
       if (options.isLocked()) return;
       const frame = sourceFrame();
       if (!frame) { revealFallback(); return; }
@@ -1575,7 +1575,20 @@ export function createRichEditor(parent, options) {
       projection.hidden = true;
       panel.hidden = false;
       sourceInput.focus();
-      sourceInput.select();
+      if (selectAll) sourceInput.select();
+      else sourceInput.setSelectionRange(0, 0);
+    }
+    const edit = button(editLabel, () => exposeSource());
+    // Definition lists are native-rendered extensions, so their DOM cannot be
+    // edited as rich text. A plain click exposes only this block's exact source.
+    projection.addEventListener('click', event => {
+      if (options.isLocked() || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+      const target = event.target instanceof Element ? event.target : event.target.parentElement;
+      if (!target?.closest('dl') || target.closest('a,button,input,textarea,select')) return;
+      const selection = window.getSelection();
+      if (selection && !selection.isCollapsed) return;
+      event.preventDefault(); event.stopPropagation();
+      exposeSource(false);
     });
     edit.classList.add('extension-edit');
     edit.setAttribute('aria-label', `${editLabel} for this block`);
@@ -1975,6 +1988,10 @@ export function createRichEditor(parent, options) {
                 const caret = Math.min(pos + heading.nodeSize - 1, pos + 1 + heading.content.size);
                 view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, caret)));
               }
+              // Replacing the focused widget leaves the editor unfocused.
+              // Restore its focus first so the idle-heading CSS makes the
+              // replacement input visible and able to receive focus.
+              view.focus();
               const dom = view.nodeDOM(pos);
               const next = dom instanceof HTMLElement ? dom.querySelector('.folio-heading-source') : null;
               if (next instanceof HTMLInputElement) {
@@ -1997,6 +2014,7 @@ export function createRichEditor(parent, options) {
                 const caret = typeof input.selectionStart === 'number' ? input.selectionStart : input.value.length;
                 try { options.undo(event.key.toLowerCase() === 'y' || event.shiftKey); } catch {}
                 try {
+                  view.focus();
                   const dom = view.nodeDOM(pos);
                   const next = dom instanceof HTMLElement ? dom.querySelector('.folio-heading-source') : null;
                   if (next instanceof HTMLInputElement) {

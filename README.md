@@ -22,12 +22,12 @@ For native prerequisites, follow Tauri's [Linux](https://v2.tauri.app/start/prer
 | Action | Shortcut |
 | --- | --- |
 | Command window (commands, themes, files) | Ctrl+Shift+P (Command+Shift+P on macOS) |
-| Open a Markdown file or folder | Ctrl+O |
+| Open File / Open Folder | Ctrl+O / Ctrl+Shift+O |
 | Show or hide the file tree | Ctrl+B |
 | New document | Ctrl+N |
-| Show or hide Markdown around the cursor | Header **Show Markdown** button or Ctrl+E |
-| Lock / unlock document editing | Header **Lock** button |
-| Exact source snapshot | Header **Source** button |
+| Reading / Edit / Source mode | Document mode dropdown (Edit is default) |
+| Protect a document in every mode | **Open as read-only** in the mode dropdown |
+| Exact source snapshot | Document preferences → **Inspect exact Markdown** |
 | Navigate table cells | Tab / Shift+Tab |
 | Line break in a table cell; new row at the last cell's end | Enter |
 | Leave a table forward / backward | Ctrl+Enter / Ctrl+Shift+Enter |
@@ -37,13 +37,17 @@ For native prerequisites, follow Tauri's [Linux](https://v2.tauri.app/start/prer
 | Reset app zoom | Ctrl+0 |
 | Increase / decrease document text size | Ctrl+Shift+= / Ctrl+Shift+- |
 | Reset document text size | Ctrl+Shift+0 |
-| Find in document | Ctrl+F |
+| Find / Find and Replace (current document) | Ctrl+F / Ctrl+H |
+| Search folder contents (document Find without a folder) | Ctrl+Shift+F |
 | Load or block remote images | Command window |
 | Switch serif / sans reading text | Command window |
-| Focus mode | F11; Escape exits |
-| Close | Ctrl+W |
+| Focus mode | View → Toggle Focus Mode; Escape exits |
+| Fullscreen | F11 |
+| Close File / Quit | Ctrl+W / Ctrl+Q |
 
 On macOS, use Command in place of Ctrl for the listed shortcuts. The command window supports typing to filter, arrow keys, Enter, and Escape. Search for a theme by name, or select **Change theme…**. There are System, Adwaita Light, Adwaita Dark, Nord, Catppuccin Mocha, Rosé Pine, and Solarized Light themes. Theme, remote-image, reading-font, and text-size preferences persist locally. Recent files store paths, not document contents; they can be cleared from the command window. **Load remote images** / **Block remote images** toggles whether documents may contact image hosts; blocked images appear as a local placeholder. **Use serif reading text** / **Use sans-serif reading text** switches the document face without touching the interface.
+
+The outline supports collapsible sections and keyboard navigation: use Left/Right to collapse, expand, or move between parents and children, and Up/Down to move through headings. **Wrap** switches between compact and two-line titles. As you read, the outline keeps the current section away from its edges. Hover or keyboard-focus a rendered diagram to reveal **Expand**, then use Fit or zoom controls to inspect it; Escape closes the viewer.
 
 ### Choose a file picker
 
@@ -70,7 +74,7 @@ Only the app's own preferences are written. Desktop theme files are read without
 
 The preview supports CommonMark, GFM tables, task lists, strikethrough, footnotes (including inline `^[notes]`), GitHub-style note/tip/important/warning/caution callouts, fenced code with syntax highlighting, heading navigation, definition lists, superscript/subscript, `==highlights==`, `++insertions++`, underlines, Obsidian-style `[[wikilinks|labels]]`, emoji `:shortcodes:`, and hidden YAML front matter. Math is rendered locally with KaTeX: inline `$x^2$`, display `$$x^2$$`, and ` ```math ` blocks. Fenced ```` ```mermaid ```` blocks are rendered locally in the preview as diagrams (flowcharts, sequence, class, state, entity-relationship, gantt, pie, timeline, git graph, mindmap, and more). Markdown HTML is sanitized before display; a safe subset only. Remote images in Markdown or raw HTML are blocked by default and replaced with a local placeholder so opening a document cannot silently contact a tracking host. When enabled, images are requested with `referrerpolicy="no-referrer"`. Relative Markdown links within the document's folder or its descendants open files after any unsaved-change prompt; links resolving outside that boundary are rejected. Web links open in the default browser; `data:` links are removed.
 
-Reading text uses Source Serif 4 by default, while the interface uses Inter and code uses JetBrains Mono; all three are bundled in `ui/fonts/` and fall back to system fonts. A command-window toggle switches the document between serif and sans. The outline tracks the section you are reading and supports arrow-key navigation.
+Reading text uses Inter by default, with Source Serif 4 available in document preferences, while the interface uses Inter and code uses JetBrains Mono; all three are bundled in `ui/fonts/` and fall back to system fonts. A command-window toggle switches the document between serif and sans. The outline tracks the section you are reading and supports arrow-key navigation.
 
 LaTeX and Mermaid use vendored files in `ui/vendor/` — no CDN or rendering service is used — and load on demand. Mermaid runs in a separate offline renderer with restricted native permissions; its SVG output is sanitized before display. Diagrams are re-rendered when the theme changes so their colors match Folio (including the live Omarchy palette). Mermaid diagrams that require external images are unsupported, even when remote document images are enabled; a source fallback explains the failure. Invalid Mermaid sources also show their source with an error note. KaTeX uses `throwOnError: false` and restrictive trust settings, and Mermaid uses its strict security level.
 
@@ -89,7 +93,13 @@ matching files were found. These limits do not control the OS-native picker.
 
 Saves write a temporary sibling file and rename it atomically. Content fingerprints detect external changes before saving; the app presents Reload, Overwrite, and Cancel choices. It also shows a disk-change banner while the document is open. Folio opens one document at a time. Opening a folder shows a collapsible file tree; unreadable entries are skipped and reported, and very large trees are capped at 5,000 entries and 12 levels. Click a folder to expand it, select a Markdown file to open it, and use the close button or Ctrl+B to hide or show the tree without closing the document. Drag the tree's edge to resize it.
 
-The document is one continuously editable view. Paragraphs, headings, lists, tasks, tables, links, images, code and math are formatted but directly editable; there is no separate preview mode or per-line edit island. **Show Markdown** reveals Markdown syntax around the selection and switches to a source-backed presentation with the same buffer, undo history and scroll position; toggling back does not rewrite the file. Untouched blocks keep their original source text, while an edited block is serialized canonically. **Lock** blocks writes but still allows selection, copying, navigation, source inspection and explicitly loading an image. **Source** shows a read-only, copyable snapshot of the exact current buffer, including unsaved changes. Task boxes can be ticked directly, and remote images never load on hover or focus. Documents above the development rich-editor size or complexity threshold fall back to the complete source presentation with an explicit notice. Obsidian plugins, PlantUML, and other diagram languages besides Mermaid are not implemented.
+The application menu bar contains **File, Edit, View, Go, Help**. The document toolbar below it shows the filename, full path, mode, preferences, save state and additional document actions. Documents open in **Edit mode** without automatically placing a text caret; click the document to begin editing. The opening mode is independent of the previous document’s mode or read-only toggle. Uncheck **Open documents in Edit mode** in document preferences to open in Reading mode instead. **Edit mode** enables the existing formatted Markdown editor; **Source mode** edits the exact raw Markdown in the same buffer and undo history. New blank documents start in Edit mode. Switching modes preserves unsaved changes and does not rewrite the file. Untouched rich-editor blocks keep their original source text, while edited blocks serialize canonically.
+
+**Open as read-only** protects the document independently of its presentation. Filesystem permissions appear separately and prevent entering Edit mode; Source remains inspectable, and Save As can create a writable copy. Selection, copying, heading navigation, exact source snapshots and explicitly loading images remain available. Documents above the rich-editor complexity threshold retain the existing complete, read-only source fallback.
+
+The sliders control font family, font size, line height, content width, paragraph spacing, appearance and Markdown styling. Existing themes, full-width layout, formatting toolbar and exact snapshots remain available. These presentation preferences persist locally across documents. The three-dot menu provides path copying, reveal, rename, duplicate, PDF printing, HTML export and close. PDF export uses the operating system print dialog's PDF destination. HTML export uses Folio's sanitized native renderer and blocks remote images; math and Mermaid retain their source representation in the standalone HTML.
+
+The dock provides Search, Outline and Files. With a folder open, Search occupies its own sidebar in place of Files or Outline and searches saved Markdown file contents. Results are grouped by file, show matching lines and line numbers, and open the selected match in the document. Ctrl+F always searches only the current document; Ctrl+Shift+F opens folder search, falling back to document Find when no folder is open. Folder content search is bounded to 100 matching lines, 2 MiB per file and 16 MiB read per query, and reports limited results. The command window retains theme selection, remote-image controls, picker choice, reading fonts, text zoom and other existing commands. Remote images never load on hover or focus. Obsidian plugins, PlantUML, and diagram languages besides Mermaid are not implemented.
 
 ## Optional Linux desktop installation
 
@@ -189,3 +199,16 @@ The GitHub Actions workflow runs Rust formatting, tests, Clippy, and UI checks o
 ## License
 
 Folio is licensed under [MIT](LICENSE). Bundled preview libraries and fonts retain their own licenses; see [third-party notices](THIRD_PARTY_NOTICES.md).
+
+
+For native Linux palette startup checks (system Python with PyGObject and GTK 3 /
+WebKit2 4.1 typelibs, plus Xvfb and D-Bus):
+
+```sh
+npm run test:native-palette
+```
+
+This loads the real UI in isolated WebKit views at 100% and 120% zoom and checks
+that first-layout timing cannot freeze transparent/invalid theme samples into
+gray document text. Reading text uses full foreground contrast in light and dark
+appearances; accent colors retain their saturation without text shadows or glow.

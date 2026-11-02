@@ -47,10 +47,21 @@ function setActiveOutline(index) {
   };
   paint(previous);
   paint(active);
-  const list = $('outline-items'), selected = outlineEntries[active].button;
+  const list = $('outline-items'), selected = syncOutlineContext();
+  if (!selected) return;
+  if (!list.clientHeight || list.scrollHeight <= list.clientHeight) return;
+  // A new section supersedes any previous follow animation, including when
+  // the new highlight is already comfortably visible after reversing direction.
+  list.scrollTo({ top: list.scrollTop, behavior: 'instant' });
   const bounds = list.getBoundingClientRect(), item = selected.getBoundingClientRect();
-  if (item.top < bounds.top) list.scrollTop += Math.floor(item.top - bounds.top) - 1;
-  else if (item.bottom > bounds.bottom) list.scrollTop += Math.ceil(item.bottom - bounds.bottom) + 1;
+  // Leave context above and below the current section. Recenter only when it
+  // enters an outer quarter, so the outline stays still between adjustments.
+  const top = bounds.top + list.clientTop, margin = list.clientHeight * .25;
+  if (item.top >= top + margin && item.bottom <= top + list.clientHeight - margin) return;
+  const target = list.scrollTop + (item.top + item.bottom) / 2 - top - list.clientHeight / 2;
+  const scrollTop = Math.max(0, Math.min(target, list.scrollHeight - list.clientHeight));
+  if (Math.abs(list.scrollTop - scrollTop) < 1) return;
+  list.scrollTo({ top: scrollTop, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
 }
 function updateActiveOutline() {
   if (!outlineEntries.length) return;
@@ -74,18 +85,6 @@ function scheduleOutlineActive() {
 }
 $('reader-scroll').addEventListener('scroll', scheduleOutlineActive, { passive: true });
 window.addEventListener('resize', scheduleOutlineActive);
-
-$('outline-items').addEventListener('keydown', event => {
-  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
-  const buttons = [...$('outline-items').querySelectorAll('.outline-link')];
-  if (!buttons.length) return;
-  const current = buttons.indexOf(document.activeElement);
-  const next = event.key === 'Home' ? 0
-    : event.key === 'End' ? buttons.length - 1
-    : (current + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
-  event.preventDefault();
-  buttons[next].focus();
-});
 
 async function renderPreview(restoreScroll) {
   await mountUnifiedEditor();

@@ -33,6 +33,7 @@ async function openIsolatedEditor(source, outfile, viewport) {
   });
   await session.page.reload();
   await session.page.waitForFunction(() => typeof editor !== 'undefined' && editor && !busy);
+  await session.page.evaluate(() => setDocumentMode('edit'));
   assert.equal(served, 1, 'rich find tests must run against the isolated editor bundle');
   return session;
 }

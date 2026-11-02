@@ -405,6 +405,8 @@
         'native document content'
       );
 
+      report.readingDefault = documentMode === 'reading' && instance.isLocked();
+      setDocumentMode('edit');
       const root = document.querySelector('#preview .ProseMirror');
       const script = [...document.scripts].find(node =>
         (node.getAttribute('src') || '').endsWith('vendor/editor/editor.js'));

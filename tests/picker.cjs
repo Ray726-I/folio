@@ -98,7 +98,7 @@ async function runPalette(page, query) {
     // 2. Folio main Open entry points share routing (toolbar, welcome, Ctrl+O, palette).
     for (const entry of ['toolbar', 'welcome', 'shortcut', 'palette']) {
       await page.evaluate(() => { window.nativeCalls = []; if (document.getElementById('open-dialog').open) document.getElementById('open-dialog').close(); });
-      if (entry === 'toolbar') await page.locator('#open').click();
+      if (entry === 'toolbar') await page.keyboard.press('Control+o');
       else if (entry === 'welcome') await page.locator('#welcome-open').click();
       else if (entry === 'shortcut') await page.keyboard.press('Control+O');
       else { await runPalette(page, 'Open file'); await page.keyboard.press('Enter'); }
@@ -109,7 +109,7 @@ async function runPalette(page, query) {
     }
 
     // 3. Typed path beats a stale row selection (row -> type); a later row click wins (type -> row).
-    await page.locator('#open').click();
+    await page.keyboard.press('Control+o');
     await page.locator('#open-dialog').waitFor();
     await page.getByRole('option', { name: 'opened.md' }).click();
     await page.locator('#open-path').fill(fileB);
@@ -117,9 +117,9 @@ async function runPalette(page, query) {
     await page.waitForFunction(() => !busy);
     assert.equal(await page.evaluate(() => window.nativeCalls.filter(c => c.command === 'open_document').at(-1)?.args.path), fileB, 'typed path must win over stale row selection');
     await page.waitForFunction(() => !document.getElementById('document-view').hidden && !busy);
-    await page.locator('#home').click();
+    await page.evaluate(() => { void goHome(); });
     await page.waitForFunction(() => !document.getElementById('welcome').hidden && !busy);
-    await page.locator('#open').click();
+    await page.keyboard.press('Control+o');
     await page.locator('#open-dialog').waitFor();
     await page.locator('#open-path').fill(fileB);
     await page.getByRole('option', { name: 'opened.md' }).click();
@@ -128,7 +128,7 @@ async function runPalette(page, query) {
     await page.waitForFunction(() => !busy);
     assert.equal(await page.evaluate(() => window.nativeCalls.filter(c => c.command === 'open_document').at(-1)?.args.path), fileA, 'row click after typing must win');
     // Back home clean for the next group (doc is clean: content === saved).
-    await page.locator('#home').click();
+    await page.evaluate(() => { void goHome(); });
     await page.waitForFunction(() => !document.getElementById('welcome').hidden && !busy);
 
     // 4. Palette toggle copy, persistence, searchability, status feedback.
@@ -150,26 +150,27 @@ async function runPalette(page, query) {
     assert.equal(await page.locator('#open-folder').count(), 1, 'exactly one Open folder action exists');
     assert.equal(await page.evaluate(() => document.getElementById('open-folder').closest('#open-menu') !== null), true, 'the folder action lives in the Open menu, not the toolbar');
     assert.equal(await page.locator('.header-start > #open-folder').count(), 0, 'the duplicate toolbar folder action is gone');
-    await page.locator('#open-chevron').click();
+    await page.locator('#menu-file-button').click();
     await page.waitForFunction(() => !document.getElementById('open-menu').hidden);
     assert.equal(await page.locator('#open-menu #open-folder').isVisible(), true, 'native mode exposes Open folder… in the Open menu');
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => document.getElementById('open-menu').hidden);
-    await page.locator('#open-chevron').focus();
+    await page.locator('#menu-file-button').focus();
     await page.keyboard.press('ArrowDown');
     await page.waitForFunction(() => !document.getElementById('open-menu').hidden);
-    assert.equal(await page.evaluate(() => document.activeElement?.id), 'open-file', 'the Open menu is keyboard-reachable');
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.appAction), 'new', 'the File menu is keyboard-reachable');
+    await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowDown');
     assert.equal(await page.evaluate(() => document.activeElement?.id), 'open-folder', 'Open folder… is keyboard-reachable');
     await page.keyboard.press('Escape');
-    assert.equal((await page.locator('#open span').textContent()).trim(), 'Open file', 'native Open advertises files only');
-    assert.match(await page.locator('#open').getAttribute('title'), /file/i, 'native Open title names files');
-    assert.doesNotMatch(await page.locator('#open').getAttribute('title'), /folder/i, 'native Open title does not promise folders');
+    assert.equal((await page.locator('#open-file .menu-text').textContent()).trim(), 'Open File…', 'native Open advertises files only');
+    assert.match(await page.locator('#open-file').getAttribute('title'), /file/i, 'native Open title names files');
+    assert.doesNotMatch(await page.locator('#open-file').getAttribute('title'), /folder/i, 'native Open title does not promise folders');
 
     // 5. Native main Open uses the OS file dialog; all entry points route the same.
     for (const entry of ['toolbar', 'welcome', 'shortcut', 'palette']) {
       await page.evaluate((f) => { window.nativeCalls = []; window.pickResult = null; }, fileA);
-      if (entry === 'toolbar') await page.locator('#open').click();
+      if (entry === 'toolbar') await page.keyboard.press('Control+o');
       else if (entry === 'welcome') await page.locator('#welcome-open').click();
       else if (entry === 'shortcut') await page.keyboard.press('Control+O');
       else { await runPalette(page, 'Open file'); await page.keyboard.press('Enter'); }
@@ -184,7 +185,7 @@ async function runPalette(page, query) {
 
     // 6. Native file pick opens the document; folder command opens the folder.
     await page.evaluate((f) => { window.nativeCalls = []; window.pickResult = { path: f, kind: 'file' }; }, fileA);
-    await page.locator('#open').click();
+    await page.keyboard.press('Control+o');
     await page.waitForFunction(() => !busy && !document.getElementById('document-view').hidden);
     assert.equal(await page.evaluate(() => window.nativeCalls.filter(c => c.command === 'open_document').length), 1, 'native file pick opens once');
     assert.equal(await page.evaluate(() => window.nativeCalls.some(c => c.command === 'path_is_directory')), false, 'native file result opens directly without a queued directory probe');
@@ -197,7 +198,7 @@ async function runPalette(page, query) {
     await page.keyboard.press('Escape');
     await page.evaluate(() => { if (document.getElementById('command-dialog').open) document.getElementById('command-dialog').close(); });
     await page.evaluate((n) => { window.nativeCalls = []; window.pickResult = { path: n, kind: 'folder' }; }, notes);
-    await page.locator('#open-chevron').click();
+    await page.locator('#menu-file-button').click();
     await page.waitForFunction(() => !document.getElementById('open-menu').hidden);
     await page.locator('#open-folder').click();
     await page.waitForFunction(() => !busy && document.getElementById('folder-name').textContent === 'notes');
@@ -210,11 +211,11 @@ async function runPalette(page, query) {
 
     // 7. Native cancel changes nothing: no prompt, no recents change, no doc switch.
     await page.evaluate((f) => { window.nativeCalls = []; window.pickResult = { path: f, kind: 'file' }; }, fileA);
-    await page.locator('#open').click();
+    await page.keyboard.press('Control+o');
     await page.waitForFunction(() => !busy);
     const recentsBefore = await page.evaluate(() => localStorage.getItem('folio.recent'));
     await page.evaluate(() => { window.nativeCalls = []; window.pickResult = null; });
-    await page.locator('#open').click();
+    await page.keyboard.press('Control+o');
     await page.waitForFunction(() => window.nativeCalls.some(c => c.command === 'pick_open_target'));
     await page.waitForFunction(() => !busy);
     assert.equal(await page.evaluate(() => document.getElementById('confirm-dialog').open), false, 'native cancel never prompts');
@@ -225,14 +226,14 @@ async function runPalette(page, query) {
     await page.evaluate(() => { current.content += ' dirty'; updateTitle(); });
     await page.waitForFunction(() => document.getElementById('dirty-dot').hidden === false);
     await page.evaluate((f) => { window.nativeCalls = []; window.pickResult = { path: f, kind: 'file' }; }, fileB);
-    await page.locator('#open').click();
+    await page.keyboard.press('Control+o');
     await page.locator('#confirm-dialog').waitFor();
     await page.getByRole('button', { name: 'Cancel', exact: true }).click();
     await page.waitForFunction(() => !busy);
     assert.ok((await page.evaluate(() => current.content)).includes('dirty'), 'cancelling the dirty prompt keeps the document');
     // Dirty + picker cancel never prompts at all.
     await page.evaluate(() => { window.nativeCalls = []; window.pickResult = null; });
-    await page.locator('#open').click();
+    await page.keyboard.press('Control+o');
     await page.waitForFunction(() => window.nativeCalls.some(c => c.command === 'pick_open_target'));
     await page.waitForFunction(() => !busy);
     assert.equal(await page.evaluate(() => document.getElementById('confirm-dialog').open), false, 'dirty doc + native cancel never prompts');
@@ -245,9 +246,9 @@ async function runPalette(page, query) {
     await page.waitForFunction((f) => window.nativeCalls.filter(c => c.command === 'pick_open_target').length === 1 && !busy && current.path === f, fileB, { timeout: 8000 });
     // 9b. Slow native pick holds the queue: busy + Open/Save disabled, queued work waits.
     await page.evaluate((f) => { window.nativeCalls = []; window.pickDelayMs = 400; window.pickResult = { path: f, kind: 'file' }; window.queuedRan = false; }, fileA);
-    await page.locator('#open').click();
+    await page.keyboard.press('Control+o');
     await page.waitForFunction(() => busy === true);
-    assert.equal(await page.locator('#open').isDisabled(), true, 'Open is disabled while the native picker is pending');
+    assert.equal(await page.locator('#open-file').isDisabled(), true, 'Open is disabled while the native picker is pending');
     assert.equal(await page.locator('#save').isDisabled(), true, 'Save is disabled while the native picker is pending');
     assert.equal(await page.evaluate(() => window.nativeCalls.filter(c => c.command === 'open_document').length), 0, 'protected open waits while the native pick is pending');
     await page.evaluate(() => { enqueue(() => { window.queuedRan = true; }); });
@@ -259,18 +260,18 @@ async function runPalette(page, query) {
 
     // 9c. Native failures and malformed results are rejected safely; the guard resets for retry.
     await page.evaluate(() => { window.nativeCalls = []; window.pickShouldThrow = 'System dialog unavailable.'; window.pickResult = null; });
-    await page.locator('#open').click();
+    await page.keyboard.press('Control+o');
     await page.waitForFunction(() => window.nativeCalls.some(c => c.command === 'pick_open_target'));
     await page.waitForFunction(() => !busy);
     assert.match(await page.locator('#toast').textContent(), /unavailable/, 'native pick failure shows a safe error');
     assert.equal(await page.evaluate(() => window.nativeCalls.some(c => c.command === 'open_document' || c.command === 'open_folder')), false, 'failed native pick opens nothing');
     await page.evaluate((f) => { window.nativeCalls = []; window.pickResult = { path: f, kind: 'file' }; }, fileB);
-    await page.locator('#open').click();
+    await page.keyboard.press('Control+o');
     await page.waitForFunction((f) => !busy && current.path === f, fileB, { timeout: 8000 });
     assert.equal(await page.evaluate(() => window.nativeCalls.filter(c => c.command === 'open_document').length), 1, 'retry after rejection opens');
     for (const bad of [{}, { path: fileA, kind: 'bogus' }, 'not-an-object']) {
       await page.evaluate((v) => { window.nativeCalls = []; window.pickResult = v; }, bad);
-      await page.locator('#open').click();
+      await page.keyboard.press('Control+o');
       await page.waitForFunction(() => window.nativeCalls.some(c => c.command === 'pick_open_target'));
       await page.waitForFunction(() => !busy);
       assert.equal(await page.evaluate(() => window.nativeCalls.some(c => c.command === 'open_document' || c.command === 'open_folder')), false, `malformed native result opens nothing (${JSON.stringify(bad)})`);
@@ -295,13 +296,13 @@ async function runPalette(page, query) {
     await page.waitForFunction(() => filePicker() === 'folio');
     await page.evaluate(() => { if (document.getElementById('command-dialog').open) document.getElementById('command-dialog').close(); window.nativeCalls = []; });
     assert.equal(await page.locator('#open-folder').isVisible(), false, 'Folio picker folds folder opening into Open');
-    await page.locator('#open-chevron').click();
+    await page.locator('#menu-file-button').click();
     await page.waitForFunction(() => !document.getElementById('open-menu').hidden);
     assert.equal(await page.locator('#open-menu #open-file').isVisible(), true, 'Open file or folder… remains reachable in Folio mode');
-    assert.equal(await page.locator('#open-menu #open-folder').isVisible(), false, 'Folio mode hides the separate folder item');
+    assert.equal(await page.locator('#open-menu #open-folder').isVisible(), true, 'File menu keeps Open Folder available with either picker');
     await page.keyboard.press('Escape');
-    assert.equal((await page.locator('#open span').textContent()).trim(), 'Open', 'Folio Open covers files and folders');
-    assert.match(await page.locator('#open').getAttribute('title'), /file or folder/i, 'Folio Open advertises both');
+    assert.equal((await page.locator('#open-file .menu-text').textContent()).trim(), 'Open File…', 'File menu keeps a conventional file action');
+    assert.match(await page.locator('#open-file').getAttribute('title'), /file or folder/i, 'Folio Open advertises both');
     await runPalette(page, 'Open folder');
     await page.keyboard.press('Enter');
     await page.locator('#open-dialog').waitFor();
@@ -314,7 +315,7 @@ async function runPalette(page, query) {
     await installMock(truncPage, { truncated: true, seedPicker: 'folio' });
     await ready(truncPage);
     assert.equal(await truncPage.evaluate(() => filePicker()), 'folio', 'truncated page uses the Folio picker');
-    await truncPage.locator('#open').click();
+    await truncPage.keyboard.press('Control+o');
     await truncPage.locator('#open-dialog').waitFor();
     const hint = await truncPage.locator('#open-selection-hint').textContent();
     assert.match(hint, /limited|not shown/i, 'truncated listing must surface limit info');

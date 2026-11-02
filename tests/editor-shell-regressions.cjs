@@ -98,7 +98,8 @@ async function richPendingOpen() {
     assert.equal(after.content, B, 'B must become current after the deferred open completes');
     assert.equal(after.text, B);
     assert.equal(after.mode, 'read');
-    assert.equal(await page.evaluate(() => editor.isLocked()), false, 'the freshly opened document must be editable');
+    assert.equal(await page.evaluate(() => editor.isLocked()), false, 'newly opened files default to Edit mode');
+    await page.evaluate(() => setDocumentMode('edit'));
     await page.locator('#preview p').click();
     await page.keyboard.press('End');
     assert.equal(await page.locator('#preview .ProseMirror').evaluate(node => node.contains(document.activeElement)), true,
@@ -152,13 +153,13 @@ async function folderRejectedOpenPreservesLock() {
   try {
     await page.locator('#preview p').click();
     await page.keyboard.press('End');
-    await page.evaluate(() => editor.setLocked(true));
+    await page.evaluate(() => (() => { documentReadOnly = true; syncDocumentMode(); })());
     const before = await snapshot(page);
 
     await session.holdFolder(FOLDER_PATH, FOLDER_LISTING, 'SIMULATED_FOLDER_FAILURE');
     await page.evaluate(path => { void enqueue(() => openFolderPath(path)); }, FOLDER_PATH);
     await waitForPendingFolder(page, FOLDER_PATH);
-    await page.evaluate(() => editor.setLocked(false));
+    await page.evaluate(() => (() => { if (documentReadOnly) toggleDocumentReadOnly(); })());
     assert.equal(await page.evaluate(() => editor.isLocked()), true,
       'an unlock attempt during a folder transition must not clear the persistent user Lock');
 
@@ -174,7 +175,7 @@ async function folderRejectedOpenPreservesLock() {
     assert.equal(await page.evaluate(() => editor.isLocked()), true, 'folder rejection cleanup must retain the user Lock');
     assert.match(await page.locator('#toast').textContent(), /SIMULATED_FOLDER_FAILURE/, 'the rejected folder scan must be reported');
 
-    await page.evaluate(() => editor.setLocked(false));
+    await page.evaluate(() => (() => { if (documentReadOnly) toggleDocumentReadOnly(); })());
     await page.locator('#preview p').click();
     await page.keyboard.press('End');
     await page.keyboard.type('RESUMED');
@@ -234,13 +235,13 @@ async function rejectionPreservesUserLock() {
   try {
     await page.locator('#preview p').click();
     await page.keyboard.press('End');
-    await page.evaluate(() => editor.setLocked(true));
+    await page.evaluate(() => (() => { documentReadOnly = true; syncDocumentMode(); })());
     const before = await snapshot(page);
 
     await session.holdOpen(B_PATH, B, 'SIMULATED_OPEN_FAILURE');
     await page.evaluate(path => { void requestOpen(path); }, B_PATH);
     await waitForPendingOpen(page, B_PATH);
-    await page.evaluate(() => editor.setLocked(false));
+    await page.evaluate(() => (() => { if (documentReadOnly) toggleDocumentReadOnly(); })());
     assert.equal(await page.evaluate(() => editor.isLocked()), true,
       'an unlock attempt during a transition must not clear the persistent user Lock');
 
@@ -257,7 +258,7 @@ async function rejectionPreservesUserLock() {
     await page.keyboard.type('STILLBLOCKED');
     await assertPendingOpenRejected(page, after, 'Typing after cleanup while still user-locked');
 
-    await page.evaluate(() => editor.setLocked(false));
+    await page.evaluate(() => (() => { if (documentReadOnly) toggleDocumentReadOnly(); })());
     assert.equal(await page.evaluate(() => editor.isLocked()), false);
     await page.locator('#preview p').click();
     await page.keyboard.press('End');
@@ -488,14 +489,14 @@ async function newRejectionPreservesDocumentAndLock() {
   try {
     await page.locator('#preview p').click();
     await page.keyboard.press('End');
-    await page.evaluate(() => editor.setLocked(true));
+    await page.evaluate(() => (() => { documentReadOnly = true; syncDocumentMode(); })());
     const before = await snapshot(page);
     assert.equal(before.dirty, false);
 
     await session.holdNewDocument('SIMULATED_NEW_DOCUMENT_FAILURE');
     await page.evaluate(() => { void newDocument(); });
     await waitForPendingNewDocument(page);
-    await page.evaluate(() => editor.setLocked(false));
+    await page.evaluate(() => (() => { if (documentReadOnly) toggleDocumentReadOnly(); })());
     assert.equal(await page.evaluate(() => editor.isLocked()), true,
       'an unlock attempt during a New transition must not clear the persistent user Lock');
     await page.keyboard.type('BLOCKED');
@@ -511,7 +512,7 @@ async function newRejectionPreservesDocumentAndLock() {
     assert.equal(await page.evaluate(() => editor.isLocked()), true, 'New rejection cleanup must retain the user Lock');
     assert.match(await page.locator('#toast').textContent(), /SIMULATED_NEW_DOCUMENT_FAILURE/, 'the rejected New must be reported');
 
-    await page.evaluate(() => editor.setLocked(false));
+    await page.evaluate(() => (() => { if (documentReadOnly) toggleDocumentReadOnly(); })());
     await page.locator('#preview p').click();
     await page.keyboard.press('End');
     await page.keyboard.type('RESUMED');
@@ -528,13 +529,13 @@ async function homeRejectionPreservesDocumentAndLock() {
   try {
     await page.locator('#preview p').click();
     await page.keyboard.press('End');
-    await page.evaluate(() => editor.setLocked(true));
+    await page.evaluate(() => (() => { documentReadOnly = true; syncDocumentMode(); })());
     const before = await snapshot(page);
 
     await session.holdNewDocument('SIMULATED_NEW_DOCUMENT_FAILURE');
     await page.evaluate(() => { void goHome(); });
     await waitForPendingNewDocument(page);
-    await page.evaluate(() => editor.setLocked(false));
+    await page.evaluate(() => (() => { if (documentReadOnly) toggleDocumentReadOnly(); })());
     assert.equal(await page.evaluate(() => editor.isLocked()), true,
       'an unlock attempt during a Home transition must not clear the persistent user Lock');
     await page.keyboard.type('BLOCKED');
@@ -550,7 +551,7 @@ async function homeRejectionPreservesDocumentAndLock() {
     assert.equal(await page.evaluate(() => editor.isLocked()), true, 'Home rejection cleanup must retain the user Lock');
     assert.match(await page.locator('#toast').textContent(), /SIMULATED_NEW_DOCUMENT_FAILURE/, 'the rejected Home must be reported');
 
-    await page.evaluate(() => editor.setLocked(false));
+    await page.evaluate(() => (() => { if (documentReadOnly) toggleDocumentReadOnly(); })());
     await page.locator('#preview p').click();
     await page.keyboard.press('End');
     await page.keyboard.type('RESUMED');

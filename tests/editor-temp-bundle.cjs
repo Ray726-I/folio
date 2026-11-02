@@ -29,6 +29,7 @@ async function openIsolatedEditor(source, outfile, viewport) {
   });
   await session.page.reload();
   await session.page.waitForFunction(() => typeof editor !== 'undefined' && editor && !busy);
+  await session.page.evaluate(() => setDocumentMode('edit'));
   assert.equal(served, 1, 'audit tests must run against the freshly built editor bundle');
   return session;
 }

@@ -116,6 +116,7 @@ async function highlightState(page) {
     await page.addInitScript(() => { try { delete window.Highlight; } catch {} });
     await page.reload();
     await page.waitForFunction(() => typeof editor !== 'undefined' && editor && !busy);
+    await page.evaluate(() => setDocumentMode('edit'));
     await page.waitForFunction(() => document.querySelector('.html-inline'));
     await page.waitForTimeout(400);
     const noApi = await highlightState(page);

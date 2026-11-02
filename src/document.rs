@@ -59,6 +59,49 @@ pub struct Document {
     pub name: String,
     pub content: String,
     pub line_ending: &'static str,
+    pub writable: bool,
+}
+
+// Probe handles only; never write document bytes. Atomic saves also require
+// creating a sibling, so file write access alone is insufficient.
+pub fn writable(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    if metadata.permissions().readonly() || fs::OpenOptions::new().write(true).open(path).is_err() {
+        return false;
+    }
+    path.parent().is_some_and(|parent| {
+        tempfile::Builder::new()
+            .prefix(".folio-access-")
+            .tempfile_in(parent)
+            .is_ok()
+    })
+}
+
+pub fn rename(document: &OpenDocument, name: &str) -> Result<OpenDocument, String> {
+    if name.trim().is_empty() || name == "." || name == ".." || name.contains(['/', '\\', '\0']) {
+        return Err("Choose a filename without path separators.".into());
+    }
+    if changed_exact(document) {
+        return Err("This file changed on disk. Reload it before renaming.".into());
+    }
+    let destination = document
+        .path
+        .parent()
+        .ok_or("Invalid document path")?
+        .join(name);
+    // A hard link creates the destination exclusively on all desktop platforms;
+    // unlike rename(), it cannot silently replace an existing document.
+    fs::hard_link(&document.path, &destination)
+        .map_err(|error| format!("Could not rename document: {error}"))?;
+    if let Err(error) = fs::remove_file(&document.path) {
+        let _ = fs::remove_file(&destination);
+        return Err(format!("Could not rename document: {error}"));
+    }
+    let mut renamed = document.clone();
+    renamed.path = destination;
+    Ok(renamed)
 }
 
 pub fn fingerprint(bytes: &[u8]) -> String {
@@ -100,6 +143,7 @@ pub fn load(path: &Path) -> Result<(OpenDocument, Document), String> {
         path: path.to_string_lossy().into(),
         content: text.replace("\r\n", "\n"),
         line_ending: if crlf { "CRLF" } else { "LF" },
+        writable: writable(&path),
     };
     Ok((
         OpenDocument {
@@ -156,6 +200,9 @@ pub fn save(
     } else {
         path.to_path_buf()
     };
+    if path.exists() && !writable(&path) {
+        return Err("Filesystem permissions prevent saving this file. Use Save As to create a writable copy.".into());
+    }
     let same = previous.filter(|document| document.path == path);
     if !force && same.is_some_and(changed_exact) {
         return Err(SaveError::Changed(
@@ -221,6 +268,71 @@ pub fn save(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rename_preserves_bytes_and_refuses_existing_destinations() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("note.md");
+        fs::write(&path, "\u{feff}# Keep\r\n").unwrap();
+        let (document, _) = load(&path).unwrap();
+        fs::write(directory.path().join("taken.md"), "Do not replace").unwrap();
+        assert!(rename(&document, "taken.md").is_err());
+        assert_eq!(
+            fs::read_to_string(directory.path().join("taken.md")).unwrap(),
+            "Do not replace"
+        );
+        for name in ["../escape.md", "sub/note.md", "sub\\note.md", "", ".", ".."] {
+            assert!(rename(&document, name).is_err());
+        }
+        let renamed = rename(&document, "renamed.md").unwrap();
+        assert!(!path.exists());
+        assert_eq!(
+            fs::read_to_string(&renamed.path).unwrap(),
+            "\u{feff}# Keep\r\n"
+        );
+        save(&renamed.path, "# Edited\n", Some(&renamed), false).unwrap();
+        assert_eq!(
+            fs::read_to_string(&renamed.path).unwrap(),
+            "\u{feff}# Edited\r\n"
+        );
+    }
+
+    #[test]
+    fn rename_refuses_external_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("note.md");
+        fs::write(&path, "Before").unwrap();
+        let (document, _) = load(&path).unwrap();
+        fs::write(&path, "After").unwrap();
+        assert!(rename(&document, "renamed.md").is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "After");
+        assert!(!directory.path().join("renamed.md").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn readonly_permissions_are_reported_and_not_bypassed_by_atomic_save() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("locked.md");
+        fs::write(&path, "Original").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o444)).unwrap();
+        let (document, data) = load(&path).unwrap();
+        assert!(!data.writable);
+        assert!(save(&path, "Edit", Some(&document), true).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "Original");
+        save(
+            &directory.path().join("copy.md"),
+            "Edit",
+            Some(&document),
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_dir(directory.path()).unwrap().count(),
+            2,
+            "permission probes leave no files behind"
+        );
+    }
 
     #[test]
     fn refuses_to_overwrite_external_changes() {

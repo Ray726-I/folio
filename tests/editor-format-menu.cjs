@@ -43,7 +43,7 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.keyboard.press('Escape');
     assert.equal(await menu.isHidden(), true);
     assert.equal(await page.evaluate(() => document.activeElement.id), 'format-more');
-    await page.locator('#lock-document').click();
+    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
     assert.equal(await trigger.isDisabled(), true, 'additional formatting is unavailable when locked');
     assert.deepEqual(session.errors, []);
     console.log('PASS: additional formatting actions preserve selection, keyboard access and lock behavior.');

@@ -6,7 +6,7 @@ let renderedFolder = { path: null, entries: null };
 let fontSize = Math.min(40, Math.max(12, Number(preferences.get('fontSize', 19)) || 19));
 let windowZoom = Math.min(2, Math.max(.6, Number(preferences.get('windowZoom', 1)) || 1));
 let remoteImages = preferences.get('remoteImages', false) === true;
-let readingFont = preferences.get('readingFont', 'serif') === 'sans' ? 'sans' : 'serif';
+let readingFont = ['serif', 'sans', 'mono'].includes(preferences.get('readingFont', 'sans')) ? preferences.get('readingFont', 'sans') : 'sans';
 const legacyOutline = preferences.get('outline', null);
 if (preferences.get('outlineWidth', null) === null && typeof legacyOutline === 'number') preferences.set('outlineWidth', legacyOutline);
 let outlineVisible = preferences.get('outlineVisible', typeof legacyOutline === 'boolean' ? legacyOutline : true), toastTimer;
@@ -15,14 +15,13 @@ let formatToolbarVisible = preferences.get('formatToolbarVisible', true);
 function filePicker() { const value = preferences.get('filePicker', 'folio'); return value === 'native' ? 'native' : 'folio'; }
 function syncOpenAffordance() {
   const native = filePicker() === 'native';
-  const open = $('open'), label = native ? 'Open a Markdown file (Ctrl+O)' : 'Open a file or folder (Ctrl+O)';
+  const open = $('open-file'), label = native ? 'Open a Markdown file (Ctrl+O)' : 'Open a file or folder (Ctrl+O)';
   open.title = label; open.setAttribute('aria-label', label);
-  open.querySelector('use').setAttribute('href', native ? '#i-file' : '#i-open');
-  open.querySelector('span').textContent = native ? 'Open file' : 'Open';
-  $('open-folder').hidden = !native;
+  open.querySelector('span').textContent = 'Open File…';
+  $('open-folder').hidden = false;
   const fileOption = $('open-file');
   if (fileOption) {
-    const fileLabel = native ? 'Open file…' : 'Open file or folder…';
+    const fileLabel = 'Open File…';
     fileOption.querySelector('.menu-text').textContent = fileLabel;
     fileOption.setAttribute('aria-label', fileLabel.replace('…', '') + ' (Ctrl+O)');
   }
@@ -78,11 +77,12 @@ function updateTitle() {
   // name, dirty flag and save state are stable for the whole typing burst.
   const state = saveState();
   const key = [name, current.path || activeFolder?.path || '', current.active ? 1 : 0,
-    dirty() ? 1 : 0, state.text, state.state, saveStatus?.error || ''].join('\u0000');
+    dirty() ? 1 : 0, state.text, state.state, saveStatus?.error || '', documentMode, documentReadOnly, current.writable].join('\u0000');
   if (key === renderedTitleKey) return;
   renderedTitleKey = key;
+  syncDocumentMode();
   $('document-name').textContent = name || 'Folio';
-  $('document-location').textContent = current.path ? dirname(current.path) : activeFolder?.path || (current.active ? 'Unsaved document' : 'Markdown files and folders');
+  $('document-location').textContent = current.path ? current.path : activeFolder?.path || (current.active ? 'Unsaved document' : 'Markdown files and folders');
   $('document-location').title = current.path || activeFolder?.path || '';
   $('dirty-dot').hidden = !dirty();
   const saveButton = $('save'), isDirty = dirty();
@@ -91,6 +91,7 @@ function updateTitle() {
     : isDirty ? `Save (Ctrl+S) — unsaved changes in ${current.name}` : 'Save (Ctrl+S) — all changes saved';
   saveButton.setAttribute('aria-label', saveLabel);
   saveButton.title = saveLabel;
+  saveButton.dataset.state = state.state;
   const saveStateElement = $('save-state');
   saveStateElement.textContent = state.text;
   saveStateElement.dataset.state = state.state;
@@ -100,6 +101,9 @@ function updateTitle() {
   const stateTitle = state.state === 'error' && saveStatus?.error ? saveStatus.error
     : state.state === 'dirty' ? 'Unsaved changes' : '';
   saveStateElement.title = stateTitle;
+  const compactSaveLabel = `Save (Ctrl+S) — ${state.state === 'error' ? `Save failed: ${saveStatus?.error || ''}` : accessibleText}`;
+  saveButton.title = compactSaveLabel;
+  saveButton.setAttribute('aria-label', compactSaveLabel);
   saveStateElement.setAttribute('aria-label', state.state === 'error' && saveStatus?.error ? `Save failed: ${saveStatus.error}` : `Save state: ${accessibleText || 'no document'}`);
   clearTimeout(titleTimer);
   titleTimer = setTimeout(() => sendTitle(name, dirty()), 120);
@@ -149,6 +153,7 @@ function showWelcome() {
   $('disk-banner').hidden = true; $('find-bar').hidden = true;
   $('outline').hidden = true; $('outline-divider').hidden = true;
   $('file-browser').hidden = true; $('folder-divider').hidden = true;
+  $('folder-search').hidden = true; $('search-divider').hidden = true; ++grepEpoch;
   document.body.classList.remove('focus-mode');
   document.querySelectorAll('.document-control').forEach(control => { control.hidden = true; });
   setFormatToolbarVisible(formatToolbarVisible, false); editorPresentation(false, false, false);
@@ -180,6 +185,8 @@ const narrowDrawers = () => window.matchMedia('(max-width:640px)').matches;
 let dockTab = 'outline', dockVisible = outlineVisible;
 function renderNavigationDock() {
   const show = dockVisible && !$('document-view').hidden;
+  $('folder-search').hidden = !(show && dockTab === 'search' && activeFolder);
+  $('search-divider').hidden = $('folder-search').hidden;
   $('outline').hidden = !(show && dockTab === 'outline' && current.active);
   $('file-browser').hidden = !(show && dockTab === 'files');
   $('outline-divider').hidden = $('outline').hidden;
@@ -200,12 +207,20 @@ function renderNavigationDock() {
 function syncFindControl() {
   const button = document.querySelector('[data-rail-action="find"]');
   if (!button) return;
-  button.disabled = !current.active;
-  button.setAttribute('aria-pressed', String(!$('find-bar').hidden));
+  button.disabled = !current.active && !activeFolder;
+  button.setAttribute('aria-pressed', String(activeFolder ? dockVisible && dockTab === 'search' : !$('find-bar').hidden));
+  button.setAttribute('aria-controls', activeFolder ? 'folder-search' : 'find-bar');
+  button.setAttribute('aria-label', activeFolder ? 'Search folder contents' : 'Search document');
+  button.title = activeFolder ? 'Search folder contents (Ctrl+Shift+F)' : 'Search document (Ctrl+F)';
 }
 // The rail is the only sidebar control: pressing the active mode closes the
 // dock, pressing the other mode switches to it.
 function toggleDock(tab) {
+  if (tab === 'search') {
+    if (dockVisible && dockTab === 'search') { dockVisible = false; renderNavigationDock(); }
+    else openFolderSearch();
+    return;
+  }
   if (dockVisible && dockTab === tab) {
     if (tab === 'outline') setOutline(false);
     else setFolderVisible(false);
@@ -274,18 +289,17 @@ function setupSidebarResize(sidebarId, dividerId, key, defaultWidth, styleName =
     preferences.set(key, appliedWidth);
   });
 }
-setupSidebarResize('file-browser', 'folder-divider', 'dockWidth', 250, 'dock');
-setupSidebarResize('outline', 'outline-divider', 'dockWidth', 250, 'dock');
+setupSidebarResize('file-browser', 'folder-divider', 'dockWidth', 280, 'dock');
+setupSidebarResize('outline', 'outline-divider', 'dockWidth', 280, 'dock');
+setupSidebarResize('folder-search', 'search-divider', 'dockWidth', 280, 'dock');
 // The shell always shows the formatted editor; opening a document only needs
 // the editor mounted and the find matches refreshed.
 async function refreshEditorSurface() {
   if (!current.active) return;
   editor?.captureSelection?.();
   await renderPreview();
-  // Opening a document puts the caret in the editor. Without this the page
-  // has no focused editing host, and a native drag that crosses into a
-  // rendered block collapses instead of spanning it.
-  editor?.focus();
+  // Opening a file leaves keyboard focus with the surrounding UI. Editing
+  // starts when the user clicks the document or invokes an editing action.
   if (!$('find-bar').hidden) updateFind();
 }
 function readerScrollAnchor() {
@@ -323,7 +337,7 @@ function zoomText(delta, reset = false) {
 }
 function zoomWindow(delta, reset = false) { windowZoom = reset ? 1 : Math.min(2, Math.max(.6, Math.round((windowZoom + delta) * 10) / 10)); $('zoom-reset').textContent = `${Math.round(windowZoom * 100)}%`; preferences.set('windowZoom', windowZoom); invoke('set_window_zoom', { scale: windowZoom }).catch(toast); }
 function applyReadingFont(font = readingFont, persist = true) {
-  readingFont = font === 'sans' ? 'sans' : 'serif';
+  readingFont = ['sans', 'mono'].includes(font) ? font : 'serif';
   root.dataset.readingFont = readingFont;
   if (persist) preferences.set('readingFont', readingFont);
   if ($('command-dialog').open) renderCommands();
@@ -337,7 +351,7 @@ function toggleRemoteImages() {
   if (current.active) editor?.refreshMedia(!remoteImages);
 }
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-  if (selectedTheme === 'system') { updatePreviewPalette(); refreshMermaid(); editor?.refreshMedia(); }
+  if (selectedTheme === 'system' && updatePreviewPalette()) refreshMermaid();
 });
 // The outline steps aside for the file tree on narrow screens; give it back when there is room.
 window.matchMedia('(max-width:640px)').addEventListener('change', event => {
@@ -366,9 +380,9 @@ async function allowDiscard() {
 }
 function enqueue(action) {
   queue = queue.then(async () => {
-    busy = true; $('open').disabled = true; $('save').disabled = true;
+    busy = true; $('open-file').disabled = true; $('save').disabled = true;
     try { return await action(); } catch (error) { status(''); toast(error); return false; }
-    finally { busy = false; $('open').disabled = false; $('save').disabled = false; }
+    finally { busy = false; $('open-file').disabled = false; $('save').disabled = false; }
   });
   return queue;
 }
@@ -383,7 +397,8 @@ async function openPath(path, confirmed = false) {
     const document = await invoke('open_document', { path });
     ++renderGeneration;
     previewSnapshot = null;
-    current = { path: document.path, name: document.name, content: document.content, saved: document.content, active: true };
+    current = { path: document.path, name: document.name, content: document.content, saved: document.content, writable: document.writable !== false, active: true };
+    resetDocumentPresentation(); recordDocumentNavigation(current.path);
     if (activeFolder && !samePath(document.path, activeFolder.path) && !isWithin(document.path, activeFolder.path)) { activeFolder = null; folderEntries = []; expandedFolders.clear(); }
     if (activeFolder) expandParentsOf(document.path);
     setLineEnding(document.lineEnding || null);
@@ -588,6 +603,7 @@ async function openFolderPath(path, confirmed = false) {
     await invoke('new_document');
     ++renderGeneration;
     activeFolder = { path: listing.path, name: listing.name }; folderEntries = listing.entries;
+    clearFolderSearch();
     expandedFolders.clear(); folderVisible = true;
     current = { path: null, name: 'Untitled.md', content: '', saved: '', active: false };
     previewSnapshot = null;
@@ -617,13 +633,14 @@ function requestOpenLocation(path) {
 }
 async function save(saveAs = false, force = false) {
   if (!current.active) return false;
+  if (!saveAs && (documentReadOnly || current.writable === false)) { toast('This document is read-only. Use Save As to create a writable copy.'); return false; }
   editor?.checkpoint();
   const snapshot = current.content;
   status('Saving…'); saveStatus = 'saving'; updateTitle();
   try {
     const saved = await invoke('save_document', { content: snapshot, saveAs, force });
     if (!saved) { saveStatus = null; status(''); updateTitle(); return false; }
-    current.path = saved.path; current.name = saved.name; current.saved = snapshot; saveStatus = null; updateTitle(); $('disk-banner').hidden = true; addRecent(current.path); status('Saved');
+    current.path = saved.path; current.name = saved.name; current.saved = snapshot; if (saveAs) { current.writable = true; documentReadOnly = false; } saveStatus = null; updateTitle(); $('disk-banner').hidden = true; addRecent(current.path); status('Saved');
     await renderPreview();
     return true;
   } catch (error) {
@@ -653,7 +670,8 @@ function newDocument(sample = false) {
       await invoke('new_document'); ++renderGeneration;
       previewSnapshot = null;
       const content = sample ? SAMPLE : '';
-      current = { path: null, name: sample ? 'Welcome.md' : 'Untitled.md', content, saved: content, active: true };
+      current = { path: null, name: sample ? 'Welcome.md' : 'Untitled.md', content, saved: content, writable: true, active: true };
+      resetDocumentPresentation(sample ? undefined : 'edit');
       setLineEnding(null);
       showDocument(); $('reader-scroll').scrollTop = 0; await refreshEditorSurface(); if (!sample) editor?.focus();
     } finally {
@@ -663,6 +681,7 @@ function newDocument(sample = false) {
 }
 function addRecent(path) { const recent = preferences.get('recent', []); preferences.set('recent', [path, ...recent.filter(item => !samePath(item, path))].slice(0, 6)); renderRecent(); }
 function renderRecent() {
+  renderRecentMenu();
   const recent = preferences.get('recent', []); $('recent-section').hidden = !recent.length; $('recent-files').replaceChildren();
   for (const path of recent.slice(0, 4)) {
     const button = document.createElement('button'); button.className = 'recent-file'; button.append(icon('file'));
@@ -685,15 +704,19 @@ function allCommands() {
   if (current.active) commands.splice(2, 0,
     { label: 'Save', icon: 'save', shortcut: 'Ctrl+S', action: () => requestSave() },
     { label: 'Save as…', icon: 'save', shortcut: 'Ctrl+Shift+S', action: () => requestSave(true) },
-    { label: editor?.isLocked() ? 'Unlock document' : 'Lock document', icon: 'read', action: () => editor?.setLocked(!editor.isLocked()) },
+    { label: documentReadOnly ? 'Unlock document' : 'Lock document', icon: 'read', action: toggleDocumentReadOnly },
+    { label: 'Reading mode', icon: 'read', action: () => setDocumentMode('reading') },
+    { label: 'Edit mode', icon: 'edit', action: () => setDocumentMode('edit') },
+    { label: 'Source mode', icon: 'code', action: () => setDocumentMode('source') },
     { label: 'Source snapshot', icon: 'file', action: openSourceSnapshot },
     { label: 'Undo', icon: 'edit', shortcut: 'Ctrl+Z', action: () => enqueue(() => undoRedo()) },
     { label: 'Redo', icon: 'edit', shortcut: 'Ctrl+Shift+Z / Ctrl+Y', action: () => enqueue(() => undoRedo(true)) },
     { label: 'Find in document', icon: 'search', shortcut: 'Ctrl+F', action: openFind },
+    { label: 'Search folder contents', icon: 'search', shortcut: 'Ctrl+Shift+F', action: openFolderSearch },
     { label: remoteImages ? 'Block remote images' : 'Load remote images', icon: 'read', action: toggleRemoteImages },
     { label: readingFont === 'serif' ? 'Use sans-serif reading text' : 'Use serif reading text', icon: 'read', action: toggleReadingFont },
     { label: 'Toggle outline', icon: 'outline', action: () => setOutline(!outlineVisible) },
-    { label: 'Toggle focus mode', icon: 'focus', shortcut: 'F11', action: toggleFocus },
+    { label: 'Toggle focus mode', icon: 'focus', action: toggleFocus },
     { label: wideLayout ? 'Use centered document width' : 'Use full document width', icon: wideLayout ? 'width-contract' : 'width-expand', action: toggleDocumentWidth },
     { label: formatToolbarVisible ? 'Hide formatting toolbar' : 'Show formatting toolbar', icon: 'format', action: () => setFormatToolbarVisible(!formatToolbarVisible) },
     { label: 'Zoom in', icon: 'plus', shortcut: 'Ctrl+=', action: () => zoomWindow(.1) },
@@ -738,11 +761,23 @@ function executeCommand(index) {
   $('command-dialog').close(); Promise.resolve(command.action()).catch(toast);
 }
 $('command-search').addEventListener('input', () => { selectedCommand = 0; renderCommands(); });
-$('command-search').addEventListener('keydown', event => {
+$('command-dialog').addEventListener('keydown', event => {
+  if (event.isComposing) return;
+  const focusedOption = event.target.closest?.('.command-item');
+  const focusedIndex = focusedOption ? Number(focusedOption.id.slice('command-'.length)) : selectedCommand;
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-    event.preventDefault(); selectedCommand = (selectedCommand + (event.key === 'ArrowDown' ? 1 : -1) + filteredCommands.length) % Math.max(1, filteredCommands.length); renderCommands(); $(`command-${selectedCommand}`)?.scrollIntoView({ block: 'nearest' });
-  } else if (event.key === 'Enter') { event.preventDefault(); executeCommand(selectedCommand); }
-  else if (event.key === 'Backspace' && !$('command-search').value && commandScope === 'themes') openCommands();
+    event.preventDefault(); event.stopPropagation();
+    if (!filteredCommands.length) return;
+    const previous = $(`command-${selectedCommand}`);
+    previous?.classList.remove('active'); previous?.setAttribute('aria-selected', 'false');
+    selectedCommand = (focusedIndex + (event.key === 'ArrowDown' ? 1 : -1) + filteredCommands.length) % filteredCommands.length;
+    const next = $(`command-${selectedCommand}`);
+    next?.classList.add('active'); next?.setAttribute('aria-selected', 'true');
+    $('command-search').setAttribute('aria-activedescendant', `command-${selectedCommand}`);
+    $('command-search').focus({ preventScroll: true });
+    next?.scrollIntoView({ block: 'nearest' });
+  } else if (event.key === 'Enter') { event.preventDefault(); executeCommand(focusedIndex); }
+  else if (event.key === 'Backspace' && event.target === $('command-search') && !$('command-search').value && commandScope === 'themes') openCommands();
 });
 for (const id of ['command-dialog']) $(id).addEventListener('click', event => { const bounds = $(id).getBoundingClientRect(); if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) $(id).close(); });
 
@@ -788,11 +823,12 @@ function nextFind(direction) {
   // Focus stays in the find field: the editor selection is revealed without
   // stealing the caret, and a mirrored highlight keeps the hit visible while
   // the input owns focus.
-  editor?.selectRange(match.from, match.to, false);
+  if (documentMode === 'source') { $('document-source').setSelectionRange(match.from, match.to); }
+  else editor?.selectRange(match.from, match.to, false);
   editor?.highlightRange?.(match.from, match.to);
   $('find-result').textContent = `${findIndex + 1} / ${matches.length}`;
 }
-function closeFind() { $('find-bar').hidden = true; clearHighlights(); editor?.focus(); syncFindControl(); }
+function closeFind() { $('find-bar').hidden = true; $('replace-bar').hidden = true; clearHighlights(); editor?.focus(); syncFindControl(); }
 function toggleFocus() { document.body.classList.toggle('focus-mode'); }
 function setDocumentWidth(full, persist = true) {
   // Anchor on what the reader is actually looking at, not on the first block.
@@ -815,7 +851,7 @@ function toggleDocumentWidth() { setDocumentWidth(!wideLayout); }
 function setFormatToolbarVisible(visible, persist = true) {
   formatToolbarVisible = visible !== false;
   if (!formatToolbarVisible) closeAllMenus();
-  $('format-tools').hidden = !formatToolbarVisible || !current.active;
+  $('format-tools').hidden = !formatToolbarVisible || !current.active || documentMode !== 'edit';
   const button = $('format-toggle');
   button.setAttribute('aria-pressed', String(formatToolbarVisible));
   button.setAttribute('aria-expanded', String(formatToolbarVisible));
@@ -826,7 +862,7 @@ function setFormatToolbarVisible(visible, persist = true) {
 }
 
 function closeAllMenus(returnFocus = false) {
-  for (const id of ['open-menu', 'view-menu', 'format-menu']) {
+  for (const id of ['open-menu', 'view-menu', 'format-menu', 'folio-menu', 'edit-menu', 'application-view-menu', 'go-menu', 'help-menu', 'document-mode-menu', 'document-more-menu', 'open-recent-menu']) {
     const menu = $(id);
     if (menu && !menu.hidden) {
       menu.hidden = true;
@@ -839,14 +875,14 @@ function closeAllMenus(returnFocus = false) {
 function setupMenu(triggerId, menuId) {
   const trigger = $(triggerId), menu = $(menuId);
   if (!trigger || !menu) return;
-  const items = () => [...menu.querySelectorAll('.menu-item:not([hidden])')];
+  const items = () => [...menu.querySelectorAll('.menu-item:not([hidden]):not(:disabled)')].filter(item => item.closest('[role=menu]') === menu);
   function openMenu() {
     const wasHidden = menu.hidden;
     closeAllMenus();
     if (!wasHidden) return;
     menu.hidden = false;
     trigger.setAttribute('aria-expanded', 'true');
-    items()[0]?.focus();
+    (menu.querySelector('input,select') || items()[0])?.focus();
   }
   trigger.addEventListener('click', event => { event.stopPropagation(); menu.hidden ? openMenu() : closeAllMenus(true); });
   trigger.addEventListener('keydown', event => {
@@ -854,9 +890,10 @@ function setupMenu(triggerId, menuId) {
     else if (event.key === 'Escape' && !menu.hidden) { event.preventDefault(); closeAllMenus(true); }
   });
   menu.addEventListener('keydown', event => {
+    if (event.target.matches('input,select,summary') && event.key !== 'Escape') return;
     const list = items();
     const current = list.indexOf(document.activeElement);
-    if (event.key === 'Escape') { event.preventDefault(); closeAllMenus(true); }
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeAllMenus(true); }
     else if (event.key === 'ArrowDown') { event.preventDefault(); list[(current + 1 + list.length) % list.length]?.focus(); }
     else if (event.key === 'ArrowUp') { event.preventDefault(); list[(current - 1 + list.length) % list.length]?.focus(); }
     else if (event.key === 'Home') { event.preventDefault(); list[0]?.focus(); }
@@ -864,9 +901,9 @@ function setupMenu(triggerId, menuId) {
     else if (event.key === 'Tab') { closeAllMenus(); }
   });
   menu.addEventListener('click', event => {
-    if (!event.target.closest('.menu-item')) return;
+    if (!event.target.closest('.menu-item') || event.target.closest('#open-recent-button')) return;
     setTimeout(() => {
-      const dialogOpen = ['open-dialog', 'source-dialog', 'command-dialog', 'confirm-dialog', 'editor-action-dialog'].some(id => $(id)?.open);
+      const dialogOpen = ['open-dialog', 'source-dialog', 'command-dialog', 'confirm-dialog', 'editor-action-dialog', 'help-dialog'].some(id => $(id)?.open);
       const triggerForMenu = document.querySelector(`[aria-controls="${menuId}"]`);
       menu.hidden = true;
       triggerForMenu?.setAttribute('aria-expanded', 'false');
@@ -875,19 +912,19 @@ function setupMenu(triggerId, menuId) {
   });
 }
 document.addEventListener('pointerdown', event => {
-  if (!event.target.closest('.menu') && !event.target.closest('[aria-controls="open-menu"],[aria-controls="view-menu"],[aria-controls="format-menu"]')) closeAllMenus();
+  if (!event.target.closest('.menu') && !event.target.closest('[aria-haspopup="menu"]')) closeAllMenus();
 });
-setupMenu('open-chevron', 'open-menu');
+
 setupMenu('view-menu-button', 'view-menu');
 setupMenu('format-more', 'format-menu');
 
 $('home').onclick = goHome;
-$('open').onclick = $('welcome-open').onclick = openEntry;
+$('open-file').onclick = $('welcome-open').onclick = openEntry;
 $('open-file').onclick = openEntry;
 $('open-folder').onclick = openFolderEntry;
 $('picker-toggle').onclick = () => { toggleFilePicker(); };
-$('open').addEventListener('keydown', event => {
-  if (event.altKey && event.key === 'ArrowDown') { event.preventDefault(); $('open-chevron').click(); }
+$('open-file').addEventListener('keydown', event => {
+  if (event.altKey && event.key === 'ArrowDown') { event.preventDefault(); $('menu-file-button').click(); }
 });
 $('open-parent').onclick = () => pickerListing?.parent && browseTo(pickerListing.parent).catch(toast);
 $('open-go').onclick = () => browseTo($('open-path').value.trim()).catch(toast);
@@ -905,6 +942,7 @@ for (const tab of document.querySelectorAll('[data-dock-tab]')) {
   tab.addEventListener('click', () => toggleDock(tab.dataset.dockTab));
 }
 document.querySelector('[data-rail-action="find"]').addEventListener('click', () => {
+  if (activeFolder) { toggleDock('search'); return; }
   if ($('find-bar').hidden) openFind();
   else closeFind();
 });
@@ -938,9 +976,9 @@ document.addEventListener('keydown', event => {
   const control = event.ctrlKey || event.metaKey;
   if (control && event.shiftKey && event.key.toLowerCase() === 'p') { event.preventDefault(); $('command-dialog').open ? $('command-dialog').close() : openCommands(); return; }
   if (event.defaultPrevented) return;
-  if ($('command-dialog').open || $('confirm-dialog').open || $('open-dialog').open || $('source-dialog').open || $('editor-action-dialog').open) return;
+  if ($('help-dialog').open || $('command-dialog').open || $('confirm-dialog').open || $('open-dialog').open || $('source-dialog').open || $('editor-action-dialog').open) return;
   if (event.key === 'Escape') { if (!$('find-bar').hidden) closeFind(); else document.body.classList.remove('focus-mode'); return; }
-  if (event.key === 'F11') { event.preventDefault(); if (current.active) toggleFocus(); return; }
+  if (event.key === 'F11') { event.preventDefault(); invoke('toggle_fullscreen').catch(toast); return; }
   if (!control) return;
   const key = event.key.toLowerCase();
   if (key === 'z' || key === 'y') {
@@ -950,23 +988,25 @@ document.addEventListener('keydown', event => {
   else if (event.code === 'Equal' || key === '+' || key === '=') { event.preventDefault(); event.shiftKey ? zoomText(1) : zoomWindow(.1); }
   else if (event.code === 'Minus' || key === '-' || key === '_') { event.preventDefault(); event.shiftKey ? zoomText(-1) : zoomWindow(-.1); }
   else if (key === '0') { event.preventDefault(); event.shiftKey ? zoomText(0, true) : zoomWindow(0, true); }
-  else if (key === 'o') { event.preventDefault(); openEntry(); }
+  else if (key === 'o') { event.preventDefault(); event.shiftKey ? openFolderEntry() : openEntry(); }
   else if (key === 'b' && editor && (event.target.closest?.('#preview .ProseMirror') || event.target.closest?.('#preview'))) { event.preventDefault(); editor.command('bold'); }
-  else if (key === 'b' && activeFolder && !event.target.closest?.('#preview .ProseMirror')) { event.preventDefault(); setFolderVisible(!folderVisible); }
+  else if (key === 'b' && !event.target.closest?.('#preview .ProseMirror')) { event.preventDefault(); toggleDock('files'); }
   else if (key === 'n') { event.preventDefault(); newDocument(); }
   else if (key === 's') { event.preventDefault(); requestSave(event.shiftKey); }
-  else if (key === 'f') { event.preventDefault(); openFind(); }
-  else if (key === 'w') { event.preventDefault(); requestClose(); }
+  else if (key === 'f') { event.preventDefault(); event.shiftKey ? openFolderSearch() : openFind(); }
+  else if (key === 'h') { event.preventDefault(); openReplace(); }
+  else if (key === 'w') { event.preventDefault(); closeDocument(); }
+  else if (key === 'q') { event.preventDefault(); requestClose(); }
 });
 async function requestClose() { return enqueue(async () => { if (await allowDiscard()) await invoke('close_window'); }); }
 
 const SAMPLE = `# A quiet place for your words
 
-Folio opens **individual Markdown files**. Read comfortably, edit directly, and save right back to disk. Use the **Formatted** / **Markdown** switch for local syntax, **Lock** to protect against edits, and **Source** to inspect the exact Markdown.
+Folio opens **individual Markdown files**. Read comfortably, edit directly, and save right back to disk. Use the document dropdown to choose **Reading mode**, **Edit mode**, or **Source mode**. Turn on **Open as read-only** to protect the file in every mode.
 
 ## Make yourself at home
 
-Use the search button in the header, or **Ctrl+Shift+P**, to open the command window. Search for a theme and press Enter to apply it.
+Use the dock to search, browse headings and open files. Press **Ctrl+Shift+P** for the command window. Search for a theme and press Enter to apply it.
 
 > [!NOTE]
 > When Omarchy is detected, choose the **Omarchy** theme to follow your current desktop palette automatically.
@@ -1001,6 +1041,7 @@ Your files stay yours. This sample is just a starting point.[^1]
 `;
 
 async function start() {
+  initializeChrome(); initializeFolderSearch();
   zoomText(0); zoomWindow(0); renderRecent(); setDocumentWidth(wideLayout, false); setFormatToolbarVisible(formatToolbarVisible, false);
   syncOpenAffordance();
   applyTheme(selectedTheme, false); applyReadingFont(readingFont, false);
@@ -1013,6 +1054,8 @@ async function start() {
   const state = await invoke('bootstrap'); setPlatform(state.platform); omarchy = state.theme;
   if (preferences.get('theme', null) === null && omarchy) selectedTheme = 'omarchy';
   applyTheme(selectedTheme, false);
+  if (omarchy && !$('preference-theme').querySelector('[value=omarchy]')) { const option = document.createElement('option'); option.value = 'omarchy'; option.textContent = 'Omarchy'; $('preference-theme').append(option); }
+  applyDocumentPreferences();
   for (const path of state.paths) requestOpenLocation(path);
   await window.__TAURI__.webview.getCurrentWebview().onDragDropEvent(event => {
     const type = event.payload.type; $('drop-overlay').hidden = type !== 'over' && type !== 'enter';
