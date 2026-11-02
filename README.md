@@ -47,7 +47,7 @@ For native prerequisites, follow Tauri's [Linux](https://v2.tauri.app/start/prer
 
 On macOS, use Command in place of Ctrl for the listed shortcuts. The command window supports typing to filter, arrow keys, Enter, and Escape. Search for a theme by name, or select **Change theme…**. There are System, Adwaita Light, Adwaita Dark, Nord, Catppuccin Mocha, Rosé Pine, and Solarized Light themes. Theme, remote-image, reading-font, and text-size preferences persist locally. Recent files store paths, not document contents; they can be cleared from the command window. **Load remote images** / **Block remote images** toggles whether documents may contact image hosts; blocked images appear as a local placeholder. **Use serif reading text** / **Use sans-serif reading text** switches the document face without touching the interface.
 
-The outline supports collapsible sections and keyboard navigation: use Left/Right to collapse, expand, or move between parents and children, and Up/Down to move through headings. **Wrap** switches between compact and two-line titles. As you read, the outline keeps the current section away from its edges. Hover or keyboard-focus a rendered diagram to reveal **Expand**, then use Fit or zoom controls to inspect it; Escape closes the viewer.
+The outline supports collapsible sections and keyboard navigation: use Left/Right to collapse, expand, or move between parents and children, and Up/Down to move through headings. Long titles stay on one line and truncate with an ellipsis. As you read, the outline keeps the current section away from its edges. Hover or keyboard-focus a rendered diagram to reveal **Expand**, then use Fit or zoom controls to inspect it; Escape closes the viewer.
 
 ### Choose a file picker
 

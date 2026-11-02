@@ -95,13 +95,3 @@ $('outline-items').addEventListener('keydown', event => {
     focusOutlineEntry(entries[next]);
   }
 });
-
-function applyOutlineWrap(wrap) {
-  $('outline-items').classList.toggle('outline-wrap', wrap);
-  $('outline-wrap').setAttribute('aria-pressed', String(wrap));
-}
-applyOutlineWrap(preferences.get('outlineWrapTitles', true) !== false);
-$('outline-wrap').onclick = () => {
-  const wrap = $('outline-wrap').getAttribute('aria-pressed') !== 'true';
-  applyOutlineWrap(wrap); preferences.set('outlineWrapTitles', wrap);
-};
