@@ -54,7 +54,7 @@ const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n
     assert.ok((await page.locator('#preview a').first().getAttribute('href')).includes('https://example.com/changed'));
     // Math edits locally without switching the document to Markdown.
     const beforeMath = await text();
-    await page.locator('#preview .math-block .math-formula').dblclick();
+    await page.locator('#preview .math-block .math-formula').click();
     const mathInput = page.locator('#preview .math-block textarea');
     await mathInput.waitFor({ state: 'visible' });
     assert.equal(await page.evaluate(() => editor.isSource()), false, 'math edit stays in formatted mode');
@@ -66,15 +66,12 @@ const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n
     await page.locator('#preview .math-error').waitFor();
     assert.ok((await text()).includes('\\frac{1}{'));
     await page.keyboard.press('Control+z'); assert.equal(await text(), beforeMath);
-    // Image source edits in place through the same destination dialog.
-    await page.getByRole('button', { name: 'Edit image', exact: true }).click();
-    await page.waitForFunction(() => document.getElementById('editor-action-dialog').open);
-    assert.equal(await page.evaluate(() => editor.isSource()), false, 'image edit stays in the formatted editor');
-    const imageValue = await page.locator('#editor-action-value').inputValue();
-    assert.ok(imageValue.includes('https://example.com/tracker.png'), `dialog holds the image source, got ${JSON.stringify(imageValue)}`);
-    await page.locator('#editor-action-value').fill('https://example.com/tracker2.png');
-    await page.locator('#editor-action-form button[type="submit"]').click();
-    await page.waitForFunction(() => current.content.includes('https://example.com/tracker2.png'));
+    // Image source stays editable through the explicit double-click gesture.
+    await page.locator('.image-widget').dblclick();
+    await page.locator('.folio-source-edit').waitFor();
+    assert.ok((await page.locator('.folio-source-edit').textContent()).includes('tracker.png'), 'the source editor holds the image Markdown');
+    await page.keyboard.press('Escape');
+    await page.locator('.image-widget').waitFor();
 
     // No requests on view/hover/focus. A deliberate Load remains possible
     // under Lock and must not become a source mutation or broad permission.
@@ -84,7 +81,7 @@ const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n
     await page.waitForFunction(() => window.calls.some(call => call.command === 'render_markdown' && call.args.remoteImages === true));
     await page.waitForFunction(() => document.querySelector('.image-widget img') !== null);
     assert.equal(await text(), locked);
-    assert.deepEqual(requests, ['https://example.com/tracker2.png']);
+    assert.deepEqual(requests, ['https://example.com/tracker.png']);
     await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
 
     // Rich plain prose is continuous: split/join doesn't mount a textarea.

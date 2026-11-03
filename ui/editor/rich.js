@@ -280,6 +280,7 @@ function selectionAt(doc, anchor, head = anchor) {
 export function createRichEditor(parent, options) {
   let model = parseSource(options.content), view;
   let revision = 0, bookmark = null, tabSelection = null, commitOutcome = null, pendingTail = false;
+  let linkClickTimer = 0, inlineClickTimer = 0, formulaClickTimer = 0;
   const headingMetadata = createHeadingMetadata();
   headingMetadata.read(model);
   const refreshers = new Set();
@@ -347,6 +348,28 @@ export function createRichEditor(parent, options) {
   function isTabCellSelection(selection) {
     return Boolean(tabSelection) && selection.from === tabSelection.from && selection.to === tabSelection.to &&
       selection.anchor === tabSelection.anchor && selection.head === tabSelection.head;
+  }
+
+  // A source splice is only safe inside a cell. Replacing a range that spans
+  // two cells (or leaves the table) deletes delimiters and changes the column
+  // count, so those gestures are refused rather than corrupting the table.
+  function crossesTableCells(state = view?.state) {
+    if (!state) return false;
+    const selection = state.selection;
+    if (selection.empty || selection instanceof AllSelection) return false;
+    if (selection instanceof CellSelection) return true;
+    if (selection instanceof NodeSelection && selection.node.type === schema.nodes.table) return false;
+    if (!(selection instanceof TextSelection)) return false;
+    if (!isInTable(state)) {
+      // A prose -> prose selection may still enclose a whole table. Replacing
+      // that source interval would delete the table columns.
+      let enclosure = false;
+      state.doc.nodesBetween(selection.from, selection.to, node => { if (node.type === schema.nodes.table) enclosure = true; });
+      return enclosure;
+    }
+    const start = cellAround(selection.$from), end = cellAround(selection.$to);
+    if (!start || !end) return true;
+    return start.pos !== end.pos;
   }
 
   // Attach a canonical parse to the actual document produced by the committed
@@ -452,7 +475,6 @@ export function createRichEditor(parent, options) {
     if (bookmarkRange(state)) return { anchor: bookmark.anchor, head: bookmark.head };
     return { anchor: richToSource(model, state.selection.anchor), head: richToSource(model, state.selection.head) };
   };
-  const check = action => { if (!options.isLocked()) action(); };
   // In-buffer source access for links, math and images. The Markdown buffer
   // stays the truth; these helpers only select the exact syntax range in the
   // shared source projection for direct typing. No modal, no separate edit
@@ -505,54 +527,6 @@ export function createRichEditor(parent, options) {
     const range = destinationRange(from, to);
     if (!range) { options.message?.('This link destination cannot be edited safely.'); return; }
     void editDestination({ title: 'Edit link destination', ...range, fallbackFrom: range.from, fallbackTo: range.to });
-  }
-  function editLinkMarkdown(anchor, from, to) {
-    if (revealSourceBlock(anchor)) return;
-    if (options.isLocked()) return;
-    const mapped = verifiedSourceRange(from, to);
-    if (!mapped) { options.message('This link cannot be mapped safely to Markdown.'); return; }
-    let match = null;
-    markdownParser.configure(GFM).parse(model.source).iterate({ enter(node) {
-      if (node.name === 'Link' && node.from <= mapped.from && node.to >= mapped.to && (!match || node.to - node.from < match.to - match.from)) match = { from: node.from, to: node.to };
-    } });
-    if (!match) { options.message('This link cannot be mapped safely to Markdown.'); return; }
-    const use = model.source.slice(match.from, match.to);
-    const reference = /^\[([^\[\]\\]+)\](?:\[([^\[\]\\]*)\])?$/.exec(use);
-    if (reference) {
-      const normalize = label => label.trim().replace(/\s+/g, ' ').toLowerCase();
-      const label = normalize(reference[2] || reference[1]);
-      let definition = null;
-      markdownParser.configure(GFM).parse(model.source).iterate({ enter(node) {
-        if (node.name !== 'LinkReference' || definition) return;
-        const raw = model.source.slice(node.from, node.to);
-        const found = /^\[([^\[\]\\]+)\]:/.exec(raw);
-        if (found && normalize(found[1]) === label) definition = { from: node.from, to: node.to };
-      } });
-      if (!definition) { options.message('This reference definition cannot be mapped safely.'); return; }
-      match = definition;
-    }
-    const { from: start, to: end } = match, original = model.source.slice(start, end), openedRevision = revision;
-    const input = document.createElement('textarea'); input.className = 'inline-markdown-source link-markdown-source'; input.setAttribute('aria-label', 'Link Markdown');
-    input.value = original; input.rows = 1; input.spellcheck = false;
-    const box = anchor.getBoundingClientRect();
-    input.style.left = `${box.left}px`; input.style.top = `${box.top}px`;
-    document.body.append(input); input.focus();
-    let finished = false;
-    const finish = apply => {
-      if (finished) return; finished = true;
-      if (apply && input.value !== original && !options.isLocked()) {
-        if (revision !== openedRevision || model.source.slice(start, end) !== original) options.message('The link changed while editing; the draft was not applied.');
-        else replaceLogicalSelection(input.value, 'command', { from: start, to: end, all: false, collapsed: false });
-      }
-      input.remove();
-    };
-    input.addEventListener('keydown', e => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { finish(true); return; }
-      e.stopPropagation();
-      if (e.key === 'Escape') { e.preventDefault(); finish(false); view.focus(); }
-      else if (e.key === 'Enter') { e.preventDefault(); finish(true); view.focus(); }
-    });
-    input.addEventListener('blur', () => finish(true));
   }
   function revealCurrentSelection() {
     if (options.isLocked() || !options.revealSource) return;
@@ -629,6 +603,24 @@ export function createRichEditor(parent, options) {
     const outcome = replaceLogicalSelection(insert, 'command', { from: range.from, to: range.to, all: false, collapsed: range.from === range.to }, { anchor, head });
     return outcome.committed;
   }
+  // The checkbox lives in a list_item node view, but only one source byte is
+  // allowed to change. Locate the verified `[ ]`/`[x]` marker through the
+  // ledger so toggling never serializes the whole list (which used to drop
+  // blank lines and turn a loose list tight).
+  function listItemTaskMarker(pos) {
+    let ledger = model.ledger;
+    if (!ledger) {
+      try { ledger = model.ledger = buildLedger(model.source, model.doc, { segments: model.segments }); }
+      catch { return null; }
+    }
+    const owner = ledger?.owners?.find(entry => entry.pmFrom === pos && entry.type === 'list_item' && entry.confidence === 'exact');
+    if (!owner) return null;
+    const raw = model.source.slice(owner.sourceFrom, owner.sourceTo);
+    const match = /^((?:[ \t]*>[ \t]?)*[ \t]*(?:[-+*]|\d{1,9}[.)])[ \t]+)\[([ xX])\]/.exec(raw);
+    if (!match) return null;
+    const from = owner.sourceFrom + match[1].length + 1;
+    return { from, to: from + 1, checked: match[2] !== ' ' };
+  }
   function listItem(node, editor, getPos) {
     const dom = document.createElement('li'), contentDOM = document.createElement('div'); contentDOM.className = 'list-content';
     let checkbox;
@@ -639,7 +631,15 @@ export function createRichEditor(parent, options) {
         if (!checkbox) {
           checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.contentEditable = 'false'; checkbox.setAttribute('aria-label', 'Toggle task'); dom.prepend(checkbox);
           checkbox.addEventListener('mousedown', event => event.preventDefault());
-          checkbox.addEventListener('change', () => check(() => editor.dispatch(editor.state.tr.setNodeMarkup(getPos(), null, { ...node.attrs, checked: checkbox.checked }).setMeta('folio-action', true))));
+          checkbox.addEventListener('change', () => {
+            if (options.isLocked()) { checkbox.checked = node.attrs.checked; return; }
+            const wanted = Boolean(checkbox.checked);
+            if (wanted === Boolean(node.attrs.checked)) return;
+            const marker = listItemTaskMarker(getPos());
+            if (!marker) { checkbox.checked = Boolean(node.attrs.checked); return; }
+            const outcome = replaceLogicalSelection(wanted ? 'x' : ' ', 'task', { from: marker.from, to: marker.to, all: false, collapsed: false });
+            if (!outcome.committed) checkbox.checked = Boolean(node.attrs.checked);
+          });
         }
         checkbox.checked = node.attrs.checked; checkbox.disabled = options.isLocked();
       } else if (checkbox) { checkbox.remove(); checkbox = null; }
@@ -711,14 +711,16 @@ export function createRichEditor(parent, options) {
     }, { passive: false });
     panel.append(input, apply, cancel);
     const openEditor = () => {
-      if (revealSourceBlock(dom)) return;
       if (options.isLocked()) return;
       if (!panel.hidden) return;
       input.value = node.attrs.tex; panel.hidden = false; input.focus();
     };
-    formula.addEventListener('dblclick', event => {
+    formula.addEventListener('click', event => {
       if (event.button !== 0 || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
-      event.preventDefault(); event.stopPropagation(); openEditor();
+      event.preventDefault(); event.stopPropagation();
+      if (event.detail > 1) { clearTimeout(formulaClickTimer); return; }
+      clearTimeout(formulaClickTimer);
+      formulaClickTimer = setTimeout(() => { formulaClickTimer = 0; openEditor(); }, 240);
     });
     // Shift-click on a formula extends the selection *through* it. Letting the
     // editor resolve the click on its own lands the head on the atom boundary,
@@ -763,6 +765,15 @@ export function createRichEditor(parent, options) {
   }
   function imageView(node, editorView, getPos) {
     const dom = document.createElement('span'); dom.className = 'image-widget'; dom.contentEditable = 'false'; let generation = 0;
+    dom.addEventListener('click', event => {
+      if (event.button !== 0 || options.isLocked() || event.target.closest('button,textarea')) return;
+      let pos;
+      try { pos = getPos(); } catch { return; }
+      const selection = Selection.near(editorView.state.doc.resolve(pos + node.nodeSize), -1);
+      if (!selection) return;
+      editorView.dispatch(editorView.state.tr.setSelection(selection).scrollIntoView());
+      editorView.focus();
+    });
     dom.addEventListener('dblclick', event => {
       if (options.isLocked() || event.target.closest('button,textarea')) return;
       let pos;
@@ -1102,6 +1113,40 @@ export function createRichEditor(parent, options) {
     }
     try { view?.domObserver.flush(); } catch {}
   }
+  // A native drag over the visible glyphs of `**bold**` or `[label](url)` can
+  // map its end to the closing syntax and return an unbalanced fragment. For
+  // visual selections, copy the visible text (or a balanced fragment) rather
+  // than half a delimiter pair. Explicit source selections use the bookmark
+  // path above and remain byte-exact.
+  function balancedClipboardRange(from, to) {
+    const runs = model.ledger?.runs;
+    if (!runs || from >= to) return { from, to };
+    const containing = runs.filter(run => (run.kind === 'text' || run.kind === 'atom') &&
+      run.sourceFrom <= from && run.sourceTo >= from);
+    if (!containing.length) return { from, to };
+    const run = containing.sort((a, b) => b.sourceFrom - a.sourceFrom)[0];
+    const marked = Boolean(run.marksKey);
+    const tail = model.source.slice(run.sourceTo, to);
+    if (to > run.sourceTo && (/^[*_~`]+$/.test(tail) || /^\]\([^)\n]*\)$/.test(tail))) to = run.sourceTo;
+    if (marked && from > run.sourceFrom && to > run.sourceTo) from = run.sourceFrom;
+    return { from, to };
+  }
+  // Deleting the visible text of a marked run should take its delimiters with
+  // it, otherwise a cut leaves an empty `****`/`~~~~`/`` pair behind.
+  function cutExpandedRange(range) {
+    const runs = model.ledger?.runs;
+    if (!runs || range.from >= range.to) return range;
+    const run = runs.find(item => item.kind === 'text' && item.sourceFrom === range.from && item.sourceTo === range.to);
+    if (!run) return range;
+    const delim = view.state.doc.rangeHasMark(run.pmFrom, run.pmTo, schema.marks.strong) ? '**'
+      : view.state.doc.rangeHasMark(run.pmFrom, run.pmTo, schema.marks.em) ? '*'
+      : view.state.doc.rangeHasMark(run.pmFrom, run.pmTo, schema.marks.strike) ? '~~'
+      : view.state.doc.rangeHasMark(run.pmFrom, run.pmTo, schema.marks.code) ? '`' : null;
+    if (!delim) return range;
+    const from = range.from - delim.length, to = range.to + delim.length;
+    if (from < 0 || model.source.slice(from, range.from) !== delim || model.source.slice(range.to, to) !== delim) return range;
+    return { ...range, from, to };
+  }
   function markdownClipboardRange() {
     const logical = bookmarkRange(view.state);
     if (logical && logical.from < logical.to) return logical;
@@ -1137,7 +1182,7 @@ export function createRichEditor(parent, options) {
       try {
         const from = endpoint(range.startContainer, range.startOffset, false);
         const to = endpoint(range.endContainer, range.endOffset, true);
-        if (Number.isInteger(from) && Number.isInteger(to) && from < to) return { from, to };
+        if (Number.isInteger(from) && Number.isInteger(to) && from < to) return balancedClipboardRange(from, to);
       } catch {}
     }
     if (view.state.selection instanceof AllSelection) return { from: 0, to: model.source.length };
@@ -1313,6 +1358,7 @@ export function createRichEditor(parent, options) {
   }
   function syncFolioHighlight() {
     if (!view) return;
+    options.onContext?.(currentContext(view.state));
     const native = window.getSelection();
     const nativeRange = native && native.rangeCount && !native.isCollapsed ? native.getRangeAt(0) : null;
     view.dom.querySelectorAll('.mermaid-host, .math-block, .math-inline, .image-widget').forEach(node => {
@@ -1454,7 +1500,29 @@ export function createRichEditor(parent, options) {
       const anchor = event.target.closest('a');
       if (!anchor || event.button !== 0) return;
       event.preventDefault(); event.stopPropagation();
-      if (event.ctrlKey || event.metaKey || options.isLocked()) options.openLink(anchor.getAttribute('href') || '');
+      if (event.ctrlKey || event.metaKey || options.isLocked()) { options.openLink(anchor.getAttribute('href') || ''); return; }
+      let pos;
+      try { pos = getPos(); } catch { return; }
+      const owner = richMapping(model, pos, { bias: 'right' })?.owner;
+      if (!owner || owner.confidence !== 'exact' || owner.supported === false || !options.editValue) {
+        options.message?.('This inline HTML cannot be edited safely.');
+        return;
+      }
+      const from = owner.sourceFrom, to = owner.sourceTo, original = model.source.slice(from, to);
+      if (original !== node.attrs.source) return;
+      if (event.detail > 1) { clearTimeout(inlineClickTimer); return; }
+      clearTimeout(inlineClickTimer);
+      const clickedRevision = revision;
+      inlineClickTimer = setTimeout(() => {
+        inlineClickTimer = 0;
+        void options.editValue({ title: 'Edit inline HTML', value: original }).then(next => {
+          if (next === null || next === undefined || next === original) return;
+          if (revision !== clickedRevision || model.source.slice(from, to) !== original ||
+              !replaceLogicalSelection(next, 'command', { from, to, all: false, collapsed: false }).committed) {
+            options.message?.('This inline HTML could not be updated safely.');
+          }
+        });
+      }, 240);
     });
     const render = () => {
       dom.replaceChildren();
@@ -1912,8 +1980,34 @@ export function createRichEditor(parent, options) {
       if (!range || range.collapsed) return false;
       if (!dispatch) return true;
       if (options.isLocked()) return true;
+      if (crossesTableCells(state)) {
+        options.message?.('Deleting across table cells is not supported. Edit within one cell.');
+        return true;
+      }
       return replaceLogicalSelection('', 'delete', range).handled;
     };
+  }
+  // A fence typed as a complete paragraph (` ```js `) becomes a code block on
+  // Enter. Without this, the paragraph serializer escaped the backticks and a
+  // natural "fence, language, Enter, code" flow produced a literal paragraph.
+  function enterFence(state, dispatch) {
+    if (!(state.selection instanceof TextSelection) || !state.selection.empty) return false;
+    const $from = state.selection.$from;
+    if ($from.parent.type !== schema.nodes.paragraph || $from.depth !== 1) return false;
+    const match = /^(```+|~~~+)([\w-]*)$/.exec($from.parent.textContent);
+    if (!match) return false;
+    if (!dispatch) return true;
+    if (options.isLocked()) return true;
+    const from = $from.before(1), to = $from.after(1);
+    const block = schema.nodes.code_block.create({ params: match[2] || '' });
+    const paragraph = schema.nodes.paragraph.create();
+    let tr;
+    try {
+      tr = state.tr.replaceWith(from, to, Fragment.fromArray([block, paragraph]));
+      tr = tr.setSelection(TextSelection.near(tr.doc.resolve(from + 1), 1));
+    } catch { return false; }
+    dispatch(tr.scrollIntoView());
+    return true;
   }
   function enterLogical(state, dispatch) {
     if (isTabCellSelection(state.selection)) return false;
@@ -1960,7 +2054,13 @@ export function createRichEditor(parent, options) {
       // only the first closing star has been typed.
       [/(?:(?<=\*\*)|(?<!\*))\*([^*\n]+)\*$/, 'em'],
       [/`([^`\n]+)`$/, 'code'], [/~~([^~\n]+)~~$/, 'strike']
-    ].map(([pattern, mark]) => new InputRule(pattern, (state, match, start, end) => state.tr.insertText(match[1], start, end).addMark(start, start + match[1].length, schema.marks[mark].create()).removeStoredMark(schema.marks[mark]))),
+    ].map(([pattern, mark]) => new InputRule(pattern, (state, match, start, end) => {
+      // CommonMark does not treat space-flanked delimiters as emphasis. The
+      // regex alone turned `2 * 3 * 4` into `2  *3*  4`; require the value to
+      // touch its delimiters before converting. Inline code keeps spaces.
+      if (mark !== 'code' && (!match[1] || /^\s|\s$/.test(match[1]))) return null;
+      return state.tr.insertText(match[1], start, end).addMark(start, start + match[1].length, schema.marks[mark].create()).removeStoredMark(schema.marks[mark]);
+    })),
     new InputRule(/\$([^$\n]+)\$$/, (state, match, start, end) => state.tr.replaceWith(start, end, schema.nodes.math_inline.create({ tex: match[1] }))),
     wrappingInputRule(/^\s*>\s$/, schema.nodes.blockquote),
     wrappingInputRule(/^\s*([-+*])\s$/, schema.nodes.bullet_list, match => ({ bullet: match[1], tight: true })),
@@ -1985,6 +2085,7 @@ export function createRichEditor(parent, options) {
         widgets.push(Decoration.widget(state.doc.content.size, () => {
           const input = document.createElement('button');
           input.type = 'button'; input.className = 'editor-trailing-input';
+          input.tabIndex = -1;
           input.setAttribute('aria-label', 'Write a new paragraph at the end of the document');
           const refresh = () => { input.disabled = options.isLocked(); };
           input.folioRefresh = refresh; refreshers.add(refresh); refresh();
@@ -2002,7 +2103,8 @@ export function createRichEditor(parent, options) {
           return input;
         }, { side: 1, stopEvent: () => true, destroy: node => refreshers.delete(node.folioRefresh) }));
         const { selection } = state;
-        if (!options.isLocked() && selection.empty && selection.$from.depth === 1
+        const emptyDocument = state.doc.childCount === 1 && state.doc.firstChild?.type === schema.nodes.paragraph && state.doc.firstChild.content.size === 0;
+        if (!options.isLocked() && !emptyDocument && selection.empty && selection.$from.depth === 1
             && selection.$from.parent.type === schema.nodes.paragraph
             && selection.$from.parent.content.size === 0
             && selection.$from.index(0) === state.doc.childCount - 1) {
@@ -2036,7 +2138,7 @@ export function createRichEditor(parent, options) {
         'Mod-a': selectAllLogical, 'F2': () => focusHeadingMarker(),
         Backspace: deleteLogical(true), Delete: deleteLogical(false),
         'Shift-Enter': insertSoftBreak,
-        Enter: chainCommands(enterLogical, tableEnter, completeDivider, splitListItem(schema.nodes.list_item), baseKeymap.Enter),
+        Enter: chainCommands(enterFence, enterLogical, tableEnter, completeDivider, splitListItem(schema.nodes.list_item), baseKeymap.Enter),
         Tab: chainCommands(tabCell(1), sinkListItem(schema.nodes.list_item)), 'Shift-Tab': chainCommands(tabCell(-1), liftListItem(schema.nodes.list_item)),
         'Mod-Enter': chainCommands(exitTableForward, exitCode),
         'Shift-Mod-Enter': exitTableBackward
@@ -2084,7 +2186,12 @@ export function createRichEditor(parent, options) {
         break;
       }
     }
-    return { table: isInTable(state), heading };
+    const activeMarks = state.storedMarks || $from.marks();
+    const marks = ['strong', 'em', 'code'].filter(name => activeMarks.some(mark => mark.type === schema.marks[name]));
+    if (!marks.length && !state.selection.empty) {
+      for (const name of ['strong', 'em', 'code']) if (state.doc.rangeHasMark(state.selection.from, state.selection.to, schema.marks[name])) marks.push(name);
+    }
+    return { table: isInTable(state), heading, code: $from.parent.type.spec.code === true, marks };
   }
   let activePopup = null;
   function closePopup(restore = false) {
@@ -2343,13 +2450,27 @@ export function createRichEditor(parent, options) {
       const query = context.query.trim().toLowerCase();
       filtered = Boolean(query);
       displayed = filtered ? SLASH_LEAVES.filter(item => matchesQuery(item, query)) : SLASH_BLOCKS;
-      if (!displayed.length) { closePopup(); return; }
       if (filtered) closeSub();
       else if (openIndex >= 0 && !displayed[openIndex]?.children) closeSub();
       if (filtered && query !== lastQuery) { active = 0; activeSub = 0; }
       lastQuery = query;
-      active = Math.min(Math.max(0, active), displayed.length - 1);
+      active = displayed.length ? Math.min(Math.max(0, active), displayed.length - 1) : 0;
       list.replaceChildren();
+      if (!displayed.length) {
+        // Keep the picker alive with an explicit empty state. Closing it here
+        // meant a mistyped query silently removed the picker, and backspacing
+        // could not bring it back.
+        const empty = document.createElement('div');
+        empty.className = 'folio-slash-empty';
+        empty.setAttribute('role', 'status');
+        empty.textContent = 'No blocks match';
+        list.append(empty);
+        title.textContent = 'Blocks';
+        submenu.hidden = true;
+        trigger.removeAttribute('aria-activedescendant');
+        place();
+        return;
+      }
       displayed.forEach((item, index) => list.append(rowFor(item, index, false)));
       title.textContent = filtered ? 'Blocks' : 'Insert block';
       if (!filtered && openIndex >= 0) renderSub();
@@ -2412,7 +2533,7 @@ export function createRichEditor(parent, options) {
           return true;
         }
         const item = displayed[active];
-        if (!item) return true;
+        if (!item) { closePopup(); return false; }
         if (item.children) openSub(active, true);
         else choose(item);
         return true;
@@ -2554,6 +2675,10 @@ export function createRichEditor(parent, options) {
     },
     handleTextInput(editor, from, to, text) {
       if (editor.composing) return false;
+      if (crossesTableCells(editor.state)) {
+        options.message?.('Typing across table cells is not supported. Edit within one cell.');
+        return true;
+      }
       if (pendingTail && editor.state.selection.$from.parent.content.size === 0 && from === editor.state.doc.content.size - 1) {
         pendingTail = false;
         const prefix = model.source.length ? (model.source.endsWith('\n') ? '\n' : '\n\n') : '';
@@ -2608,8 +2733,21 @@ export function createRichEditor(parent, options) {
       // clipboard also carries HTML. Round-tripping HTML through the rich
       // schema dropped fenced-code info strings, rewrote list spacing and
       // mangled TeX. HTML remains the fallback only when no text is offered.
-      const text = data.getData('text/plain');
+      let text = data.getData('text/plain');
       if (!text) return false;
+      if (crossesTableCells(editor.state)) {
+        event.preventDefault();
+        options.message?.('Pasting across table cells is not supported. Paste inside one cell.');
+        return true;
+      }
+      // A cell is GFM inline content: a raw newline would split the row. Use
+      // the cell's existing hard-break spelling instead.
+      if (isInTable(editor.state) && editor.state.selection instanceof TextSelection) {
+        text = text.replace(/\\*\|/g, match => {
+          const slashes = match.length - 1;
+          return '\\'.repeat(slashes + (slashes % 2 === 0 ? 1 : 0)) + '|';
+        }).replace(/\r\n|\r|\n/g, '<br>');
+      }
       const logical = logicalRange(editor.state);
       const caret = sourceSelection(editor.state);
       const range = logical || { from: Math.min(caret.anchor, caret.head), to: Math.max(caret.anchor, caret.head), all: false };
@@ -2660,11 +2798,29 @@ export function createRichEditor(parent, options) {
         return copyMarkdownSelection(event);
       },
       cut(editor, event) {
-        // Cutting a reading range must never mutate the document: serve the
-        // rendered text as a copy and keep the Markdown intact.
-        if (renderedRangeActive() && copyMarkdownSelection(event)) return true;
-        const range = logicalRange(editor.state);
-        if (!range || range.collapsed || !event.clipboardData) return false;
+        if (!event.clipboardData) return false;
+        const crossed = crossesTableCells(editor.state);
+        const range = logicalRange(editor.state) || markdownClipboardRange();
+        // A reading/locked range is copy-only. This is no longer used as a
+        // blanket escape hatch in Edit mode: crossing a rendered atom used to
+        // make Ctrl+X a silent no-op there.
+        if (options.isLocked()) {
+          if (renderedRangeActive()) return copyMarkdownSelection(event);
+          if (!range || range.collapsed) return false;
+          try { event.clipboardData.setData('text/plain', model.source.slice(range.from, range.to)); }
+          catch {}
+          event.preventDefault();
+          return true;
+        }
+        if (crossed) {
+          if (range && !range.collapsed) {
+            try { event.clipboardData.setData('text/plain', model.source.slice(range.from, range.to)); } catch {}
+          }
+          event.preventDefault();
+          options.message?.('Cutting across table cells is not supported. Copy, then clear the cells individually.');
+          return true;
+        }
+        if (!range || range.collapsed) return false;
         const text = model.source.slice(range.from, range.to);
         try { event.clipboardData.setData('text/plain', text); }
         catch {
@@ -2672,12 +2828,12 @@ export function createRichEditor(parent, options) {
           options.message('The clipboard could not be written. Your document is preserved.');
           return true;
         }
-        const outcome = replaceLogicalSelection('', 'cut', range);
+        const outcome = replaceLogicalSelection('', 'cut', cutExpandedRange(range));
         if (!outcome.committed) {
           // Rejection is a handled path: stop the browser's default cut so it
           // cannot mutate the DOM after the source splice was refused.
-          if (outcome.handled) event.preventDefault();
-          return outcome.handled;
+          event.preventDefault();
+          return true;
         }
         event.preventDefault();
         return true;
@@ -2685,6 +2841,26 @@ export function createRichEditor(parent, options) {
       click(editor, event) {
       const anchor = event.target.closest('a'); if (!anchor) return false;
       event.preventDefault(); const href = anchor.getAttribute('href') || '';
+      const inline = anchor.closest('.html-inline');
+      if (inline && !options.isLocked()) {
+        // An inline HTML link is an atom; a primary click edits its exact
+        // source instead of following it. Reading/locked mode still opens.
+        let pos = editor.posAtDOM(inline, 0), node = editor.state.doc.nodeAt(pos);
+        if (node?.type.name !== 'raw_inline') {
+          const $pos = editor.state.doc.resolve(pos);
+          node = $pos.parent.childAfter($pos.parentOffset).node;
+        }
+        const owner = node?.type.name === 'raw_inline'
+          ? model.ledger?.owners?.find(item => item.type === 'raw_inline' && item.pmFrom <= pos && item.pmTo >= pos) : null;
+        if (node && owner && options.editValue) {
+          void options.editValue({ title: 'Edit inline HTML', value: node.attrs.source }).then(next => {
+            if (next === null || next === undefined || next === node.attrs.source) return;
+            const outcome = replaceLogicalSelection(next, 'command', { from: owner.sourceFrom, to: owner.sourceTo, all: false, collapsed: false });
+            if (!outcome.committed) options.message?.('This inline HTML could not be updated safely.');
+          });
+          return true;
+        }
+      }
       if (event.ctrlKey || event.metaKey || options.isLocked()) options.openLink(href);
       else {
         const pos = editor.posAtDOM(anchor, 0), $pos = editor.state.doc.resolve(pos), ranges = [];
@@ -2694,8 +2870,12 @@ export function createRichEditor(parent, options) {
         let from = ranges[index].from, to = ranges[index].to;
         for (let i = index - 1; i >= 0 && ranges[i].to === from; i--) from = ranges[i].from;
         for (let i = index + 1; i < ranges.length && ranges[i].from === to; i++) to = ranges[i].to;
-        if (event.altKey) editLinkMarkdown(anchor, from, to);
-        // Ordinary clicks leave links rendered; double-click reveals source.
+        // A primary click opens the destination editor, but wait long enough
+        // for a double-click to reveal the block's source instead. Ctrl/Cmd
+        // click (or any click while locked/reading) opens the link.
+        if (event.detail > 1) { clearTimeout(linkClickTimer); return true; }
+        clearTimeout(linkClickTimer);
+        linkClickTimer = setTimeout(() => { linkClickTimer = 0; revealLinkSource(from, to, href); }, 240);
       }
       return true;
     }, auxclick(editor, event) { const anchor = event.target.closest('a'); if (!anchor || event.button !== 1) return false; event.preventDefault(); options.openLink(anchor.getAttribute('href') || ''); return true; } }
@@ -3643,7 +3823,7 @@ export function createRichEditor(parent, options) {
     const control = target.closest('button,input,textarea,select');
     if (control && !control.matches('.code-fence-info')) return;
     const sourceTarget = event.type === 'dblclick'
-      ? target.closest('h1,h2,h3,h4,h5,h6,a,.math-formula,.code-container,.image-widget,.html-inline,.extension-preview,blockquote,li,ul,ol,table,hr,strong,em,s,code')
+      ? target.closest('h1,h2,h3,h4,h5,h6,a,.math-formula,.code-container,.image-widget,.html-inline,.extension-preview,blockquote,li,ul,ol,table,hr')
       : target.closest('.code-fence-info');
     if (sourceTarget && revealSourceBlock(sourceTarget)) { event.preventDefault(); event.stopImmediatePropagation(); }
     else if (model.sourceEdit && event.type === 'click' && !target.closest('button,input,textarea')) {
@@ -3669,6 +3849,7 @@ export function createRichEditor(parent, options) {
     if (event.target.matches?.('.code-fence-info')) sourceGesture(event);
   }, true);
   refreshers.add(refreshTableChrome);
+  options.onContext?.(currentContext(view.state));
   try { syncTableChrome(); } catch {}
   // A drag ending outside the editor (or cancelled) still settles the guard.
   window.addEventListener('pointerup', releaseSelectionGuard);
@@ -3688,6 +3869,7 @@ export function createRichEditor(parent, options) {
   return {
     view,
     headings: () => headingMetadata.read(model),
+    context: () => currentContext(view.state),
     captureSelection() {
       captureDOMSelection();
     },
@@ -3754,10 +3936,40 @@ export function createRichEditor(parent, options) {
         'insert-column-left': addColumnBefore, 'insert-column-right': addColumnAfter
       };
       for (const op of TABLE_OP_NAMES) commands[op] = resolveTableOp(op);
+      // Block-level commands write Markdown block syntax. Inside a table cell
+      // that syntax cannot render (a cell is GFM inline content), and inside a
+      // code block `setBlockType` would replace the fence with prose. Reject
+      // both rather than silently corrupting the source.
+      const blockCommands = new Set(['paragraph', 'heading', 'bullet', 'numbered', 'quote', 'table']);
+      let inTable = isInTable(view.state);
+      const { $from, from, to } = view.state.selection;
+      let inCode = $from.parent.type.spec.code === true;
+      if (blockCommands.has(name) && from < to) {
+        view.state.doc.nodesBetween(from, to, node => {
+          if (node.type.spec.tableRole === 'table') inTable = true;
+          if (node.type.spec.code) inCode = true;
+          return !inTable && !inCode;
+        });
+      }
+      if (blockCommands.has(name) && (inTable || inCode)) {
+        options.message?.(inTable
+          ? 'Block formatting is not available inside a table cell.'
+          : 'Block formatting is not available inside a code block.');
+        return;
+      }
       if (name === 'table') {
         const cell = header => schema.nodes[header ? 'table_header' : 'table_cell'].createAndFill();
         const table = schema.nodes.table.create(null, [schema.nodes.table_row.create(null, [cell(true), cell(true)]), schema.nodes.table_row.create(null, [cell(false), cell(false)])]);
-        view.dispatch(view.state.tr.replaceSelectionWith(table).scrollIntoView());
+        let tr = view.state.tr.replaceSelectionWith(table);
+        // Drop the caret into the first cell so Insert > Table is immediately
+        // usable. Find the inserted node by identity; mapping the old caret
+        // across a block insertion is ambiguous when the paragraph is split.
+        let tableFrom = -1;
+        tr.doc.descendants((node, position) => { if (node === table) tableFrom = position; });
+        try {
+          if (tableFrom >= 0) tr = tr.setSelection(TextSelection.near(tr.doc.resolve(Math.min(tableFrom + 3, tr.doc.content.size)), 1));
+        } catch {}
+        view.dispatch(tr.scrollIntoView());
       } else if (name === 'math' || name === 'link' || name === 'image') {
         // Author real Markdown syntax at the exact source selection. This is
         // what makes the toolbar buttons usable rather than only exposing an

@@ -221,11 +221,11 @@
           <button class="button small ghost" data-editor-command="italic" aria-label="Italic" title="Italic (Ctrl+I)"><em>I</em></button>
           <button class="button small ghost" data-editor-command="code">Code</button>
           <button class="button small ghost" data-editor-command="heading">Heading</button>
-          <button class="button small ghost" data-editor-command="bullet">List</button>
-          <button class="button small ghost" data-editor-command="numbered">1. List</button>
+          <button class="button small ghost" data-editor-command="bullet">Bullet</button>
+          <button class="button small ghost" data-editor-command="numbered">Numbered</button>
           <button class="button small ghost" data-editor-command="quote">Quote</button>
           <div class="menu-group format-menu-group">
-            <button id="format-more" class="button small ghost" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="format-menu">Insert</button>
+            <button id="format-more" class="button small ghost" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="format-menu">Insert<svg class="icon format-more-caret" aria-hidden="true"><use href="#i-caret"/></svg></button>
             <div id="format-menu" class="menu" role="menu" hidden>
               <button class="menu-item" role="menuitem" data-editor-command="link">Link</button>
               <button class="menu-item" role="menuitem" data-editor-command="image">Image</button>
@@ -288,7 +288,7 @@
 
   <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title"><h2 id="confirm-title"></h2><p id="confirm-message"></p><div id="confirm-actions"></div></dialog>
   <dialog id="source-dialog" class="source-dialog" aria-labelledby="source-snapshot-title">
-    <div class="source-dialog-head"><h2 id="source-snapshot-title">Source snapshot</h2><button id="source-snapshot-close" class="button">Close</button></div>
+    <div class="source-dialog-head"><h2 id="source-snapshot-title">Source snapshot</h2><button id="source-snapshot-close" class="icon-button" aria-label="Close source snapshot"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div>
     <p id="source-snapshot-status" role="status"></p>
     <textarea id="source-snapshot-text" readonly aria-label="Exact Markdown source snapshot" spellcheck="false"></textarea>
     <button id="source-snapshot-copy" class="button suggested">Copy Markdown</button>

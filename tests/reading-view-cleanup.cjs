@@ -1,3 +1,7 @@
+// HISTORICAL: predates the unified editor and the current exact-Markdown
+// clipboard contract. Superseded by editor-rendered-selection-contract,
+// editor-no-source-buttons and the editor-audit-* regressions; not part of
+// the default test chain.
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const os = require('node:os');

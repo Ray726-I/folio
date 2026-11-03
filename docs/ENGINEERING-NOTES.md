@@ -19,6 +19,19 @@ should outlive any one feature pass. Current performance numbers live in
   Structural or ambiguous edits fall back to a validated parse. The
   source-first path must fail closed rather than guess when the mapping is not
   exact.
+- The incremental path validates only the enclosing top-level block, so typing
+  in a list item, table cell, blockquote or code block does not reparse the
+  whole document. `editor.stats()` exposes parse and local-path counters for
+  the performance regressions; ordinary typing must keep `edit.full` at zero.
+- Soft line breaks are `soft_break` inline atoms that serialize back to `\n`,
+  not spaces. They must stay outside the serializer's escaping path so Enter
+  and formatting preserve untouched wrapped lines.
+- Source mode is source-only: textarea input updates the canonical buffer and
+  undo history without synchronizing the hidden rich editor. `setSourceOnly(false)`
+  catches the rich view up once on re-entry to Edit.
+- Block commands are context-checked. Heading/list/quote/table must not write
+  literal syntax into a table cell, replace a code fence, or splice a
+  selection that spans table cells; those gestures fail closed with a message.
 - The Source snapshot is the exact live buffer, including unsaved changes, and
   works even when no rich editor is mounted.
 - Rich editing is capped at 2 MiB (`MAX_RICH_LENGTH` in `ui/editor.js`). Larger

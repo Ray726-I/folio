@@ -117,8 +117,8 @@ function pastePlainText(page, text, html = null) {
         const to = source.indexOf('2') + 1;
         await selectSource(page, from, to);
         await page.keyboard.type('X');
-        assert.equal(await content(page), expectedSplice(source, from, to, 'X'),
-          'a forward selection across cells must splice the exact source interval');
+        assert.equal(await content(page), source,
+          'a forward selection across cells is refused to preserve the table');
         assert.deepEqual(errors, []);
       } finally { await session.close(); }
     }
@@ -130,8 +130,8 @@ function pastePlainText(page, text, html = null) {
         const to = source.indexOf('2') + 1;
         await selectSource(page, to, from);
         await page.keyboard.type('Y');
-        assert.equal(await content(page), expectedSplice(source, from, to, 'Y'),
-          'a backward selection across cells must splice the same literal interval');
+        assert.equal(await content(page), source,
+          'a backward selection across cells is refused to preserve the table');
         assert.deepEqual(errors, []);
       } finally { await session.close(); }
     }
@@ -143,10 +143,10 @@ function pastePlainText(page, text, html = null) {
         const to = source.indexOf('Tail') + 4;
         await selectSource(page, from, to);
         await page.keyboard.type('Q');
-        assert.equal(await content(page), expectedSplice(source, from, to, 'Q'),
-          'a prose/table/prose selection must preserve the literal slice boundaries');
+        assert.equal(await content(page), source,
+          'a prose/table/prose selection is refused to preserve the table');
         assert.deepEqual(errors, []);
-        console.log('PASS: forward, backward and cross-block source intervals match literal splices.');
+        console.log('PASS: cross-cell and prose/table/prose replacements are refused rather than corrupting the table.');
       } finally { await session.close(); }
     }
   }

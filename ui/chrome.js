@@ -3,13 +3,35 @@
 let documentMode = 'reading', documentReadOnly = false;
 let documentNavigation = [], documentNavigationIndex = -1, navigatingHistory = false;
 function documentWritable() { return current.active && current.writable !== false && !documentReadOnly && !transitionLocked; }
+function sourceCaret(input) {
+  const { selectionStart: start, selectionEnd: end, selectionDirection: direction } = input;
+  return direction === 'backward' ? { anchor: end, head: start } : { anchor: start, head: end };
+}
+function restoreSourceCaret() {
+  if (documentMode !== 'source' || !editor) return;
+  const input = $('document-source'), selection = editor.getSelection?.();
+  if (!selection) return;
+  const start = Math.max(0, Math.min(selection.anchor, input.value.length));
+  const end = Math.max(0, Math.min(selection.head, input.value.length));
+  input.setSelectionRange(Math.min(start, end), Math.max(start, end), start > end ? 'backward' : 'forward');
+  const line = input.value.slice(0, start).split('\n').length - 1;
+  const lineHeight = parseFloat(getComputedStyle(input).lineHeight) || 20;
+  if (line * lineHeight < input.scrollTop || (line + 1) * lineHeight > input.scrollTop + input.clientHeight) {
+    input.scrollTop = Math.max(0, line * lineHeight - input.clientHeight / 3);
+  }
+}
 function syncDocumentMode() {
   const protectedFile = current.writable === false;
   root.dataset.documentMode = documentMode;
   const locked = documentMode === 'reading' || !documentWritable();
+  if (editor && documentMode === 'source' && !editor.isSource?.()) editor.setSourceOnly?.(true);
+  if (editor && documentMode !== 'source' && editor.isSource?.()) editor.setSourceOnly?.(false);
   if (editor && editor.isLocked() !== locked && !transitionLocked) editor.setLocked(locked);
   $('document-source').readOnly = locked || !editor;
-  if (documentMode === 'source' && $('document-source').value !== current.content) $('document-source').value = current.content;
+  if (documentMode === 'source' && $('document-source').value !== current.content) {
+    $('document-source').value = current.content;
+  }
+  if (documentMode === 'source' && editor?.isSource?.()) restoreSourceCaret();
   $('document-source').hidden = !current.active || documentMode !== 'source';
   $('preview').hidden = current.active && documentMode === 'source';
   $('document-mode-label').textContent = documentReadOnly ? 'Read-only' : { reading: 'Reading mode', edit: 'Edit mode', source: 'Source mode' }[documentMode];
@@ -45,14 +67,25 @@ function syncDocumentMode() {
 function setDocumentMode(next) {
   if (!current.active || transitionLocked || !['reading', 'edit', 'source'].includes(next)) return;
   if (next === 'edit' && current.writable === false) { toast('Filesystem permissions prevent editing. Use Save As to create a writable copy.'); return; }
-  editor?.checkpoint(); editor?.captureSelection?.();
+  if (documentMode === 'source') {
+    const input = $('document-source');
+    editor?.setSourceSelection?.(sourceCaret(input));
+    editor?.checkpoint?.();
+  } else {
+    editor?.checkpoint(); editor?.captureSelection?.();
+  }
   const reader = $('reader-scroll'), source = $('document-source');
   const previous = documentMode === 'source' ? source : reader;
   const range = Math.max(0, previous.scrollHeight - previous.clientHeight);
   const fraction = range ? previous.scrollTop / range : 0;
   const readerTop = reader.scrollTop;
   const crossingSource = (documentMode === 'source') !== (next === 'source');
-  documentMode = next; syncDocumentMode(); closeAllMenus();
+  const leavingSource = documentMode === 'source' && next !== 'source';
+  const enteringSource = documentMode !== 'source' && next === 'source';
+  documentMode = next;
+  if (enteringSource) editor?.setSourceOnly?.(true);
+  if (leavingSource) editor?.setSourceOnly?.(false);
+  syncDocumentMode(); closeAllMenus();
   if (next === 'source') source.focus({ preventScroll: true });
   else if (next === 'edit') editor?.focus();
   const target = next === 'source' ? source : reader;
@@ -274,6 +307,7 @@ function initializePreferencesPanel() {
 
 function showHelp(shortcuts = false) {
   $('help-title').textContent = shortcuts ? 'Keyboard Shortcuts' : 'About Folio';
+  $('help-dialog').classList.toggle('shortcuts', shortcuts);
   const content = $('help-content'); content.replaceChildren();
   if (shortcuts) {
     const table = document.createElement('table');
@@ -290,14 +324,15 @@ async function editClipboard(action) {
     const input = $('document-source'); input.focus();
     if (action === 'select-all') { input.select(); return; }
     const { selectionStart: from, selectionEnd: to } = input;
+    editor?.setSourceSelection?.(sourceCaret(input));
     const owner = current, snapshot = input.value;
     if (action === 'copy' || action === 'cut') {
       await navigator.clipboard.writeText(input.value.slice(from, to));
-      if (action === 'cut' && owner === current && snapshot === input.value && documentMode === 'source' && documentWritable() && !input.readOnly) { input.setRangeText('', from, to, 'end'); input.dispatchEvent(new Event('input')); }
+      if (action === 'cut' && owner === current && snapshot === input.value && documentMode === 'source' && documentWritable() && !input.readOnly) { input.setRangeText('', from, to, 'end'); input.dispatchEvent(new InputEvent('input', { inputType: 'deleteByCut' })); }
     } else if (action === 'paste' && !input.readOnly) {
       const text = await navigator.clipboard.readText();
       if (owner !== current || snapshot !== input.value || !documentWritable() || documentMode !== 'source') return;
-      input.setRangeText(text, from, to, 'end'); input.dispatchEvent(new Event('input'));
+      input.setRangeText(text, from, to, 'end'); input.dispatchEvent(new InputEvent('input', { inputType: 'insertFromPaste' }));
     }
     return;
   }
@@ -306,7 +341,12 @@ async function editClipboard(action) {
   if (action === 'paste') {
     const owner = current, text = await navigator.clipboard.readText();
     if (owner !== current || !documentWritable() || documentMode !== 'edit') return;
-    editor?.focus(); document.execCommand('insertText', false, text);
+    const surface = $('preview').querySelector('.ProseMirror');
+    if (!surface || !text) return;
+    editor?.focus();
+    const clipboardData = new DataTransfer();
+    clipboardData.setData('text/plain', text);
+    surface.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
   } else document.execCommand(action);
 }
 function openReplace() { openFind(); $('replace-bar').hidden = false; syncDocumentMode(); }
@@ -410,18 +450,36 @@ function initializeChrome() {
     closeAllMenus(); next.focus(); if (open) next.click();
   });
   $('app-menubar').addEventListener('pointerover', event => { const next = event.target.closest('.menubar-button'); if (next && next.getAttribute('aria-expanded') !== 'true' && triggers.some(button => button.getAttribute('aria-expanded') === 'true')) next.click(); });
-  $('document-source').addEventListener('input', () => {
-    if (!documentWritable() || documentMode !== 'source' || !editor) { $('document-source').value = current.content; return; }
-    editor.replaceContent($('document-source').value);
-    if ($('document-source').value !== current.content) $('document-source').value = current.content;
+  let sourceBeforeInput = null, sourceInputType = 'insertText';
+  const syncSourceSelection = () => {
+    if (documentMode !== 'source' || !editor) return null;
+    const input = $('document-source');
+    const selection = sourceCaret(input);
+    editor.setSourceSelection?.(selection);
+    return selection;
+  };
+  $('document-source').addEventListener('beforeinput', event => {
+    sourceBeforeInput = syncSourceSelection() || { anchor: $('document-source').selectionStart, head: $('document-source').selectionEnd };
+    sourceInputType = event.inputType || 'insertText';
   });
+  $('document-source').addEventListener('input', event => {
+    const input = $('document-source');
+    if (!documentWritable() || documentMode !== 'source' || !editor) { input.value = current.content; return; }
+    const before = sourceBeforeInput;
+    const typing = ['insertText', 'insertCompositionText', 'deleteContentBackward', 'deleteContentForward'].includes(event.inputType || sourceInputType);
+    sourceBeforeInput = null;
+    sourceInputType = 'insertText';
+    editor.replaceSource(input.value, sourceCaret(input), typing, before || undefined);
+    if (input.value !== current.content) input.value = current.content;
+  });
+  for (const event of ['select', 'click', 'keyup']) $('document-source').addEventListener(event, syncSourceSelection);
   $('document-source').addEventListener('keydown', event => {
     if ((event.ctrlKey || event.metaKey) && ['z', 'y'].includes(event.key.toLowerCase())) { event.preventDefault(); undoRedo(event.key.toLowerCase() === 'y' || event.shiftKey); syncDocumentMode(); }
   });
   $('replace-one').onclick = () => replaceMatches(false); $('replace-all').onclick = () => replaceMatches(true);
   $('help-close').onclick = () => $('help-dialog').close();
   const themeSelect = $('preference-theme');
-  for (const theme of availableThemes()) { const option = document.createElement('option'); option.value = theme.id; option.textContent = theme.id === 'paper' ? 'Light · Adwaita' : theme.id === 'graphite' ? 'Dark · Adwaita' : theme.label; themeSelect.append(option); }
+  for (const theme of availableThemes()) { const option = document.createElement('option'); option.value = theme.id; option.textContent = theme.label; themeSelect.append(option); }
   initializePreferencesPanel();
   applyDocumentPreferences(); syncDocumentMode();
 }

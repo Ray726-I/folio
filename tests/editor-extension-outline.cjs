@@ -22,11 +22,11 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
 
     // Clicking the extension heading must select its own block, not Real section.
     await page.locator('#outline-items .outline-link').first().click();
-    assert.equal(await page.evaluate(() => editor.getSelection().anchor), 0,
-      'the extension heading must map to its real source offset');
+    assert.equal(await page.evaluate(() => editor.getSelection().anchor), source.indexOf(':smile:'),
+      'the extension heading maps to the start of its visible text');
     await page.locator('#outline-items .outline-link').nth(1).click();
-    assert.equal(await page.evaluate(() => editor.getSelection().anchor), source.indexOf('## Real section'),
-      'the heading after an extension heading must not be misdirected');
+    assert.equal(await page.evaluate(() => editor.getSelection().anchor), source.indexOf('Real section'),
+      'the heading after an extension heading maps to the next heading text');
 
     // Native duplicate slugs are doc-repeat and doc-repeat-1. The outline must
     // carry those identities, and a #repeat-1 link must resolve to the second.
@@ -55,14 +55,14 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
     await page.evaluate(value => { current.content = value; editor.replaceContent(value); refreshEditorOutline(); }, shifted);
     assert.equal(await page.locator('#outline-items .outline-link').count(), 4, 'shifted extension heading remains in current source outline');
     await page.locator('#outline-items .outline-link').first().click();
-    assert.equal(await page.evaluate(() => editor.getSelection().anchor), shifted.indexOf('# :smile:'), 'stale extension sourcepos never selects the old offset');
+    assert.equal(await page.evaluate(() => editor.getSelection().anchor), shifted.indexOf(':smile:'), 'stale extension sourcepos never selects the old offset');
 
     await page.evaluate(() => { current.content = '# Math $x$\n\n## Before\n'; editor.replaceContent(current.content); refreshEditorOutline(); });
     assert.deepEqual(await page.evaluate(() => outlineEntries.map(entry => entry.id)), ['doc-math-x', 'doc-before']);
     await page.evaluate(() => { current.content = '# Changed\n\n## New\n'; editor.replaceContent(current.content); refreshEditorOutline(); });
     assert.deepEqual(await page.locator('#outline-items .outline-link').allTextContents(), ['Changed', 'New'], 'the outline follows the current document, not a stale rich DOM');
     await page.locator('#outline-items .outline-link').nth(1).click();
-    assert.equal(await page.evaluate(() => editor.getSelection().anchor), '# Changed\n\n'.length);
+    assert.equal(await page.evaluate(() => editor.getSelection().anchor), '# Changed\n\n## '.length);
     // Markdown mode removed in the single-editor migration.
 
     assert.deepEqual(errors, []);

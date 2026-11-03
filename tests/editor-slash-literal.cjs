@@ -10,7 +10,7 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.keyboard.type('/what');
     await page.waitForFunction(() => current.content.includes('/what'), null, { timeout: 3000 });
     assert.equal(await page.evaluate(() => document.activeElement.classList.contains('ProseMirror')), true, 'slash does not take typing focus');
-    assert.equal(await page.locator('.folio-slash-menu').count(), 0, 'unmatched text dismisses suggestions');
+    assert.equal(await page.locator('.folio-slash-empty').count(), 1, 'unmatched text shows an empty state');
     await page.keyboard.press('Enter');
     await page.keyboard.type('/he');
     await page.keyboard.press('Escape');

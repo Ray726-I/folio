@@ -6,28 +6,24 @@ const { openEditor } = require('./editor-browser.cjs');
   try {
     const { page } = session;
     const block = page.locator('.extension-block').nth(1);
-    await block.hover();
-    await block.locator('.extension-edit').click();
-    assert.equal(await block.locator('.extension-preview').isHidden(), true, 'editing replaces the rendered block rather than adding a second view');
-    const input = block.locator('.extension-source-editor textarea');
-    await input.waitFor({ state: 'visible' });
-    await input.fill('<div>changed</div>');
-    await block.getByRole('button', { name: 'Apply' }).click();
-    await page.waitForFunction(() => current.content.includes('<div>changed</div>'));
-    assert.equal(await page.evaluate(() => current.content), '<div>same</div>\n\nMiddle.\n\n<div>changed</div>\n');
+    await block.locator('.extension-preview').dblclick();
+    await page.locator('.folio-source-edit').waitFor();
+    assert.match(await page.locator('.folio-source-edit').textContent(), /<div>same<\/div>/,
+      'the second repeated raw block reveals its own source');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.evaluate(() => current.content), '<div>same</div>\n\nMiddle.\n\n<div>same</div>\n');
   } finally { await session.close(); }
 
   session = await openEditor('![image.png](image.png)\n\nA [link](https://example.com/a\\(b\\)).\n');
   try {
     const { page } = session;
-    await page.getByRole('button', { name: 'Edit image', exact: true }).click();
-    const input = page.locator('#editor-action-value');
-    assert.equal(await input.inputValue(), 'image.png');
-    await input.fill('new.png');
-    await page.locator('#editor-action-form button[type="submit"]').click();
-    await page.waitForFunction(() => current.content.includes('(new.png)'));
-    assert.ok((await page.evaluate(() => current.content)).startsWith('![image.png](new.png)'));
+    await page.locator('.image-widget').dblclick();
+    await page.locator('.folio-source-edit').waitFor();
+    assert.match(await page.locator('.folio-source-edit').textContent(), /!\[image\.png\]\(image\.png\)/);
+    await page.keyboard.press('Escape');
     await page.locator('#preview a').click();
+    await page.waitForFunction(() => document.getElementById('editor-action-dialog').open);
+    const input = page.locator('#editor-action-value');
     assert.equal(await input.inputValue(), 'https://example.com/a\\(b\\)');
     await input.fill('https://example.com/new');
     await page.locator('#editor-action-form button[type="submit"]').click();
@@ -35,5 +31,5 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.ok((await page.evaluate(() => current.content)).includes('[link](https://example.com/new)'));
     assert.deepEqual(session.errors, []);
   } finally { await session.close(); }
-  console.log('PASS: repeated raw blocks and exact link/image destinations remain editable.');
+  console.log('PASS: repeated raw blocks reveal their own source and exact link destinations remain editable.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -88,7 +88,7 @@ async function insertCommand(source, keys, typed = '') {
 
   // 3. Narrow windows turn the flyout into an in-picker drill-down with a back
   //    row, so a submenu never leaves the visible window.
-  session = await openEditor('Body.\n', { width: 760, height: 700 });
+  session = await openEditor('Body.\n', { width: 480, height: 700 });
   try {
     const { page, errors } = session;
     await openSlash(page);

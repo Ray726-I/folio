@@ -15,6 +15,23 @@ function setTransitionLocked(next) {
 }
 function changeContent(content) { if (editor) editor.replaceContent(content); else { current.content = content; updateTitle(); scheduleStats(); } }
 function undoRedo(redo = false) { return editor?.undo(redo) || false; }
+function updateFormatToolbar(context) {
+  const tools = $('format-tools');
+  if (!tools) return;
+  const locked = editor?.isLocked?.() ?? false;
+  const editable = current.active && documentMode === 'edit' && !locked;
+  const blockDisabled = !editable || Boolean(context?.table || context?.code);
+  for (const command of ['heading', 'bullet', 'numbered', 'quote', 'table']) {
+    const control = tools.querySelector(`[data-editor-command="${command}"]`);
+    if (control) control.disabled = blockDisabled;
+  }
+  for (const [command, mark] of [['bold', 'strong'], ['italic', 'em'], ['code', 'code']]) {
+    const control = tools.querySelector(`[data-editor-command="${command}"]`);
+    if (!control) continue;
+    control.disabled = !editable;
+    control.setAttribute('aria-pressed', String(editable && (context?.marks || []).includes(mark)));
+  }
+}
 function editorPresentation(_show, locked, fallback) {
   // One editing surface: the document is always the formatted editor.
   mode = 'read'; root.dataset.mode = mode;
@@ -28,6 +45,7 @@ function editorPresentation(_show, locked, fallback) {
   $('editor-notice').hidden = !fallback;
 
   $('format-tools').querySelectorAll('button:not(#format-toolbar-close),select,input').forEach(control => { control.disabled = locked; });
+  if (!locked) updateFormatToolbar(editor?.context?.() ?? null);
 }
 // Kept for blocks whose exact byte range the ledger cannot prove. Atoms with a
 // provable range open their own in-place editor instead of reaching this.
@@ -43,8 +61,19 @@ function openSourceSnapshot() {
   $('source-snapshot-text').value = editor ? editor.getText() : current.content;
   $('source-snapshot-status').textContent = 'Exact Markdown at the time this snapshot was opened. Unsaved changes are included.';
   $('source-dialog').showModal(); $('source-snapshot-text').focus();
+  $('source-snapshot-text').setSelectionRange(0, 0); $('source-snapshot-text').scrollTop = 0;
 }
 function scheduleEditorOutline() { clearTimeout(outlineTimer); outlineTimer = setTimeout(refreshEditorOutline, 500); }
+// Outline entries point at the heading's line start. Placing the caret there
+// inserts text before the `#` markers and silently demotes the heading to a
+// paragraph. Land on the first visible character through any list/quote prefix
+// instead; Setext headings already start at their text.
+function headingCaretOffset(offset) {
+  const end = current.content.indexOf('\n', offset);
+  const line = current.content.slice(offset, end < 0 ? current.content.length : end);
+  const match = /^(?:[ \t]*>[ \t]?)*[ \t]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)?(#{1,6})(?:[ \t]+|$)/.exec(line);
+  return match ? offset + match[0].length : offset;
+}
 function headingSlug(text) {
   // Match the native renderer's heading-id convention: lowercase, drop
   // punctuation but keep letters, digits, whitespace, hyphens and underscores,
@@ -60,7 +89,7 @@ function lineStartsFor(text) {
 function refreshEditorOutline() {
   if (!editor || !current.active) return;
   if ($('outline').hidden) return;
-  const headings = editor.getHeadings?.() ?? window.FolioEditor.headings(current.content);
+  const headings = (!editor.isSource?.() && editor.getHeadings?.()) || window.FolioEditor.headings(current.content);
   const previousEntries = outlineEntries;
   const previousByKey = new Map((outlineStateDocument === current ? previousEntries : []).filter(entry => entry.key).map(entry => [entry.key, entry]));
   const previousActive = previousEntries[outlineActiveIndex];
@@ -101,8 +130,9 @@ function refreshEditorOutline() {
       const button = document.createElement('button'); button.className = 'outline-link'; button.tabIndex = -1;
       entry = { button, key: heading.key || `outline-fallback-${++outlineFallbackIdentity}` };
       button.onclick = () => {
-        if (documentMode === 'source') { jumpToSource(entry.offset); setActiveOutline(outlineEntries.indexOf(entry)); return; }
-        editor.selectRange(entry.offset); setActiveOutline(outlineEntries.indexOf(entry));
+        const caret = headingCaretOffset(entry.offset);
+        if (documentMode === 'source') { jumpToSource(caret); setActiveOutline(outlineEntries.indexOf(entry)); return; }
+        editor.selectRange(caret); setActiveOutline(outlineEntries.indexOf(entry));
         entry.element?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
       };
       treeChanged = true;
@@ -215,8 +245,8 @@ async function mountUnifiedEditor() {
   fallbackCheckedContent = current.content;
   const editorOptions = {
     content: current.content, transitionLocked, richParent: $('preview'), scroller: $('reader-scroll'),
-    onChange(content) { if (current !== documentAtOpen) return; outlineRevision++; current.content = content; previewSnapshot = null; updateTitle(); scheduleStats(); scheduleEditorOutline(); if (!$('find-bar').hidden) editor?.clearHighlight?.(); },
-    onPresentation: editorPresentation, message: toast, loadKatex, remoteImages: () => remoteImages, themeRevision: () => diagramThemeRevision,
+    onChange(content) { if (current !== documentAtOpen) return; outlineRevision++; current.content = content; previewSnapshot = null; updateTitle(); scheduleStats(); scheduleEditorOutline(); if (!$('find-bar').hidden) scheduleFindRefresh(); },
+    onPresentation: editorPresentation, onContext: updateFormatToolbar, message: toast, loadKatex, remoteImages: () => remoteImages, themeRevision: () => diagramThemeRevision,
     revealSource: (from, to) => revealSourceForEdit(from, to), editValue,
     openLink(href) { const anchor = document.createElement('a'); anchor.setAttribute('href', href); followPreviewLink(anchor); },
     async renderExtension(source) {

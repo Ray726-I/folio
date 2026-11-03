@@ -618,6 +618,7 @@ export function buildLedger(source, doc, options = {}) {
       case 'image': return leaf.kind === 'image' && String(child.attrs.src ?? '') === leaf.src;
       case 'raw_inline': return leaf.kind === 'raw_inline' && String(child.attrs.source ?? '') === leaf.source;
       case 'hard_break': return leaf.kind === 'hardbreak';
+      case 'soft_break': return leaf.softbreak === true;
       default: return false;
     }
   }

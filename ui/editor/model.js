@@ -13,6 +13,7 @@ let nodes = commonSchema.spec.nodes
   .update('list_item', { ...commonSchema.spec.nodes.get('list_item'), attrs: { checked: { default: null } } })
   .addToEnd('raw_block', { content: 'text*', group: 'block', code: true, marks: '', defining: true, attrs: { kind: { default: 'Markdown extension' } }, toDOM: () => ['pre', { class: 'source-block', 'data-source-fallback': '' }, 0] })
   .addToEnd('raw_inline', { inline: true, group: 'inline', atom: true, attrs: { source: {} }, toDOM: node => ['code', { class: 'source-inline' }, node.attrs.source] })
+  .addToEnd('soft_break', { inline: true, group: 'inline', atom: true, selectable: false, attrs: {}, leafText: () => ' ', toDOM: () => ['span', { class: 'soft-break' }, ' '] })
   .addToEnd('math_inline', { inline: true, group: 'inline', atom: true, attrs: { tex: {}, delimiter: { default: '$' } }, toDOM: node => ['span', { class: 'math-source' }, node.attrs.delimiter === '\\(' ? `\\(${node.attrs.tex}\\)` : `$${node.attrs.tex}$`] })
   .addToEnd('math_block', { group: 'block', atom: true, attrs: { tex: {}, delimiter: { default: '$$' } }, toDOM: node => ['div', { class: 'math-source' }, node.attrs.delimiter === '\\[' ? `\\[\n${node.attrs.tex}\n\\]` : `$$\n${node.attrs.tex}\n$$`] });
 nodes = nodes.append(tableNodes({ tableGroup: 'block', cellContent: 'block+', cellAttributes: { align: { default: null, getFromDOM: dom => dom.style.textAlign || null, setDOMAttr(value, attrs) { if (value) attrs.style = `text-align:${value}`; } } } }));
@@ -204,6 +205,7 @@ export const parser = new MarkdownParser(schema, tokenizer, {
   s: { mark: 'strike' }, raw_block: { block: 'raw_block', noCloseToken: true }, html_block: { block: 'raw_block', noCloseToken: true },
   html_inline: { node: 'raw_inline', getAttrs: token => ({ source: token.content }) },
   math_inline: { node: 'math_inline', getAttrs: token => ({ tex: token.content, delimiter: token.meta?.delimiter || '$' }) },
+  softbreak: { node: 'soft_break' },
   math_block: { node: 'math_block', getAttrs: token => ({ tex: token.content, delimiter: token.meta?.delimiter || '$$' }) }
 });
 
@@ -212,6 +214,7 @@ const serializerNodes = {
   list_item(state, node) { if (node.attrs.checked !== null) state.write(node.attrs.checked ? '[x] ' : '[ ] '); state.renderContent(node); },
   raw_block(state, node) { state.write(node.textContent); state.closeBlock(node); },
   raw_inline(state, node) { state.write(node.attrs.source); },
+  soft_break(state) { state.write('\n'); },
   math_inline(state, node) { state.write(node.attrs.delimiter === '\\(' ? `\\(${node.attrs.tex}\\)` : `$${node.attrs.tex}$`); },
   math_block(state, node) { state.write(node.attrs.delimiter === '\\[' ? `\\[\n${node.attrs.tex}\n\\]` : `$$\n${node.attrs.tex}\n$$`); state.closeBlock(node); },
   table(state, node) {
@@ -282,7 +285,11 @@ function sourceGaps(previous) {
   return gaps;
 }
 
+let sourceParseCount = 0, sourceParseBytes = 0;
+export function resetEditorStats() { sourceParseCount = 0; sourceParseBytes = 0; }
+export function editorStats() { return { sourceParses: sourceParseCount, sourceParseBytes }; }
 export function parseSource(source, sourceEdit = null) {
+  sourceParseCount++; sourceParseBytes += source.length;
   const environment = {};
   let doc = parser.parse(source, environment);
   const tokens = environment.folioSourceTokens;

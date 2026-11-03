@@ -17,6 +17,9 @@ import { buildLedger, mapSource, mapRich, applySourcePatches } from './source-le
 import { parseSource } from './model.js';
 
 const TEXTBLOCK_TYPES = new Set(['paragraph', 'heading', 'code_block']);
+// Debug counters used by the benchmark/regression tests; harmless in production.
+export const editDebug = { reason: '', full: 0, local: 0, incremental: 0 };
+function fail(reason) { editDebug.reason = reason; return null; }
 
 function stepsFrom(transactions) {
   const list = Array.isArray(transactions) ? transactions : (transactions ? [transactions] : null);
@@ -56,13 +59,30 @@ function exactEndpoint(ledger, position, bias, expected) {
   return mapped;
 }
 
+function insertionEndpoint(ledger, position, bias) {
+  const exact = exactEndpoint(ledger, position, bias, position);
+  if (exact) return exact;
+  // Caret at the very end/start of a textblock is often reported as a "gap":
+  // the position is between the text run and the block's syntax or neighbor.
+  // Typing there still belongs at the verified text edge, not in the gap.
+  const mapped = mapRich(ledger, position, { bias });
+  const owner = mapped.owner;
+  if (!owner || owner.confidence !== 'exact' || owner.supported === false) return null;
+  if (!TEXTBLOCK_TYPES.has(owner.type)) return null;
+  if (position === owner.pmTo) return { ...mapped, source: owner.sourceTo, owner };
+  if (position === owner.pmFrom) return { ...mapped, source: owner.sourceFrom, owner };
+  return null;
+}
+
 function sourcePatchFor(ledger, step, insertionBias = 'right') {
   if (!Number.isInteger(step.from) || !Number.isInteger(step.to) || step.from < 0 || step.to < step.from) return null;
   const collapsed = step.from === step.to;
   // Right affinity at an insertion point/start keeps typing after an opening
   // delimiter inside the marked run.  Left affinity at a deletion end stops
   // before the closing delimiter, leaving the syntax intact.
-  const start = exactEndpoint(ledger, step.from, collapsed ? insertionBias : 'right', step.from);
+  const start = collapsed
+    ? insertionEndpoint(ledger, step.from, insertionBias)
+    : exactEndpoint(ledger, step.from, 'right', step.from);
   if (!start) return null;
   const end = collapsed ? start : exactEndpoint(ledger, step.to, 'left', step.to);
   if (!end) return null;
@@ -116,11 +136,11 @@ function shiftModel(previous, step, patch, insert, intendedDoc) {
     if (candidate.sourceFrom + (step.from - candidate.pmFrom) !== patch.from) continue;
     editedRun = index; break;
   }
-  if (editedRun < 0) return null;
+  if (editedRun < 0) return fail('run-not-found');
   // A zero-length run (an empty paragraph) has no character to be "inside"; its
   // source anchor needs the block separators rebuilt, which the splice does not
   // do. Fall back for those.
-  if (ledger.runs[editedRun].text.length === 0) return null;
+  if (ledger.runs[editedRun].text.length === 0) return fail('empty-run');
   const runs = [];
   for (let index = 0; index < ledger.runs.length; index++) {
     const run = ledger.runs[index];
@@ -137,13 +157,27 @@ function shiftModel(previous, step, patch, insert, intendedDoc) {
       runs.push({ ...run,
         pmFrom: run.pmFrom + pmDelta, pmTo: run.pmTo + pmDelta,
         sourceFrom: run.sourceFrom + sourceDelta, sourceTo: run.sourceTo + sourceDelta,
-        charMap: run.charMap?.map(char => ({ from: char.from + sourceDelta, to: char.to + sourceDelta })) || null });
+        charMap: run.charMap ? run.charMap.map(char => ({ from: char.from + sourceDelta, to: char.to + sourceDelta })) : run.charMap });
       continue;
     }
-    return null;
+    return fail('run-overlap');
   }
+  // Only nodes in the edited top-level block can have new identity. Owners in
+  // every other block keep the same immutable node, so rebuilding a document-
+  // wide position map on every keystroke is wasted work.
+  let edited = -1;
+  for (let index = 0; index < segments.length; index++) {
+    if (segments[index].from <= patch.from && segments[index].to >= patch.to) { edited = index; break; }
+  }
+  if (edited < 0 || segments.length !== intendedDoc.childCount) return fail('edited-segment');
+  let editedPmFrom = 0;
+  for (let index = 0; index < edited; index++) editedPmFrom += segments[index].node.nodeSize;
+  const editedNode = intendedDoc.child(edited);
+  const editedOldEnd = editedPmFrom + previous.doc.child(edited).nodeSize;
+  const nodes = new Map();
+  editedNode.descendants((node, position) => { if (!node.isText) nodes.set(editedPmFrom + 1 + position, node); });
+  nodes.set(editedPmFrom, editedNode);
   const owners = [];
-  const nodes = nodesByPosition(intendedDoc);
   for (const owner of ledger.owners) {
     const shifted = { ...owner };
     if (owner.pmFrom >= step.to) {
@@ -156,13 +190,19 @@ function shiftModel(previous, step, patch, insert, intendedDoc) {
       if (Number.isInteger(owner.contentFrom)) shifted.contentFrom = owner.contentFrom + sourceDelta;
       if (Number.isInteger(owner.contentTo)) shifted.contentTo = owner.contentTo + sourceDelta;
     } else if (owner.pmTo >= step.to) {
-      shifted.pmTo = owner.pmTo + pmDelta;
-      shifted.sourceTo = owner.sourceTo + sourceDelta;
-      if (Number.isInteger(owner.pmContentTo) && owner.pmContentTo >= step.to) shifted.pmContentTo = owner.pmContentTo + pmDelta;
-      if (Number.isInteger(owner.contentTo) && owner.contentTo >= patch.to) shifted.contentTo = owner.contentTo + sourceDelta;
+      // A node that ends exactly at a collapsed insertion point sits before
+      // the new text, not around it. Shifting its end would make an atom
+      // (raw inline, soft break) claim the inserted byte.
+      if (!(step.from === step.to && owner.pmTo === step.to && owner.pmFrom < step.from)) {
+        shifted.pmTo = owner.pmTo + pmDelta;
+        shifted.sourceTo = owner.sourceTo + sourceDelta;
+        if (Number.isInteger(owner.pmContentTo) && owner.pmContentTo >= step.to) shifted.pmContentTo = owner.pmContentTo + pmDelta;
+        if (Number.isInteger(owner.contentTo) && owner.contentTo >= patch.to) shifted.contentTo = owner.contentTo + sourceDelta;
+      }
     }
-    shifted.node = nodes.get(shifted.pmFrom);
-    if (!shifted.node || shifted.node.type.name !== owner.type) return null;
+    const inEdited = owner.pmFrom >= editedPmFrom && owner.pmFrom < editedOldEnd;
+    shifted.node = inEdited ? nodes.get(shifted.pmFrom) : owner.node;
+    if (!shifted.node || shifted.node.type.name !== owner.type) return fail(`owner-node:${owner.type}:${shifted.pmFrom}:${editedPmFrom}:${editedNode.nodeSize}`);
     owners.push(shifted);
   }
   const ledgerGaps = ledger.gaps.map(gap => gap.sourceFrom >= patch.to
@@ -205,11 +245,6 @@ function shiftModel(previous, step, patch, insert, intendedDoc) {
     })(),
   };
   // Segments: exactly one block changes, the rest shift.
-  let edited = -1;
-  for (let index = 0; index < segments.length; index++) {
-    if (segments[index].from <= patch.from && segments[index].to >= patch.to) { edited = index; break; }
-  }
-  if (edited < 0 || segments.length !== intendedDoc.childCount) return null;
   const nextSegments = segments.map((segment, index) => {
     const node = intendedDoc.child(index);
     if (index === edited) {
@@ -231,6 +266,7 @@ function shiftModel(previous, step, patch, insert, intendedDoc) {
 // heading markers), so linkification and delimiter flanking are checked by the
 // real parser, rather than guessed from an allowed-character regex.
 function tryIncremental(previousModel, step, intendedDoc) {
+  editDebug.reason = '';
   const ledger = previousModel?.ledger;
   if (!ledger || ledger.errors.length || !Array.isArray(previousModel.segments)) return null;
   const applied = step.apply(previousModel.doc);
@@ -241,9 +277,9 @@ function tryIncremental(previousModel, step, intendedDoc) {
   if (insert === null || /[\r\n]/.test(insert)) return null;
   for (const bias of step.from === step.to ? ['right', 'left'] : ['right']) {
     const patch = sourcePatchFor(ledger, step, bias);
-    if (!patch) continue;
+    if (!patch) { editDebug.reason = 'no-patch'; continue; }
     const next = localTextEdit(previousModel, step, patch, insert, intendedDoc);
-    if (next) return next;
+    if (next) { editDebug.incremental++; return next; }
   }
   return null;
 }
@@ -251,29 +287,33 @@ function tryIncremental(previousModel, step, intendedDoc) {
 function localTextEdit(previousModel, step, patch, insert, intendedDoc = null) {
   const ledger = previousModel.ledger;
   const owner = ledger.ownerById.get(patch.ownerId);
-  if (owner.type !== 'paragraph' && owner.type !== 'heading') return null;
-  const index = previousModel.segments.findIndex(segment => segment.node === owner.node &&
-    segment.from === owner.sourceFrom && segment.to === owner.sourceTo);
-  if (index < 0 || previousModel.segments.length !== (intendedDoc || previousModel.doc).childCount) return null;
-  const segment = previousModel.segments[index];
+  if (!owner) return fail('no-owner');
+  const segments = previousModel.segments || [];
+  // The owner may be a paragraph nested in a list item, table cell or quote.
+  // Find the enclosing top-level block and validate only its source slice.
+  const index = segments.findIndex(segment => owner.sourceFrom >= segment.from && owner.sourceTo <= segment.to);
+  if (index < 0 || segments.length !== (intendedDoc || previousModel.doc).childCount) return fail('no-segment');
+  const segment = segments[index];
+  const segmentNode = previousModel.doc.child(index);
+  const segmentPmFrom = segments.slice(0, index).reduce((sum, item) => sum + (item.node?.nodeSize || 0), 0);
   // Partial mappings in other top-level blocks are safe to rebase, but an
   // uncertain range touching the edited block must retain full validation.
-  if (ledger.unmapped.some(range => range.sourceFrom < segment.to && range.sourceTo > segment.from ||
-      range.pmFrom < owner.pmTo && range.pmTo > owner.pmFrom)) return null;
+  if (ledger.unmapped.some(range => range.sourceFrom < owner.sourceTo && range.sourceTo > owner.sourceFrom ||
+      range.pmFrom < owner.pmTo && range.pmTo > owner.pmFrom)) return fail('unmapped-overlap');
+  const ownerRaw = previousModel.source.slice(owner.sourceFrom, owner.sourceTo);
+  const body = ownerRaw.replace(/[\r\n]+$/, '');
   // Brackets can depend on definitions anywhere in the document. HTML and
-  // extension delimiters can depend on surrounding parser context. Escaped
-  // boundaries and multiline blocks retain the full-document validation path.
-  const body = segment.raw.replace(/[\r\n]+$/, '');
-  if (/[<>\\\r\n]/.test(body) || /[<>\\]/.test(insert)) return null;
-  if (previousModel.syntaxFacts?.hasReferences !== false && /[\[\]]/.test(body + insert)) return null;
-  if (/[\r\n]/.test(previousModel.source.slice(patch.from, patch.to))) return null;
+  // backslash escapes can depend on surrounding parser context. Code blocks
+  // are literal text and skip the lexical probe; their slice parse decides.
+  if (previousModel.syntaxFacts?.hasReferences !== false && /[\[\]]/.test(body + insert)) return fail('references');
+  if (/[\r\n]/.test(previousModel.source.slice(patch.from, patch.to))) return fail('patch-newline');
   const raw = segment.raw.slice(0, patch.from - segment.from) + insert + segment.raw.slice(patch.to - segment.from);
   // This lexical subset cannot introduce Markdown syntax or linkification.
   // Keep long plain paragraphs cheap without trusting arbitrary word edits
   // beside punctuation (which can complete a URL, escape or delimiter).
   const plain = /^\p{L}(?:[\p{L}\p{N} \t]*[\p{L}\p{N}])?[.!?]?$/u;
   const nextBody = raw.replace(/[\r\n]+$/, '');
-  if (owner.type === 'paragraph' && plain.test(body) && plain.test(nextBody) &&
+  if (owner.node === segmentNode && owner.type === 'paragraph' && plain.test(body) && plain.test(nextBody) &&
       owner.node.childCount === 1 && owner.node.firstChild.isText && !owner.node.firstChild.marks.length &&
       owner.node.textContent === body) {
     const node = owner.node.type.create(owner.node.attrs, owner.node.type.schema.text(nextBody));
@@ -284,25 +324,29 @@ function localTextEdit(previousModel, step, patch, insert, intendedDoc = null) {
     }
   }
   let local;
-  try { local = parseSource(raw); } catch { return null; }
-  if (local.doc.childCount !== 1 || local.ledger.owners.length !== 1 ||
-      !local.ledger.metadata.complete) return null;
-  if (intendedDoc && !local.doc.firstChild.eq(intendedDoc.child(index))) return null;
+  try { local = parseSource(raw); } catch { return fail('local-parse-throw'); }
+  if (local.doc.childCount !== 1) return fail('local-block-count');
+  if (intendedDoc && !local.doc.firstChild.eq(intendedDoc.child(index))) return fail('local-doc-mismatch');
   if (!intendedDoc) intendedDoc = previousModel.doc.copy(previousModel.doc.content.replaceChild(index, local.doc.firstChild));
-  if (local.doc.firstChild.nodeSize - owner.node.nodeSize !== insert.length - (step.to - step.from)) return null;
   const next = shiftModel(previousModel, step, patch, insert, intendedDoc);
-  if (!next) return null;
+  if (!next) { if (!editDebug.reason) editDebug.reason = 'shift-model'; return null; }
   // A splice may preserve the rich document yet change the number/boundaries
-  // of ledger runs (entities, merged marked runs, etc.). Keep the cheap shift
-  // only if the freshly parsed owner proves those exact associations too.
+  // of ledger runs (entities, merged marked runs, soft breaks, etc.). Keep the
+  // cheap shift only if the freshly parsed owner proves those exact
+  // associations too. Offsets are compared against the containing segment
+  // because the local parse starts at zero.
+  const localOwner = local.ledger.owners.find(item => item.type === owner.type && item.pmFrom === owner.pmFrom - segmentPmFrom);
+  if (!localOwner) return fail('no-local-owner');
   const shiftedRuns = next.ledger.runs.filter(run => run.ownerId === owner.id);
-  if (shiftedRuns.length !== local.ledger.runs.length) return null;
+  const localRuns = local.ledger.runs.filter(run => run.ownerId === localOwner.id);
+  if (shiftedRuns.length !== localRuns.length) return fail('run-count');
   for (let i = 0; i < shiftedRuns.length; i++) {
-    const actual = shiftedRuns[i], expected = local.ledger.runs[i];
-    if (!actual.linear || !expected.linear || actual.kind !== expected.kind || actual.text !== expected.text ||
-        actual.pmFrom !== expected.pmFrom + owner.pmFrom || actual.pmTo !== expected.pmTo + owner.pmFrom ||
-        actual.sourceFrom !== expected.sourceFrom + segment.from || actual.sourceTo !== expected.sourceTo + segment.from) return null;
+    const actual = shiftedRuns[i], expected = localRuns[i];
+    if (actual.kind !== expected.kind || actual.text !== expected.text ||
+        actual.pmFrom - segmentPmFrom !== expected.pmFrom || actual.pmTo - segmentPmFrom !== expected.pmTo ||
+        actual.sourceFrom - segment.from !== expected.sourceFrom || actual.sourceTo - segment.from !== expected.sourceTo) return fail('run-mismatch');
   }
+  editDebug.local++;
   return next;
 }
 
@@ -319,6 +363,7 @@ export function tryTextEdits(previousModel, transactions, intendedDoc) {
     if (incremental) return incremental;
   }
 
+  editDebug.full++;
   let doc = previousModel.doc;
   let source = previousModel.source;
   let ledger = previousModel.ledger || buildLedger(source, doc);

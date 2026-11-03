@@ -69,7 +69,12 @@
 
 /* The agreed unified editor uses the existing Folio typography and controls. */
 .editor-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:4px; padding:8px var(--gutter); border-bottom:1px solid var(--line); background:var(--bg); }
-.editor-toolbar .button { min-height:32px; }
+ .editor-toolbar .button { min-height:32px; }
+.editor-toolbar .button[aria-pressed="true"] { background:var(--selection); color:var(--fg); }
+.editor-toolbar .button:disabled { opacity:.6; }
+.format-more-caret { width:11px; height:11px; margin-left:2px; }
+@media(max-width:1150px) { .editor-toolbar { gap:2px; } .editor-toolbar .button { padding-left:7px; padding-right:7px; font-size:12px; } }
+
 .editor-note { padding:9px var(--gutter); color:var(--muted); background:var(--hover); border-bottom:1px solid var(--line); font-size:12px; }
 .table-tools { position:relative; font-size:12px; }
 .table-tools summary { cursor:pointer; padding:6px 10px; }
@@ -177,6 +182,7 @@
 .folio-slash-row:hover { background:color-mix(in srgb,var(--fg) 5%,transparent); }
 .folio-slash-row[aria-selected="true"],.folio-slash-row[aria-expanded="true"] { background:var(--slash-wash); }
 .folio-slash-row:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+.folio-slash-empty { padding:12px 14px; color:var(--muted); font-size:12px; }
 .folio-slash-icon { display:grid; place-items:center; flex:none; width:22px; height:22px; color:var(--muted); }
 .folio-slash-icon svg { width:16px; height:16px; }
 .folio-slash-badge { width:22px; height:19px; border-radius:4px; background:color-mix(in srgb,var(--fg) 5%,transparent); color:var(--muted); font:600 10px/1 var(--font-mono); }
@@ -1025,6 +1031,7 @@ kbd {
 }
 
 .markdown .markdown-alert-title {
+  margin:0 0 .35em;
   color:var(--accent);
   font-weight:700
 }
@@ -1232,6 +1239,8 @@ dialog::backdrop {
 .command-input input::placeholder {
   color:color-mix(in srgb,var(--muted) 82%,transparent)
 }
+#find-input::placeholder,#replace-input::placeholder,#folder-search-input::placeholder { color:var(--muted); opacity:1; }
+
 
 .command-input input:focus-visible {
   outline:none
@@ -1621,7 +1630,7 @@ li.ProseMirror-selectednode:after {
   .markdown {
     padding:24px 0 80px
   }
-  #theme-label,#reading-time,.status-start .status-divider {
+  #theme-label,#reading-time,.status-start .status-divider,.status-end .status-divider {
     display:none
   }
 }
@@ -2228,17 +2237,17 @@ body.focus-mode #file-browser,body.focus-mode .sidebar-resizer {
   max-width:min(100%,82ch)
 }
 
-/* ── Narrow viewports: sidebars become overlays so the column keeps its room ── */ @media(max-width:640px) {
+/* ── Narrow viewports: sidebars become overlays so the column keeps its room ── */ @media(max-width:980px) {
   .document-view {
     position:relative;
     isolation:isolate
   }
   #outline,#file-browser,#folder-search {
     position:absolute;
-    top:0;
+    top:var(--document-chrome-height,71px);
     bottom:0;
     left:44px;
-    z-index:6;
+    z-index:28;
     width:min(76vw,300px);
     background:var(--surface);
     box-shadow:14px 0 36px #00000030
@@ -2524,7 +2533,7 @@ body {
 }
 
 #save {
-  opacity:.55
+  opacity:.8
 }
 
 #save:hover,#save.is-dirty {
@@ -3267,7 +3276,7 @@ dialog {
 
 /* Responsive ------------------------------------------------------------- */
 
-@media(max-width:640px) {
+@media(max-width:980px) {
   .sidebar-head {
     min-height:48px;
     padding-top:10px
@@ -4274,3 +4283,14 @@ button.editor-trailing-input { display: block; text-align: left; cursor: text; }
 /* WebKit paints the active atom's native range at its editing boundary too. */
 #preview .ProseMirror.folio-paint .math-block::selection,
 #preview .ProseMirror.folio-paint .math-inline::selection { background:transparent; }
+
+/* Empty-document affordance: the rich doc keeps one empty paragraph, so an
+   inline widget can carry a quiet prompt without adding source. */
+.ProseMirror > p:first-of-type:last-of-type:has(> br.ProseMirror-trailingBreak:only-child)::before {
+  content:'Start writing, or type / for blocks…';
+  color:var(--muted);
+  pointer-events:none;
+}
+#help-dialog:not(.shortcuts) { width:min(480px,92vw); }
+#document-mode-menu .menu-item { position:relative; padding-left:28px; }
+#document-mode-menu .menu-item > .icon { position:absolute; left:7px; width:15px; height:15px; }

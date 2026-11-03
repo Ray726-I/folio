@@ -1,5 +1,6 @@
 import { createRichEditor } from './rich.js';
-import { tokenizer } from './model.js';
+import { tokenizer, editorStats, resetEditorStats } from './model.js';
+import { editDebug } from './source-edits.js';
 import { headingFromRawBlock } from './headings.js';
 import 'prosemirror-view/style/prosemirror.css';
 import 'prosemirror-tables/style/tables.css';
@@ -63,9 +64,10 @@ export function headings(content) {
 export function create(options) {
   let content = options.content, locked = false, transitionLocked = Boolean(options.transitionLocked), richEditor = null;
   let history = [], future = [], groupTime = 0, groupSelection = null, sourceSelection = { anchor: 0, head: 0 };
+  let sourceOnly = false, richStale = false;
   let disposed = false, mediaEpoch = 0, imageCount = 0, imageBytes = 0, cachedImageBytes = 0;
   const consent = new Set(), imageCache = new Map();
-  function selection() { return richEditor?.selection() || sourceSelection; }
+  function selection() { return sourceOnly ? sourceSelection : (richEditor?.selection() || sourceSelection); }
   function notify() { options.onChange(content); }
   const isLocked = () => locked || transitionLocked;
   const isUserLocked = () => locked;
@@ -149,13 +151,24 @@ export function create(options) {
   }
   function sync(next, target = sourceSelection, logical = false) {
     content = next; sourceSelection = target;
+    richStale = false;
     ensureRich(); richEditor.setDocument(content, target, { logical });
+  }
+  function syncRich() {
+    if (!richStale) return;
+    richStale = false;
+    ensureRich();
+    richEditor.setDocument(content, sourceSelection, { logical: true });
   }
   function undo(redo = false) {
     if (isLocked()) return false;
     const from = redo ? future : history, to = redo ? history : future;
     const entry = from.pop(); if (!entry) return false;
     to.push({ content, selection: selection() }); groupTime = 0;
+    if (sourceOnly) {
+      content = entry.content; sourceSelection = entry.selection || sourceSelection;
+      richStale = true; notify(); return true;
+    }
     sync(entry.content, entry.selection, true); notify(); return true;
   }
   ensureRich();
@@ -163,12 +176,42 @@ export function create(options) {
   return {
     getText: () => content,
     getHeadings: () => richEditor?.headings() ?? null,
+    context: () => richEditor?.context?.() ?? null,
+    stats: () => ({ ...editorStats(), edit: editDebug }),
+    resetStats: resetEditorStats,
+    debugSelection() {
+      const state = richEditor?.view?.state;
+      if (!state) return null;
+      return { from: state.selection.from, to: state.selection.to, anchor: state.selection.anchor, head: state.selection.head, type: state.selection.constructor.name };
+    },
     checkpoint() { groupTime = 0; },
     getSelection: selection,
     captureSelection() { richEditor?.captureSelection?.(); },
     isLocked: () => locked,
-    // Single-engine compatibility surface: nothing is ever in a second mode.
-    isSource: () => false,
+    // Source-only mode updates the canonical buffer without synchronizing the
+    // hidden rich editor on every keystroke. The rich view catches up on exit.
+    isSource: () => sourceOnly,
+    setSourceOnly(next, selection) {
+      const wanted = Boolean(next);
+      if (wanted === sourceOnly) return;
+      if (wanted) {
+        sourceSelection = selection || richEditor?.selection() || sourceSelection;
+        sourceOnly = true;
+        return;
+      }
+      if (selection) sourceSelection = selection;
+      sourceOnly = false;
+      if (richStale) syncRich();
+      else richEditor?.setDocument(content, sourceSelection, { logical: true });
+    },
+    setSourceSelection(selection) { if (selection) sourceSelection = { anchor: selection.anchor, head: selection.head }; },
+    replaceSource(next, selection, typing = true, before = null) {
+      if (next === content) { if (selection) sourceSelection = selection; return; }
+      record(next, selection, before || sourceSelection, typing);
+      if (selection) sourceSelection = selection;
+      richStale = true;
+    },
+    syncRich,
     setLocked(next) {
       // Transition protection is temporary and owned by the app. An unlock
       // attempt while a document is being replaced must not clear either the
@@ -177,7 +220,11 @@ export function create(options) {
       locked = Boolean(next); groupTime = 0; richEditor?.setLocked(locked); options.onPresentation?.(false, locked, false);
     },
     setTransitionLocked(next) { transitionLocked = Boolean(next); groupTime = 0; richEditor?.setTransitionLocked?.(); },
-    replaceContent(next) { if (next !== content) { record(next, sourceSelection, selection(), false); sync(content); } },
+    replaceContent(next) {
+      if (next === content) return;
+      if (sourceOnly) { this.replaceSource(next, sourceSelection, false); return; }
+      record(next, sourceSelection, selection(), false); sync(content);
+    },
     selectRange(anchor, head = anchor, focus = true) {
       groupTime = 0;
       // Selection requests carry exact source offsets; keep them as the rich

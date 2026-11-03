@@ -135,7 +135,9 @@ function countWords(text) {
 function updateStats() {
   const words = countWords(current.content);
   $('word-count').textContent = `${words.toLocaleString()} ${words === 1 ? 'word' : 'words'}`;
-  $('reading-time').textContent = `${Math.max(1, Math.ceil(words / 220))} min read`;
+  $('reading-time').textContent = words ? `${Math.max(1, Math.ceil(words / 220))} min read` : '';
+  const readingDivider = $('reading-time').previousElementSibling;
+  if (readingDivider?.classList.contains('status-divider')) readingDivider.hidden = !words;
 }
 let statsTimer;
 function scheduleStats() { clearTimeout(statsTimer); statsTimer = setTimeout(updateStats, 180); }
@@ -154,6 +156,7 @@ function showDocument() {
   // does not yank the tree away from under the pointer.
   if (!current.active && activeFolder) setFolderVisible(true);
   else renderNavigationDock();
+  syncDockForViewport();
   $('folder-empty').hidden = current.active || !activeFolder;
   syncFolderSelection();
 }
@@ -193,7 +196,32 @@ function goHome() {
     }
   });
 }
-const narrowDrawers = () => window.matchMedia('(max-width:640px)').matches;
+const narrowDrawers = () => window.matchMedia('(max-width:980px)').matches;
+let dockAutoClosed = false;
+function syncDocumentChrome() {
+  const view = document.getElementById('document-view');
+  const reader = document.getElementById('reader-scroll');
+  if (!view || !reader || !reader.parentElement) return;
+  let height = 0;
+  for (const child of reader.parentElement.children) {
+    if (child === reader) break;
+    if (child.hidden) continue;
+    const style = getComputedStyle(child);
+    if (style.display === 'none' || style.position === 'absolute' || style.position === 'fixed') continue;
+    height += child.getBoundingClientRect().height;
+  }
+  view.style.setProperty('--document-chrome-height', `${Math.round(height)}px`);
+}
+function syncDockForViewport() {
+  const narrow = narrowDrawers();
+  if (narrow && !dockAutoClosed) {
+    if (dockVisible) { dockVisible = false; dockAutoClosed = true; renderNavigationDock(); }
+  } else if (!narrow && dockAutoClosed) {
+    dockAutoClosed = false; dockVisible = outlineVisible; renderNavigationDock();
+  }
+  syncDocumentChrome();
+}
+window.addEventListener('resize', syncDockForViewport);
 let dockTab = 'outline', dockVisible = outlineVisible;
 function renderNavigationDock() {
   const show = dockVisible && !$('document-view').hidden;
@@ -895,15 +923,19 @@ $('command-dialog').addEventListener('click', event => { if (event.target === $(
 $('palette-hint').addEventListener('click', () => openCommands());
 
 let matches = [], findIndex = -1, findSource = null;
-function openFind() { if (!current.active) return; $('find-bar').hidden = false; $('find-input').focus(); $('find-input').select(); updateFind(); syncFindControl(); }
+function openFind() { if (!current.active) return; $('find-bar').hidden = false; syncDocumentChrome(); $('find-input').focus(); $('find-input').select(); updateFind(); syncFindControl(); }
 function clearHighlights() { editor?.clearHighlight?.(); }
 function findMatches(query) {
   const result = [];
   if (!query) return result;
-  const search = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu'); let match;
+  let search;
+  try { search = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu'); }
+  catch { return result; }
+  let match;
   while ((match = search.exec(current.content)) && result.length < 2000) result.push({ from: match.index, to: match.index + match[0].length });
   return result;
 }
+function findCountLabel(count) { return count >= 2000 ? '2,000+' : String(count); }
 function updateFind() {
   const query = $('find-input').value;
   matches = findMatches(query); findIndex = -1; findSource = current.content;
@@ -926,6 +958,15 @@ function refreshFindOffsets(direction) {
     findIndex = last < 0 ? 0 : last + 1;
   }
 }
+function revealSourceMatch(match) {
+  const input = $('document-source');
+  input.setSelectionRange(match.from, match.to);
+  const line = current.content.slice(0, match.from).split('\n').length - 1;
+  const lineHeight = parseFloat(getComputedStyle(input).lineHeight) || 20;
+  if (line * lineHeight < input.scrollTop || (line + 1) * lineHeight > input.scrollTop + input.clientHeight) {
+    input.scrollTop = Math.max(0, line * lineHeight - input.clientHeight / 3);
+  }
+}
 function nextFind(direction) {
   const query = $('find-input').value;
   if (!query) { matches = []; findIndex = -1; $('find-result').textContent = ''; clearHighlights(); return; }
@@ -936,12 +977,37 @@ function nextFind(direction) {
   // Focus stays in the find field: the editor selection is revealed without
   // stealing the caret, and a mirrored highlight keeps the hit visible while
   // the input owns focus.
-  if (documentMode === 'source') { $('document-source').setSelectionRange(match.from, match.to); }
+  if (documentMode === 'source') revealSourceMatch(match);
   else editor?.selectRange(match.from, match.to, false);
   editor?.highlightRange?.(match.from, match.to);
-  $('find-result').textContent = `${findIndex + 1} / ${matches.length}`;
+  $('find-result').textContent = `${findIndex + 1} / ${findCountLabel(matches.length)}`;
 }
-function closeFind() { $('find-bar').hidden = true; $('replace-bar').hidden = true; clearHighlights(); editor?.focus(); syncFindControl(); }
+let findRefreshTimer = 0;
+function refreshFindAfterEdit() {
+  if ($('find-bar').hidden) return;
+  const query = $('find-input').value;
+  if (!query) return;
+  const previous = matches[findIndex];
+  const anchor = previous ? previous.from : Math.max(0, editor?.getSelection()?.head ?? 0);
+  matches = findMatches(query); findSource = current.content;
+  if (!matches.length) { findIndex = -1; $('find-result').textContent = 'No matches'; clearHighlights(); return; }
+  let index = matches.findIndex(match => match.from >= anchor);
+  if (index < 0) index = matches.length - 1;
+  findIndex = index;
+  editor?.highlightRange?.(matches[findIndex].from, matches[findIndex].to);
+  $('find-result').textContent = `${findIndex + 1} / ${findCountLabel(matches.length)}`;
+}
+function scheduleFindRefresh() {
+  if ($('find-bar').hidden) return;
+  clearTimeout(findRefreshTimer);
+  findRefreshTimer = setTimeout(refreshFindAfterEdit, 140);
+}
+function closeFind() {
+  $('find-bar').hidden = true; $('replace-bar').hidden = true; syncDocumentChrome(); clearHighlights();
+  if (documentMode === 'source') $('document-source').focus();
+  else editor?.focus();
+  syncFindControl();
+}
 function toggleFocus() { document.body.classList.toggle('focus-mode'); }
 function setDocumentWidth(full, persist = true) {
   // Anchor on what the reader is actually looking at, not on the first block.
@@ -964,6 +1030,7 @@ function toggleDocumentWidth() { setDocumentWidth(!wideLayout); }
 function setFormatToolbarVisible(visible, persist = true) {
   formatToolbarVisible = visible !== false;
   $('format-tools').hidden = !formatToolbarVisible || !current.active || documentMode !== 'edit';
+  syncDocumentChrome();
   const button = $('format-toggle');
   button.setAttribute('aria-pressed', String(formatToolbarVisible));
   button.setAttribute('aria-expanded', String(formatToolbarVisible));
@@ -1090,7 +1157,15 @@ document.addEventListener('keydown', event => {
   if (control && event.shiftKey && event.key.toLowerCase() === 'p') { event.preventDefault(); $('command-dialog').open ? $('command-dialog').close() : openCommands(); return; }
   if (event.defaultPrevented) return;
   if ($('help-dialog').open || $('command-dialog').open || $('confirm-dialog').open || $('open-dialog').open || $('source-dialog').open || $('editor-action-dialog').open) return;
-  if (event.key === 'Escape') { if (!$('find-bar').hidden) closeFind(); else document.body.classList.remove('focus-mode'); return; }
+  if (event.key === 'Escape') {
+    if (!$('find-bar').hidden) closeFind();
+    else if (document.body.classList.contains('focus-mode')) document.body.classList.remove('focus-mode');
+    else if (narrowDrawers() && dockVisible && document.activeElement?.closest?.('.navigation-rail,#outline,#file-browser,#folder-search')) {
+      dockVisible = false; renderNavigationDock();
+      document.querySelector(`[data-dock-tab="${dockTab}"]`)?.focus();
+    }
+    return;
+  }
   if (event.key === 'F11') { event.preventDefault(); invoke('toggle_fullscreen').catch(toast); return; }
   if (!control) return;
   const key = event.key.toLowerCase();
@@ -1167,6 +1242,7 @@ async function start() {
   const state = await invoke('bootstrap'); setPlatform(state.platform); nativePlatform = state.platform; omarchy = state.theme;
   if (preferences.get('theme', null) === null && omarchy) selectedTheme = 'omarchy';
   applyTheme(selectedTheme, false);
+  syncDockForViewport();
   setTouchpadZoom(touchpadZoom, false);
   if (omarchy && !$('preference-theme').querySelector('[value=omarchy]')) { const option = document.createElement('option'); option.value = 'omarchy'; option.textContent = 'Omarchy'; $('preference-theme').append(option); }
   applyDocumentPreferences();
