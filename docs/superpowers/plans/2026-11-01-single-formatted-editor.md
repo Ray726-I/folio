@@ -1,8 +1,8 @@
 # Folio: single Formatted editor migration
 
 Branch: `feat/single-formatted-editor` (from `main` @ `3192542`)
-Status: Stages 1–2 complete (single editor live, suites green). Stage 3
-(performance) is next.
+Status: historical implementation record. Stages 1–3 were completed and merged
+into `main`; this document describes the work at the time it was written.
 
 ## Intent
 

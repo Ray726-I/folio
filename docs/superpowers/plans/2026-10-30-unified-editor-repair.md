@@ -148,4 +148,4 @@ formula/link dialogs with in-document editing, establish IME correctness, or
 prove every browser clipboard/autocorrect/drag path. Exact logical bookmarks
 retain source offsets that do not have an exact visible rich caret; that is not
 the same as displaying their source inline. These remain explicit follow-up
-gates in `docs/UNIFIED_EDITOR_TODO.md`, rather than hidden behind passing tests.
+gates, now tracked in `docs/ROADMAP.md`, rather than hidden behind passing tests.

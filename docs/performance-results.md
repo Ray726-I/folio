@@ -1,6 +1,6 @@
 # Performance measurements — final implementation
 
-Measured on 2026-11-03 (Asia/Kolkata), on `codex/experiment`; changes are uncommitted. This report supersedes the first implementation comparison: that iteration still rejected independent edits whenever an unrelated block had a partial mapping. The final comparison includes the owner-local eligibility, validated boundary affinity, and narrow plain-paragraph proof.
+Measured on 2026-11-03 (Asia/Kolkata) during the performance-recovery work, which is now committed to `main`. This report supersedes the first implementation comparison: that iteration still rejected independent edits whenever an unrelated block had a partial mapping. The final comparison includes the owner-local eligibility, validated boundary affinity, and narrow plain-paragraph proof.
 
 ## Outcome
 

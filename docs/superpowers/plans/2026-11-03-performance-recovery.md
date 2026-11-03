@@ -1,6 +1,6 @@
 # Folio Performance Recovery Implementation Plan
 
-> **For agentic workers:** Use the executing-plans skill to implement this plan task by task. Steps use checkbox syntax for tracking. Execution is recorded at the end of this document; changes remain uncommitted on `codex/experiment`.
+> **For agentic workers:** Use the executing-plans skill to implement this plan task by task. Steps use checkbox syntax for tracking. Execution is recorded at the end of this document; the work is now committed to `main` and this plan is retained as a historical implementation record.
 
 **Goal:** Remove measured interaction stalls while preserving exact Markdown, immediate editing feedback, navigation, accessibility, and the existing visual character.
 
@@ -10,7 +10,7 @@
 
 ## Evidence and limits
 
-Current branch: `codex/experiment`. No application fixes have been applied during this investigation.
+Branch at the time of writing: `codex/experiment`. No application fixes had been applied when the investigation began.
 
 - Existing browser keystroke benchmark: 10 KB median/worst 9.4/25.6 ms; 50 KB 31.7/54.2 ms; 100 KB 56.9/94.1 ms. These measure keydown to canonical source publication, not input-to-paint.
 - A readable browser CPU profile at roughly 100 KB contains parsing, buildLedger, token allocation, equality checks, and garbage collection. It confirms the parse/ledger pipeline is hot, but does not assign precise percentages to each component.

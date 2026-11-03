@@ -165,11 +165,14 @@ For real-webview, CSP, and cross-platform checks that the mocked UI tests cannot
 - `ui/theme.js`: theme definitions, contrast/palette derivation, Mermaid colours.
 - `ui/preview.js`: preview rendering, lazy KaTeX/Mermaid loading, diagram lifecycle.
 - `ui/editor.js`: editor shell, document lifecycle, outline and dialogs.
-- `ui/editor/`: source model, rich and Markdown presentations, shared history; bundled into `ui/vendor/editor/` by `npm run build:editor`.
+- `ui/editor/`: source model, rich editor, exact source editing and shared history; bundled into `ui/vendor/editor/` by `npm run build:editor`.
 - `ui/app.js`: documents, folders, command window, event wiring.
 - `ui/fonts/`: bundled Inter, Source Serif 4, and JetBrains Mono variable fonts.
 - `ui/vendor/`: vendored preview dependencies; licenses are listed in `THIRD_PARTY_NOTICES.md`.
 - `tests/` and `docs/manual-verification.md`: automated and manual verification.
+- `docs/ENGINEERING-NOTES.md`: architecture, native rendering and performance guardrails, known limitations.
+- `docs/ROADMAP.md`: known future work.
+- `docs/performance-results.md`: current performance measurements and raw report links.
 
 
 For real-parser editor regression checks:

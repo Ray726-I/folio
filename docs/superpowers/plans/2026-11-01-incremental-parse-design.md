@@ -3,8 +3,9 @@
 Status: **implemented** in `ui/editor/source-edits.js` (`tryIncremental`,
 `shiftModel`). Measured below; the guards listed under "Preconditions" are the
 ones the fuzzer and suites forced. Companion to
-`docs/superpowers/plans/2026-11-01-single-formatted-editor.md` (Stage 3.1) and
-`docs/editor-migration-report.md` (known limitation 1).
+`docs/superpowers/plans/2026-11-01-single-formatted-editor.md` (Stage 3.1).
+Current architecture and performance guardrails live in
+`docs/ENGINEERING-NOTES.md`.
 
 ## Why
 
