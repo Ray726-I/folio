@@ -20,6 +20,8 @@ use std::{
 use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
+#[cfg(target_os = "linux")]
+use gtk::{gdk::EventType, prelude::*};
 
 const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mdtxt"];
 const DEFAULT_INSPECTED_LIMIT: usize = 10_000;
@@ -40,6 +42,8 @@ struct AppState {
     /// `ready` or by the startup fallback. Test-and-set keeps `ready`
     /// idempotent and the fallback from re-showing a visible window.
     shown: AtomicBool,
+    /// Linux touchpad pinch gestures are blocked unless the user opts in.
+    touchpad_zoom: AtomicBool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -595,6 +599,11 @@ fn set_window_zoom(
         return Err("Unsupported zoom level.".into());
     }
     window.set_zoom(scale).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn set_touchpad_zoom(enabled: bool, state: tauri::State<'_, Arc<AppState>>) {
+    state.touchpad_zoom.store(enabled, Ordering::SeqCst);
 }
 
 #[tauri::command(async)]
@@ -1790,7 +1799,7 @@ fn main() {
                     recycle_renderer(&cleanup, state.inner());
                 }
             });
-            tauri::WebviewWindowBuilder::new(
+            let main_window = tauri::WebviewWindowBuilder::new(
                 app,
                 renderer::MAIN_LABEL,
                 tauri::WebviewUrl::App("index.html".into()),
@@ -1802,6 +1811,21 @@ fn main() {
             .visible(false)
             .on_navigation(is_app_navigation)
             .build()?;
+            #[cfg(target_os = "linux")]
+            {
+                let state = app.state::<Arc<AppState>>().inner().clone();
+                main_window.with_webview(move |webview| {
+                    webview.inner().connect_event(move |_, event| {
+                        if event.event_type() == EventType::TouchpadPinch
+                            && !state.touchpad_zoom.load(Ordering::SeqCst)
+                        {
+                            gtk::glib::Propagation::Stop
+                        } else {
+                            gtk::glib::Propagation::Proceed
+                        }
+                    });
+                })?;
+            }
             // A frontend that never calls `ready` (a crash during boot, a broken
             // bundle) must not leave the app permanently invisible.
             let fallback = app.handle().clone();
@@ -1866,6 +1890,7 @@ fn main() {
             preview_check,
             ready,
             set_window_zoom,
+            set_touchpad_zoom,
             document_changed,
             set_title,
             close_window,

@@ -1,7 +1,10 @@
 .mermaid-host { position:relative; }
-.diagram-expand { position:absolute; z-index:3; top:8px; left:8px; margin:0; padding:5px 9px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--muted); font:500 12px/1.4 var(--font-ui); cursor:pointer; opacity:0; }
+.diagram-expand { position:absolute; z-index:3; top:8px; left:8px; display:grid; place-items:center; box-sizing:border-box; width:30px; height:30px; margin:0; padding:5px; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--muted); cursor:pointer; opacity:0; }
+/* Mirrored diagonal arrows: outward toward the top-left and bottom-right. */
+.diagram-expand::before { content:""; display:block; width:18px; height:18px; background:currentColor; -webkit-mask:var(--expand-glyph) center/contain no-repeat; mask:var(--expand-glyph) center/contain no-repeat; }
+.diagram-expand { --expand-glyph:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 4H4v6m0-6 6.5 6.5M14 20h6v-6m0 6-6.5-6.5'/%3E%3C/svg%3E"); }
 .mermaid-host:hover>.diagram-expand,.mermaid-host:focus-within>.diagram-expand { opacity:1; }
-.diagram-expand:hover { color:var(--fg); background:var(--hover); }
+.diagram-expand:hover { color:var(--fg); background:var(--hover); border-color:var(--line); }
 .diagram-expand:focus-visible,.diagram-viewer button:focus-visible,.diagram-viewer-viewport:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .diagram-viewer { box-sizing:border-box; width:calc(100vw - 48px); max-width:1440px; height:calc(100vh - 64px); max-height:1100px; margin:auto; padding:0; border:1px solid var(--line); border-radius:12px; background:var(--bg); color:var(--fg); overflow:hidden; box-shadow:0 16px 64px #0005; }
 .diagram-viewer[open] { display:flex; flex-direction:column; }

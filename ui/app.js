@@ -5,6 +5,8 @@ let activeFolder = null, folderEntries = [], folderVisible = true, expandedFolde
 let renderedFolder = { path: null, entries: null };
 let fontSize = Math.min(40, Math.max(12, Number(preferences.get('fontSize', 19)) || 19));
 let windowZoom = Math.min(2, Math.max(.6, Number(preferences.get('windowZoom', 1)) || 1));
+let touchpadZoom = preferences.get('touchpadZoom', false) === true;
+let nativePlatform = '';
 let remoteImages = preferences.get('remoteImages', false) === true;
 let readingFont = ['serif', 'sans', 'mono'].includes(preferences.get('readingFont', 'sans')) ? preferences.get('readingFont', 'sans') : 'sans';
 const legacyOutline = preferences.get('outline', null);
@@ -61,6 +63,12 @@ function commandError(error) {
 }
 function errorMessage(error) { return commandError(error).message; }
 function icon(name) { const node = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); node.classList.add('icon'); node.setAttribute('aria-hidden', 'true'); const use = document.createElementNS('http://www.w3.org/2000/svg', 'use'); use.setAttribute('href', `#i-${name}`); node.append(use); return node; }
+function fileIconName(path) { return /\.(?:md|markdown|mdown|mdtxt)$/i.test(path || '') ? 'markdown' : 'file'; }
+function fileIcon(path) {
+  const kind = fileIconName(path);
+  const node = icon(kind); node.classList.add('file-kind', `file-kind-${kind}`);
+  return node;
+}
 function toast(message) { $('toast').textContent = errorMessage(message); $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 4500); }
 function status(message) { $('app-status').textContent = message; }
 let titleTimer = 0, lastSentTitle = { name: null, dirty: null };
@@ -82,6 +90,10 @@ function updateTitle() {
   renderedTitleKey = key;
   syncDocumentMode();
   $('document-name').textContent = name || 'Folio';
+  const emblem = document.querySelector('.document-emblem');
+  const kind = current.active ? fileIconName(current.path || current.name) : 'folder';
+  emblem?.querySelector('use')?.setAttribute('href', `#i-${kind}`);
+  emblem?.classList.toggle('file-kind-markdown', kind === 'markdown');
   $('document-location').textContent = current.path ? current.path : activeFolder?.path || (current.active ? 'Unsaved document' : 'Markdown files and folders');
   $('document-location').title = current.path || activeFolder?.path || '';
   $('dirty-dot').hidden = !dirty();
@@ -336,6 +348,14 @@ function zoomText(delta, reset = false) {
   if (anchor && previousTop !== undefined) $('reader-scroll').scrollTop += anchor.getBoundingClientRect().top - previousTop;
 }
 function zoomWindow(delta, reset = false) { windowZoom = reset ? 1 : Math.min(2, Math.max(.6, Math.round((windowZoom + delta) * 10) / 10)); $('zoom-reset').textContent = `${Math.round(windowZoom * 100)}%`; preferences.set('windowZoom', windowZoom); invoke('set_window_zoom', { scale: windowZoom }).catch(toast); }
+function setTouchpadZoom(enabled, announce = true) {
+  touchpadZoom = nativePlatform === 'linux' && enabled === true;
+  preferences.set('touchpadZoom', touchpadZoom);
+  $('preference-touchpad-zoom').checked = touchpadZoom;
+  invoke('set_touchpad_zoom', { enabled: touchpadZoom }).catch(toast);
+  if ($('command-dialog').open) renderCommands();
+  if (announce) status(`Touchpad zoom ${touchpadZoom ? 'enabled' : 'disabled'}`);
+}
 function applyReadingFont(font = readingFont, persist = true) {
   readingFont = ['sans', 'mono'].includes(font) ? font : 'serif';
   root.dataset.readingFont = readingFont;
@@ -423,7 +443,7 @@ async function browseTo(path) {
   for (const entry of pickerListing.entries) {
     const row = document.createElement('button'); row.className = 'file-dialog-item'; row.setAttribute('role', 'option'); row.setAttribute('aria-selected', 'false');
     row.__folioPickerEntry = entry;
-    row.append(icon(entry.directory ? 'open' : 'file'));
+    row.append(entry.directory ? icon('folder') : fileIcon(entry.name || entry.path));
     const label = document.createElement('span'); label.textContent = entry.name; row.append(label);
     row.onclick = () => selectPickerRow(row);
     row.ondblclick = () => entry.directory ? browseTo(entry.path).catch(toast) : confirmOpenPicker();
@@ -552,11 +572,11 @@ function renderFolderEntries() {
       const expanded = expandedFolders.has(pathKey(entry.path));
       button.setAttribute('aria-expanded', String(expanded));
       const chevron = icon('chevron'); chevron.classList.add('tree-chevron'); button.append(chevron);
-      const folderIcon = icon('folder'); folderIcon.classList.add('tree-folder'); button.append(folderIcon);
+      const folderIcon = icon(expanded ? 'folder-open' : 'folder'); folderIcon.classList.add('tree-folder'); button.append(folderIcon);
       button.onclick = () => { expanded ? expandedFolders.delete(pathKey(entry.path)) : expandedFolders.add(pathKey(entry.path)); renderFolderEntries(); };
     } else {
       const spacer = document.createElement('span'); spacer.className = 'tree-spacer'; button.append(spacer);
-      const fileIcon = icon('file'); fileIcon.classList.add('tree-file'); button.append(fileIcon);
+      const glyph = fileIcon(entry.name || entry.path); glyph.classList.add('tree-file'); button.append(glyph);
       if (samePath(current.path, entry.path)) button.setAttribute('aria-current', 'page');
       button.onclick = () => requestOpen(entry.path);
     }
@@ -684,7 +704,7 @@ function renderRecent() {
   renderRecentMenu();
   const recent = preferences.get('recent', []); $('recent-section').hidden = !recent.length; $('recent-files').replaceChildren();
   for (const path of recent.slice(0, 4)) {
-    const button = document.createElement('button'); button.className = 'recent-file'; button.append(icon('file'));
+    const button = document.createElement('button'); button.className = 'recent-file'; button.append(fileIcon(path));
     const text = document.createElement('div'), name = document.createElement('strong'), location = document.createElement('small');
     name.textContent = basename(path); location.textContent = dirname(path); text.append(name, location); button.append(text); button.title = path; button.onclick = () => requestOpen(path); $('recent-files').append(button);
   }
@@ -701,6 +721,7 @@ function allCommands() {
     { label: 'Try a sample document', icon: 'file', action: () => newDocument(true) },
     { label: 'Clear recent files', icon: 'close', action: () => { preferences.set('recent', []); renderRecent(); toast('Recent files cleared'); } }
   ];
+  if (nativePlatform === 'linux') commands.push({ label: touchpadZoom ? 'Disable touchpad zoom' : 'Enable touchpad zoom', icon: 'read', detail: 'Allow pinch gestures to zoom the app', action: () => setTouchpadZoom(!touchpadZoom) });
   if (current.active) commands.splice(2, 0,
     { label: 'Save', icon: 'save', shortcut: 'Ctrl+S', action: () => requestSave() },
     { label: 'Save as…', icon: 'save', shortcut: 'Ctrl+Shift+S', action: () => requestSave(true) },
@@ -1051,9 +1072,10 @@ async function start() {
     listen('open-files', event => { for (const path of event.payload) requestOpenLocation(path); }),
     listen('system-theme', event => { omarchy = event.payload; if (selectedTheme === 'omarchy') applyTheme('omarchy', false); else if ($('command-dialog').open) renderCommands(); })
   ]);
-  const state = await invoke('bootstrap'); setPlatform(state.platform); omarchy = state.theme;
+  const state = await invoke('bootstrap'); setPlatform(state.platform); nativePlatform = state.platform; omarchy = state.theme;
   if (preferences.get('theme', null) === null && omarchy) selectedTheme = 'omarchy';
   applyTheme(selectedTheme, false);
+  setTouchpadZoom(touchpadZoom, false);
   if (omarchy && !$('preference-theme').querySelector('[value=omarchy]')) { const option = document.createElement('option'); option.value = 'omarchy'; option.textContent = 'Omarchy'; $('preference-theme').append(option); }
   applyDocumentPreferences();
   for (const path of state.paths) requestOpenLocation(path);

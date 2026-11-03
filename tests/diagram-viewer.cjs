@@ -11,10 +11,13 @@ const { openEditor } = require('./editor-browser.cjs');
     const expand = host.getByRole('button', { name: 'Expand diagram', exact: true });
     await host.locator('svg').waitFor();
     await expand.waitFor({ timeout: 2000 });
+    assert.equal(await expand.textContent(), '', 'expand control is icon-only');
+    assert.equal(await expand.getAttribute('title'), 'Expand diagram', 'icon retains a tooltip');
     assert.equal(await expand.getAttribute('contenteditable'), 'false', 'the action is outside the editable document');
     assert.equal(await expand.evaluate(button => getComputedStyle(button).opacity), '0', 'the action stays quiet at rest');
     await host.hover();
     assert.equal(await expand.evaluate(button => getComputedStyle(button).opacity), '1', 'hover reveals the action');
+    if (process.env.FOLIO_DIAGRAM_SCREENSHOT) await expand.screenshot({ path: `${process.env.FOLIO_DIAGRAM_SCREENSHOT}.control.png` });
     await page.mouse.move(0, 0);
     await expand.focus();
     assert.equal(await expand.evaluate(button => getComputedStyle(button).opacity), '1', 'keyboard focus reveals the action');
@@ -36,7 +39,7 @@ const { openEditor } = require('./editor-browser.cjs');
 
     // Create an undo entry before opening: viewer actions must not consume or
     // create editor history, even while the editor DOM observer is running.
-    await page.evaluate(() => editor.selectRange(0));
+    await page.evaluate(() => { editor.selectRange(0); editor.focus(); });
     await page.keyboard.type('X');
     const before = await page.evaluate(() => current.content);
     const renders = await page.evaluate(() => calls.filter(call => call.command === 'mermaid_render_request').length);
@@ -68,7 +71,21 @@ const { openEditor } = require('./editor-browser.cjs');
     await dialog.waitFor({ state: 'hidden' });
     assert.equal(await expand.evaluate(node => node === document.activeElement), true, 'Escape restores focus to the invoking action');
     assert.equal(await page.evaluate(() => current.content), before, 'viewer interactions leave Markdown unchanged');
-    await page.evaluate(() => editor.selectRange(0));
+    await expand.click();
+    await dialog.waitFor();
+    const panel = await dialog.boundingBox();
+    const inside = { x: panel.x + 30, y: panel.y + 100 };
+    await page.mouse.click(inside.x, inside.y);
+    assert.equal(await dialog.isVisible(), true, 'clicks inside the panel keep it open');
+    await page.mouse.move(inside.x, inside.y); await page.mouse.down();
+    await page.mouse.move(1, 1, { steps: 8 }); await page.mouse.up();
+    assert.equal(await dialog.isVisible(), true, 'dragging out of the panel does not dismiss it');
+    await page.mouse.click(1, 1);
+    await dialog.waitFor({ state: 'hidden' });
+    assert.equal(await expand.evaluate(node => node === document.activeElement), true, 'backdrop dismissal restores opener focus');
+    assert.equal(await page.evaluate(() => current.content), before, 'backdrop dismissal preserves the document');
+
+    await page.evaluate(() => { editor.selectRange(0); editor.focus(); });
     await page.keyboard.press('Control+z');
     assert.equal(await page.evaluate(() => current.content), source, 'viewer interactions preserve the prior undo entry');
 
@@ -106,6 +123,11 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.ok(await touchDialog.getByRole('button').evaluateAll(nodes => nodes.every(node => node.offsetWidth >= 44 && node.offsetHeight >= 44)), 'all viewer controls have 44px touch targets');
     await touchDialog.getByRole('button', { name: 'Close diagram' }).tap();
     await touchDialog.waitFor({ state: 'hidden' });
+    await touchExpand.tap();
+    await touchDialog.waitFor();
+    await touchPage.touchscreen.tap(1, 1);
+    await touchDialog.waitFor({ state: 'hidden' });
+    assert.equal(await touchExpand.evaluate(node => node === document.activeElement), true, 'touch backdrop dismissal restores focus');
     const cloneCost = await touchPage.evaluate(async () => {
       const svg = document.querySelector('.mermaid-host svg');
       // A legitimate ID can equal a hex color; only references to the ID may

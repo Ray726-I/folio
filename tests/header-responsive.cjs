@@ -37,7 +37,7 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.locator('#save').click();
     await page.waitForFunction(() => !busy && current.content === current.saved);
     await page.setViewportSize({ width: 1180, height: 800 });
-    assert.equal(await page.locator('#save').isVisible(), false, 'wide toolbar uses the text indicator');
+    assert.equal(await page.locator('#save').isVisible(), true, 'wide toolbar also uses the save icon');
 
     await page.evaluate(() => goHome());
     await page.waitForFunction(() => document.querySelector('#document-view').hidden);

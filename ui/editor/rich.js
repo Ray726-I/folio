@@ -509,37 +509,6 @@ export function createRichEditor(parent, options) {
     });
     input.addEventListener('blur', () => finish(true));
   }
-  function revealAtomSource(pmPos, attrText, image = false) {
-    if (options.isLocked()) return;
-    const mapped = richMapping(model, pmPos, { bias: 'right' });
-    const owner = mapped?.owner;
-    const needle = String(attrText ?? '');
-    let chosen = null;
-    if (owner && Number.isInteger(owner.sourceFrom) && Number.isInteger(owner.sourceTo) && owner.sourceFrom < owner.sourceTo) {
-      if (image) {
-        const source = model.source;
-        let depth = 0, close = -1;
-        if (source.slice(owner.sourceFrom, owner.sourceFrom + 2) === '![') {
-          for (let i = owner.sourceFrom + 2; i < owner.sourceTo; i++) {
-            if (source[i] === '\\') { i++; continue; }
-            if (source[i] === '[') depth++;
-            else if (source[i] === ']') { if (depth) depth--; else { close = i; break; } }
-          }
-        }
-        chosen = close < 0 ? null : inlineDestination(close, owner.sourceTo);
-        if (!chosen) { options.message?.('This image destination cannot be edited safely.'); return; }
-      } else {
-      const inner = needle ? model.source.indexOf(needle, owner.sourceFrom) : -1;
-      chosen = inner >= owner.sourceFrom && inner + needle.length <= owner.sourceTo
-        ? { from: inner, to: inner + needle.length, current: needle }
-        : { from: owner.sourceFrom, to: owner.sourceTo, current: model.source.slice(owner.sourceFrom, owner.sourceTo) };
-      }
-    } else if (Number.isInteger(mapped?.source)) {
-      chosen = { from: mapped.source, to: mapped.source, current: '' };
-    }
-    if (!chosen) return;
-    void editDestination({ title: 'Edit source', ...chosen, fallbackFrom: chosen.from, fallbackTo: chosen.to });
-  }
   function revealCurrentSelection() {
     if (options.isLocked() || !options.revealSource) return;
     try {
@@ -637,7 +606,7 @@ export function createRichEditor(parent, options) {
   }
   function mathView(node, editor, getPos) {
     const dom = document.createElement(node.isInline ? 'span' : 'div'); dom.className = node.isInline ? 'math-inline' : 'math-block'; dom.contentEditable = 'false';
-    const formula = document.createElement('span'); formula.className = 'math-formula'; formula.title = 'Click to edit formula';
+    const formula = document.createElement('span'); formula.className = 'math-formula'; formula.title = 'Double-click to edit formula';
     formula.setAttribute('role', 'button'); formula.setAttribute('aria-label', 'Edit formula'); formula.tabIndex = 0;
     const panel = document.createElement('span'); panel.className = 'math-local-editor'; panel.hidden = true;
     const input = document.createElement('textarea'); input.setAttribute('aria-label', 'Formula source'); input.rows = node.isInline ? 2 : 4;
@@ -770,20 +739,10 @@ export function createRichEditor(parent, options) {
       input.addEventListener('blur', () => finish(true));
     });
     const lease = options.reserveImage();
-    const edit = button('Edit image', () => {
-      if (options.isLocked()) return;
-      let pos = null;
-      try { pos = getPos(); } catch { pos = null; }
-      if (pos != null) revealAtomSource(pos, node.attrs.src, true);
-      else revealCurrentSelection();
-    });
-    edit.setAttribute('aria-label', 'Edit image'); edit.title = 'Edit image source';
     const render = async (consent = false) => {
       const current = ++generation; dom.replaceChildren();
       lease.assign('');
       const caption = document.createElement('span'); caption.className = 'image-caption'; caption.textContent = node.attrs.alt || 'Image'; dom.append(caption);
-      edit.disabled = options.isLocked();
-      dom.append(edit);
       if (!lease.allowed) { caption.textContent = 'Image limit reached. Source is preserved.'; return; }
       try {
         const image = await options.resolveImage(node.attrs.src, consent);
@@ -1249,15 +1208,6 @@ export function createRichEditor(parent, options) {
       try { ranges = folioHighlightRanges(selection.getRangeAt(0)); }
       catch { ranges = []; }
     }
-    if (!ranges.length && view.state.selection instanceof NodeSelection) {
-      const selected = view.nodeDOM(view.state.selection.from);
-      if (selected?.matches?.('.math-block,.math-inline,.image-widget')) {
-        selected.classList.add('folio-rendered-selected');
-        const range = document.createRange();
-        range.selectNodeContents(selected.querySelector('.katex-html') || selected);
-        ranges = folioHighlightRanges(range);
-      }
-    }
     // A standing find highlight survives selectionchange events that belong
     // to the find field (the native document selection is empty there).
     if (!ranges.length && paintSearchHighlight()) return;
@@ -1371,19 +1321,13 @@ export function createRichEditor(parent, options) {
       });
       input.addEventListener('blur', () => finish(true));
     });
-    // Author links behave like Markdown links: plain click reveals the exact
-    // source in the source presentation for editing, Ctrl/Cmd-click opens.
-    // Other inline elements have no click action; the atom selects normally.
+    // Source editing uses the shared double-click gesture. Ordinary clicks
+    // keep the link rendered; modifier clicks still open its destination.
     dom.addEventListener('click', event => {
       const anchor = event.target.closest('a');
       if (!anchor || event.button !== 0) return;
-      if (event.ctrlKey || event.metaKey || options.isLocked()) return;
-      let pos = null;
-      try { pos = getPos(); } catch { pos = null; }
-      if (pos == null) return;
-      event.preventDefault();
-      event.stopPropagation();
-      revealAtomSource(pos, anchor.getAttribute('href') || '');
+      event.preventDefault(); event.stopPropagation();
+      if (event.ctrlKey || event.metaKey || options.isLocked()) options.openLink(anchor.getAttribute('href') || '');
     });
     const render = () => {
       dom.replaceChildren();
@@ -1537,84 +1481,13 @@ export function createRichEditor(parent, options) {
     // A drag entering from outside the editor never saw a mousedown, so arm
     // the guard here as a backstop; in-editor drags are guarded centrally.
     projection.addEventListener('mousemove', event => { if (event.buttons & 1) setSelectionGuarded(true); });
-    const actions = document.createElement('div'); actions.className = 'extension-actions';
-    const editLabel = /^---\n/.test(node.textContent) ? 'Edit front matter' : 'Edit source';
-    // In-place source editing: this block's literal Markdown opens in a
-    // textarea inside the block and commits through the exact source splice,
-    // so editing never requires switching the whole document to a text engine.
-    const panel = document.createElement('div'); panel.className = 'extension-source-editor'; panel.hidden = true;
-    const sourceInput = document.createElement('textarea');
-    sourceInput.setAttribute('aria-label', `${editLabel} for this block`);
-    sourceInput.spellcheck = false;
-    sourceInput.rows = Math.min(24, Math.max(3, node.textContent.split('\n').length));
-    const commitSource = () => {
-      if (options.isLocked()) return;
-      const frame = sourceFrame();
-      if (!frame) { options.message('Could not safely locate this block in the source.'); return; }
-      if (sourceInput.value === model.source.slice(frame.from, frame.to)) { panel.hidden = true; projection.hidden = false; edit.focus(); return; }
-      projection.hidden = false;
-      const outcome = replaceLogicalSelection(sourceInput.value, 'command', { from: frame.from, to: frame.to, all: false, collapsed: false });
-      if (outcome.committed) { panel.hidden = true; editor.focus(); }
-      else projection.hidden = true;
-    };
-    // Only reachable when the ledger cannot prove an exact byte range for this
-    // block. Kept until the source presentation is removed.
-    const revealFallback = () => {
-      let pos = null;
-      try { pos = getPos(); } catch { pos = null; }
-      if (pos != null) {
-        const owner = model.ledger?.owners?.find(entry => entry.pmFrom === pos && entry.type === 'raw_block');
-        if (owner && Number.isInteger(owner.sourceFrom) && Number.isInteger(owner.sourceTo)) {
-          options.revealSource?.(owner.sourceFrom, owner.sourceTo);
-          return;
-        }
-        try {
-          const mapped = richMapping(model, pos + 1, { bias: 'right' });
-          const fallback = mapped?.owner;
-          if (fallback && Number.isInteger(fallback.sourceFrom) && Number.isInteger(fallback.sourceTo)) {
-            options.revealSource?.(fallback.sourceFrom, fallback.sourceTo);
-            return;
-          }
-        } catch {}
-      }
-      revealCurrentSelection();
-    };
-    function exposeSource(selectAll = true) {
-      if (revealSourceBlock(dom)) return;
-      if (options.isLocked()) return;
-      const frame = sourceFrame();
-      if (!frame) { revealFallback(); return; }
-      sourceInput.value = model.source.slice(frame.from, frame.to);
-      projection.hidden = true;
-      panel.hidden = false;
-      sourceInput.focus();
-      if (selectAll) sourceInput.select();
-      else sourceInput.setSelectionRange(0, 0);
-    }
-    const edit = button(editLabel, () => exposeSource());
-    // Definition lists are native-rendered extensions, so their DOM cannot be
-    // edited as rich text. A plain click exposes only this block's exact source.
-    projection.addEventListener('dblclick', event => {
-      if (options.isLocked() || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-      const target = event.target instanceof Element ? event.target : event.target.parentElement;
-      if (!target?.closest('dl') || target.closest('a,button,input,textarea,select')) return;
-      const selection = window.getSelection();
-      if (selection && !selection.isCollapsed) return;
-      event.preventDefault(); event.stopPropagation();
-      exposeSource(false);
+    projection.tabIndex = options.isLocked() ? -1 : 0;
+    projection.title = 'Double-click to edit Markdown';
+    projection.addEventListener('keydown', event => {
+      if (event.target !== projection || !['Enter', 'F2'].includes(event.key) || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+      if (revealSourceBlock(dom)) { event.preventDefault(); event.stopPropagation(); }
     });
-    edit.classList.add('extension-edit');
-    edit.setAttribute('aria-label', `${editLabel} for this block`);
-    edit.title = 'Edit this block’s Markdown in place';
-    sourceInput.addEventListener('keydown', event => {
-      if (event.key === 'Escape') { event.preventDefault(); panel.hidden = true; projection.hidden = false; edit.focus(); return; }
-      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); commitSource(); }
-    });
-    const applySource = button('Apply', commitSource);
-    const cancelSource = button('Cancel', () => { panel.hidden = true; projection.hidden = false; edit.focus(); });
-    panel.append(sourceInput, applySource, cancelSource);
-    actions.append(edit);
-    dom.append(projection, actions, panel);
+    dom.append(projection);
     let generation = 0;
     let mountedSource = null;
     function invalidateTasks() {
@@ -1715,11 +1588,13 @@ export function createRichEditor(parent, options) {
       try {
         const html = await options.renderExtension(source);
         if (generation === current && source === node.textContent && dom.isConnected) {
-          projection.innerHTML = html; mountedSource = source; syncTaskControls();
+          projection.innerHTML = html;
+          if (!projection.hasChildNodes()) projection.textContent = /^---\r?\n/.test(source) ? 'Front matter' : 'Markdown block';
+          mountedSource = source; syncTaskControls();
           void mountAuthorImages(source, projection, () => generation !== current || !dom.isConnected);
         }
       }
-      catch { if (current === generation) projection.textContent = 'Rendered view unavailable. Use Edit source to inspect the exact Markdown.'; }
+      catch { if (current === generation) projection.textContent = 'Rendered view unavailable. Double-click to inspect the Markdown.'; }
     };
     let lastRemote = options.remoteImages();
     const refresh = () => {
@@ -1728,17 +1603,14 @@ export function createRichEditor(parent, options) {
         lastRemote = remote; generation++; invalidateTasks();
         if (!remote) projection.querySelectorAll('img').forEach(img => { img.removeAttribute('srcset'); img.removeAttribute('src'); });
       }
-      edit.disabled = options.isLocked(); applySource.disabled = options.isLocked(); sourceInput.disabled = options.isLocked();
-      if (options.isLocked()) panel.hidden = true;
+      projection.tabIndex = options.isLocked() ? -1 : 0;
       syncEditability(); syncTaskControls(); Promise.resolve().then(render);
     };
     refreshers.add(refresh); refresh();
     const removeListeners = () => { refreshers.delete(refresh); };
-    // Atom view: the literal source is not mounted in the reading DOM, so no
-    // duplicate selectable text exists here. Source edits go through the
-    // in-place panel above; task checkboxes are the one bounded exception,
-    // because their whole state is one marker character in the exact raw slice.
-    return { dom, update(next) { if (next.type !== node.type || next.attrs.kind === 'source-edit') return false; const same = next.sameMarkup(node) && next.textContent === node.textContent; if (!same) { generation++; invalidateTasks(); } node = next; if (!same) Promise.resolve().then(render); return true; }, ignoreMutation: () => true, stopEvent: event => event.target.closest?.('.extension-source-editor, button, input[type="checkbox"]') != null, destroy() { generation++; removeListeners(); } };
+    // Double-click reveals literal Markdown in the shared editor. Task
+    // checkboxes commit only their verified source marker.
+    return { dom, update(next) { if (next.type !== node.type || next.attrs.kind === 'source-edit') return false; const same = next.sameMarkup(node) && next.textContent === node.textContent; if (!same) { generation++; invalidateTasks(); } node = next; if (!same) Promise.resolve().then(render); return true; }, ignoreMutation: () => true, stopEvent: event => event.target.closest?.('button, input[type="checkbox"]') != null, destroy() { generation++; removeListeners(); } };
   }
   const safeDestination = value => {
     const destination = String(value || '');
@@ -1859,6 +1731,46 @@ export function createRichEditor(parent, options) {
     return (state, dispatch, view) => goToNextCell(direction)(state, dispatch
       ? transaction => { transaction.setMeta('folio-tab-cell', true); dispatch(transaction); }
       : undefined, view);
+  }
+  function indentSelection(editor, backward) {
+    if (options.isLocked()) return false;
+    const { $from, $to } = editor.state.selection;
+    const source = $from.parent.attrs.kind === 'source-edit' || $to.parent.attrs.kind === 'source-edit';
+    if (!source) {
+      // Tables navigate cells and rendered lists use structural nesting.
+      if (isInTable(editor.state)) return false;
+      for (let depth = $from.depth; depth > 0; depth--) if ($from.node(depth).type === schema.nodes.list_item) return false;
+      if (!$from.parent.inlineContent) return false;
+    }
+    const selection = sourceSelection(editor.state);
+    const from = Math.min(selection.anchor, selection.head), to = Math.max(selection.anchor, selection.head);
+    if (!backward && from === to) {
+      // Tab stops every four columns, including existing literal tabs.
+      const lineStart = model.source.lastIndexOf('\n', from - 1) + 1;
+      let column = 0;
+      for (const character of model.source.slice(lineStart, from)) column += character === '\t' ? 4 - column % 4 : 1;
+      return replaceLogicalSelection(' '.repeat(4 - column % 4), 'command', { from, to, all: false }).handled;
+    }
+    const start = model.source.lastIndexOf('\n', from - 1) + 1;
+    // A selection ending at the next line's start excludes that line.
+    const last = to > from && model.source[to - 1] === '\n' ? to - 1 : to;
+    const newline = model.source.indexOf('\n', last);
+    const end = newline < 0 ? model.source.length : newline;
+    const lines = model.source.slice(start, end).split('\n');
+    const patches = []; let offset = start;
+    const insert = lines.map(line => {
+      const remove = backward ? (line.startsWith('\t') ? 1 : (/^ {1,4}/.exec(line)?.[0].length || 0)) : 0;
+      const prefix = backward ? '' : '    ';
+      if (remove || prefix) patches.push({ from: offset, to: offset + remove, length: prefix.length });
+      offset += line.length + 1;
+      return prefix + line.slice(remove);
+    }).join('\n');
+    if (!patches.length) return true;
+    const map = position => position - start + patches.reduce((delta, patch) => {
+      if (position < patch.from) return delta;
+      return delta + patch.length - Math.min(position - patch.from, patch.to - patch.from);
+    }, 0);
+    return replaceLogicalSelection(insert, 'command', { from: start, to: end, all: false }, { anchor: map(selection.anchor), head: map(selection.head) }).handled;
   }
   function deleteLogical(backward) {
     return (state, dispatch) => {
@@ -2127,6 +2039,14 @@ export function createRichEditor(parent, options) {
     render();
     if (activePopup) positionPopup(menu, view.coordsAtPos(view.state.selection.from));
   }
+  function clearFormulaNodeSelection() {
+    const selection = view.state.selection;
+    if (!(selection instanceof NodeSelection) || !['math_block', 'math_inline'].includes(selection.node.type.name)) return false;
+    const next = Selection.findFrom(view.state.doc.resolve(selection.to), 1, true)
+      || Selection.findFrom(view.state.doc.resolve(selection.from), -1, true);
+    if (next) view.dispatch(view.state.tr.setSelection(next));
+    return true;
+  }
   view = new EditorView(parent, {
     // Keep the view focusable during temporary transition protection; the
     // transaction filter below enforces the effective lock for document edits.
@@ -2175,16 +2095,24 @@ export function createRichEditor(parent, options) {
         options.onChange(model.source, sourceSelection(result.state), beforeSelection, typing);
       }
       activePopup?.update?.();
-      if (!changed && !selectionGuarded && !model.sourceEdit && result.state.selection.empty && result.state.selection.$from.parent.type === schema.nodes.heading && view.hasFocus()) {
-        queueMicrotask(() => {
-          if (view.isDestroyed || selectionGuarded || model.sourceEdit || !view.state.selection.empty || view.state.selection.$from.parent.type !== schema.nodes.heading) return;
-          const pos = view.state.selection.$from.before();
-          revealSourceBlock(view.nodeDOM(pos));
-        });
-      }
+    },
+    handleClickOn(editor, pos, node, nodePos, event, direct) {
+      if (!direct || !['math_block', 'math_inline'].includes(node.type.name) || event.button !== 0
+          || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return false;
+      clearFormulaNodeSelection();
+      window.getSelection()?.removeAllRanges();
+      syncFolioHighlight();
+      return true;
     },
     handleKeyDown(editor, event) {
       if (event.isComposing) return false;
+      // A click can update the browser caret before ProseMirror observes its
+      // selectionchange. Adopt it before source-edit keyboard commands run.
+      if (model.sourceEdit) captureDOMSelection();
+      if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey && document.activeElement === editor.dom) {
+        captureDOMSelection();
+        if (indentSelection(editor, event.shiftKey)) { event.preventDefault(); return true; }
+      }
       if (model.sourceEdit && (event.ctrlKey || event.metaKey) && event.shiftKey && ['Home', 'End'].includes(event.key)) {
         const edge = event.key === 'Home' ? 0 : editor.state.doc.content.size;
         editor.dispatch(editor.state.tr.setSelection(TextSelection.between(editor.state.selection.$anchor, editor.state.doc.resolve(edge))).scrollIntoView());
@@ -3306,10 +3234,10 @@ export function createRichEditor(parent, options) {
       if (!plainClick) return;
     }
     const control = target.closest('button,input,textarea,select');
-    if (control && !control.matches('.code-fence-info,.extension-edit,[aria-label="Edit image"]')) return;
+    if (control && !control.matches('.code-fence-info')) return;
     const sourceTarget = event.type === 'dblclick'
       ? target.closest('h1,h2,h3,h4,h5,h6,a,.math-formula,.code-container,.image-widget,.html-inline,.extension-preview,blockquote,li,ul,ol,table,hr,strong,em,s,code')
-      : target.closest('h1,h2,h3,h4,h5,h6,.code-fence-info,.extension-edit,[aria-label="Edit image"]');
+      : target.closest('.code-fence-info');
     if (sourceTarget && revealSourceBlock(sourceTarget)) { event.preventDefault(); event.stopImmediatePropagation(); }
     else if (model.sourceEdit && event.type === 'click' && !target.closest('button,input,textarea')) {
       const selection = sourceSelection(view.state);
@@ -3328,7 +3256,7 @@ export function createRichEditor(parent, options) {
   view.dom.addEventListener('click', sourceGesture, true);
   view.dom.addEventListener('dblclick', sourceGesture, true);
   view.dom.addEventListener('keydown', event => {
-    if (['Enter', ' '].includes(event.key) && event.target.closest?.('.extension-edit,.math-formula,[aria-label="Edit image"]')) sourceGesture(event);
+    if (['Enter', ' '].includes(event.key) && event.target.closest?.('.math-formula')) sourceGesture(event);
   }, true);
   view.dom.addEventListener('focusin', event => {
     if (event.target.matches?.('.code-fence-info')) sourceGesture(event);
@@ -3343,6 +3271,10 @@ export function createRichEditor(parent, options) {
   // above). Document-level so ranges leaving the reader clear the mirror.
   document.addEventListener('selectionchange', syncFolioHighlight);
   const dismissPopup = event => {
+    if (!event.target.closest?.('.math-block,.math-inline') && clearFormulaNodeSelection()) {
+      window.getSelection()?.removeAllRanges();
+      syncFolioHighlight();
+    }
     if (activePopup && !activePopup.menu.contains(event.target) && !activePopup.trigger?.contains(event.target)) closePopup();
   };
   document.addEventListener('pointerdown', dismissPopup, true);

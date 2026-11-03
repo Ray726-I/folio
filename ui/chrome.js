@@ -129,6 +129,8 @@ function openRecentMenu(focus = true) {
 }
 function applyDocumentPreferences() {
   $('preference-open-edit').checked = preferences.get('openInEditMode', true) !== false;
+  $('preference-touchpad-zoom-row').hidden = nativePlatform !== 'linux';
+  $('preference-touchpad-zoom').checked = touchpadZoom;
   const number = (key, fallback, min, max) => Math.min(max, Math.max(min, Number(preferences.get(key, fallback)) || fallback));
   const lineHeight = number('lineHeight', 1.7, 1.2, 2.4), spacing = number('paragraphSpacing', 1.15, .4, 2.4), width = number('contentWidth', 900, 480, 1400);
   root.style.setProperty('--document-line-height', lineHeight);
@@ -291,6 +293,7 @@ function initializeChrome() {
   $('replace-one').onclick = () => replaceMatches(false); $('replace-all').onclick = () => replaceMatches(true);
   $('help-close').onclick = () => $('help-dialog').close();
   $('preference-open-edit').onchange = event => preferences.set('openInEditMode', event.target.checked);
+  $('preference-touchpad-zoom').onchange = event => setTouchpadZoom(event.target.checked);
   const themeSelect = $('preference-theme');
   for (const theme of availableThemes()) { const option = document.createElement('option'); option.value = theme.id; option.textContent = theme.id === 'paper' ? 'Light · Adwaita' : theme.id === 'graphite' ? 'Dark · Adwaita' : theme.label; themeSelect.append(option); }
   themeSelect.onchange = () => applyTheme(themeSelect.value);
@@ -302,7 +305,7 @@ function initializeChrome() {
   for (const name of ['tasks', 'tables', 'code']) $('preference-' + name).onchange = event => { preferences.set('render-' + name, event.target.checked); applyDocumentPreferences(); };
   $('preferences-reset').onclick = () => {
     for (const key of ['openInEditMode', 'lineHeight', 'paragraphSpacing', 'contentWidth', 'headingStyle', 'render-tasks', 'render-tables', 'render-code']) preferences.set(key, null);
-    zoomText(0, true); applyReadingFont('sans'); applyTheme('system'); setDocumentWidth(false); applyDocumentPreferences();
+    zoomText(0, true); setTouchpadZoom(false, false); applyReadingFont('sans'); applyTheme('system'); setDocumentWidth(false); applyDocumentPreferences();
   };
   $('view-menu-button').addEventListener('click', applyDocumentPreferences);
   applyDocumentPreferences(); syncDocumentMode();

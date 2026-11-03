@@ -165,6 +165,8 @@
 @media(pointer:coarse) { .folio-heading-source { font-size:16px; } .folio-slash-menu button { min-height:44px; } }
 @media(prefers-reduced-motion:reduce) { .folio-heading-source { transition:none; } }
 @media(forced-colors:active) { .folio-heading-source,.folio-slash-menu,.editor-trailing-input { forced-color-adjust:auto; } .folio-heading-source:focus-visible { outline:2px solid CanvasText; } .editor-trailing-input:focus-visible { outline:2px solid CanvasText; box-shadow:none; } }
+/* The document surface uses its caret and selection for focus feedback. */
+.reader-scroll:focus,.reader-scroll:focus-visible { outline:none; }
 .ProseMirror { outline:none; white-space:pre-wrap; overflow-wrap:break-word; min-height:50vh; }
 .ProseMirror>:first-child { margin-top:0; }
 .markdown .ProseMirror table { display:table; width:100%; max-width:none; table-layout:auto; margin:0; }
@@ -306,23 +308,13 @@
 .code-container pre { white-space:pre-wrap; }
 .code-container details>summary { cursor:pointer; font:12px var(--font-ui); color:var(--muted); margin-top:8px; }
 .source-block { font-size:.75em; white-space:pre-wrap; }
-/* Reading view shows only the rendered projection. The literal source lives
-   solely in the explicit Markdown presentation; the edit affordance floats
-   over the block corner and appears on hover or keyboard focus, reserving no
-   layout of its own, so the page reads calmly. */
+/* Render extension blocks without source controls; double-click reveals
+   their Markdown in the shared document surface. */
 .extension-block { position:relative; margin:0 0 1.15em; }
 .extension-preview { line-height:inherit; overflow-wrap:break-word; white-space:normal; }
 .extension-preview:empty { display:none; }
 .extension-preview>:first-child { margin-top:0; }
 .extension-preview>:last-child { margin-bottom:0; }
-.extension-actions { position:absolute; top:2px; right:0; margin:0; opacity:0; pointer-events:none; transition:opacity .15s ease; }
-.extension-block:hover .extension-actions,.extension-actions:focus-within { opacity:1; pointer-events:auto; }
-@media (hover:none) {
-  .extension-actions { opacity:.75; pointer-events:auto; }
-}
-.extension-edit { user-select:none; -webkit-user-select:none; font:11px var(--font-ui); line-height:1; padding:4px 8px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--muted); box-shadow:0 2px 8px #0002; cursor:pointer; }
-.extension-edit:hover,.extension-edit:focus-visible { color:var(--fg); background:var(--hover); }
-.extension-edit:disabled { opacity:.35; cursor:default; }
 .source-dialog { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:12px; width:min(820px,92vw); padding:20px; }
 .source-dialog::backdrop { background:#0007; }
 .source-dialog-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
@@ -468,7 +460,7 @@ button:disabled {
   opacity:.4
 }
 
-button:focus-visible,input:focus-visible,.reader-scroll:focus-visible {
+button:focus-visible,input:focus-visible {
   outline:2px solid var(--accent);
   outline-offset:2px
 }
@@ -2612,8 +2604,8 @@ body.focus-mode .navigation-rail { display:none; }
 }
 
 .folder-entry .icon {
-  width:15px;
-  height:15px;
+  width:18px;
+  height:18px;
   flex:none;
   color:var(--muted)
 }
@@ -2631,7 +2623,7 @@ body.focus-mode .navigation-rail { display:none; }
 }
 
 .folder-entry.directory .tree-folder {
-  color:color-mix(in srgb,var(--muted) 84%,var(--fg))
+  color:color-mix(in srgb,var(--yellow) 72%,var(--fg))
 }
 
 .tree-chevron {
@@ -2655,7 +2647,11 @@ body.focus-mode .navigation-rail { display:none; }
   background:color-mix(in srgb,var(--accent) 14%,transparent)
 }
 
+/* Type identity remains legible in monochrome; color reinforces the shape. */
+.file-kind-markdown { color:color-mix(in srgb,var(--accent) 65%,var(--fg)); }
+.folder-entry .tree-file.file-kind-markdown { color:color-mix(in srgb,var(--accent) 65%,var(--fg)); }
 .folder-entry.selected .tree-file { color:var(--accent); }
+.folder-entry[aria-expanded="true"] .tree-folder { color:color-mix(in srgb,var(--yellow) 85%,var(--fg)); }
 
 .folder-entry.selected:hover {
   background:color-mix(in srgb,var(--accent) 18%,transparent)
@@ -3319,16 +3315,14 @@ dialog {
   line-height:1.55;
   color:var(--fg);
 }
-.math-local-editor:not([hidden]),
-.extension-source-editor:not([hidden]) {
+.math-local-editor:not([hidden]) {
   display:flex;
   flex-wrap:wrap;
   gap:6px;
   margin-top:8px;
   align-items:center;
 }
-.math-local-editor textarea,
-.extension-source-editor textarea {
+.math-local-editor textarea {
   flex:1 0 100%;
   box-sizing:border-box;
   width:100%;
@@ -3363,7 +3357,10 @@ dialog {
 /* Two levels: application menus above the document toolbar. */
 .app-menubar { display:flex; align-items:center; flex:none; gap:0; min-height:38px; padding:0 18px 0 8px; border-bottom:1px solid var(--line); background:var(--surface); user-select:none; z-index:40; }
 .menubar-button { padding:7px 8px; border:0; border-radius:5px; background:transparent; color:var(--fg); font:400 13px var(--font-ui); cursor:pointer; }
-.menubar-button:hover,.menubar-button[aria-expanded="true"] { background:var(--hover); }
+.menubar-button:hover { background:var(--hover); }
+.menubar-button[aria-expanded="true"] {
+  background:color-mix(in srgb,var(--fg) 12%,var(--surface));
+}
 .app-menu-group { position:relative; }
 .app-menu-group>.menu { top:calc(100% + 3px); left:0; min-width:260px; max-height:calc(100vh - 55px); overflow-y:auto; }
 .app-menubar .menu {
@@ -3466,7 +3463,7 @@ body.focus-mode .app-menubar { display:none; }
 }
 @media print {
   body { display:block; height:auto; overflow:visible; background:white; color:black; }
-  .app-menubar,.headerbar,#statusbar,.navigation-rail,.sidebar,.sidebar-resizer,#find-bar,#replace-bar,#workspace-search-results,#format-tools,.editor-note,.disk-banner,#toast,dialog,.folio-table-tools,.extension-edit,.code-copy,.math-edit { display:none!important; }
+  .app-menubar,.headerbar,#statusbar,.navigation-rail,.sidebar,.sidebar-resizer,#find-bar,#replace-bar,#workspace-search-results,#format-tools,.editor-note,.disk-banner,#toast,dialog,.folio-table-tools,.code-copy,.math-edit { display:none!important; }
   #workspace,#document-view,.document-body,#reader-scroll { display:block!important; height:auto; overflow:visible; }
   #document-source { display:none!important; }
   #preview { display:block!important; max-width:none; color:black; padding:0; }
@@ -3501,8 +3498,8 @@ body.focus-mode .app-menubar { display:none; }
 .headerbar .save-state { padding-top:4px; padding-bottom:4px; }
 .headerbar .subtitle { margin-top:0; }
 @media(pointer:coarse) { .document-body > .headerbar { min-height:48px; } .headerbar .icon-button { width:44px; height:44px; } .headerbar .mode-button { min-height:44px; } }
-/* Save state stays visible; saving is available from File and Ctrl+S. */
-.headerbar #save,.headerbar #save.is-dirty { display:none; }
+/* One save icon at every toolbar width, with status announced separately. */
+.headerbar #save,.headerbar #save.is-dirty { display:inline-flex; }
 /* A compact application menu bar. */
 .app-menubar { min-height:30px; }
 .menubar-button { padding-top:4px; padding-bottom:4px; }
@@ -3511,12 +3508,9 @@ body.focus-mode .app-menubar { display:none; }
 
 /* Switch by document-toolbar width, including sidebar and app zoom effects. */
 .headerbar { container-type:inline-size; container-name:document-toolbar; }
-@container document-toolbar (max-width:600px) {
-  .headerbar #save,.headerbar #save.is-dirty { display:inline-flex; }
-  .headerbar #save-state {
-    position:absolute; width:1px; min-width:1px; max-width:1px; height:1px;
-    padding:0; overflow:hidden; clip-path:inset(50%)!important; white-space:nowrap;
-  }
+.headerbar #save-state {
+  position:absolute; width:1px; min-width:1px; max-width:1px; height:1px;
+  padding:0; overflow:hidden; clip-path:inset(50%)!important; white-space:nowrap;
 }
 .headerbar #save[data-state="error"] { color:var(--red); opacity:1; }
 

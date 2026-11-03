@@ -1112,6 +1112,7 @@ dependencies = [
  "base64 0.22.1",
  "comrak",
  "cssparser 0.38.0",
+ "gtk",
  "html5ever 0.40.1",
  "percent-encoding",
  "roxmltree",

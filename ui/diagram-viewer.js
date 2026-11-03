@@ -19,7 +19,7 @@
     if (action) return;
     const button = document.createElement('button');
     button.type = 'button'; button.className = 'diagram-expand';
-    button.contentEditable = 'false'; button.textContent = 'Expand';
+    button.contentEditable = 'false'; button.title = 'Expand diagram';
     button.setAttribute('aria-label', 'Expand diagram');
     button.setAttribute('aria-haspopup', 'dialog');
     host.append(button);
@@ -80,7 +80,22 @@
       const previous = returnFocus; returnFocus = null;
       if (previous?.isConnected) previous.focus({ preventScroll: true });
     });
+    // Native dialogs retarget backdrop events to the dialog element. Check
+    // coordinates too: blank space inside the panel is not the backdrop.
+    const outsidePanel = event => {
+      const bounds = dialog.getBoundingClientRect();
+      return event.clientX < bounds.left || event.clientX > bounds.right
+        || event.clientY < bounds.top || event.clientY > bounds.bottom;
+    };
+    let backdropPress = false;
+    dialog.addEventListener('pointerdown', event => {
+      backdropPress = event.button === 0 && event.target === dialog && outsidePanel(event);
+    });
+    dialog.addEventListener('pointercancel', () => { backdropPress = false; });
     dialog.addEventListener('click', event => {
+      const dismiss = backdropPress && event.target === dialog && outsidePanel(event);
+      backdropPress = false;
+      if (dismiss) { event.preventDefault(); event.stopPropagation(); close(); return; }
       // A diagram is a static projection here; SVG links must not navigate.
       if (event.target.closest('a')) event.preventDefault();
       event.stopPropagation();
