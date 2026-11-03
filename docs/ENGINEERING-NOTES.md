@@ -77,6 +77,29 @@ should outlive any one feature pass. Current performance numbers live in
 - The native tests use Xvfb/X11. They do not establish real Wayland/GPU
   compositing, shader-cache or first-paint behaviour.
 
+## Command palette
+
+- The palette is a floating surface in the same family as the slash block
+  picker: one accent wash for the active row, a quiet accent underline on the
+  focused search field, themed thin scrollbars, and row heights that only
+  ever show whole commands.
+- Search filters built rows instead of rebuilding labels, icons and swatches
+  on every keystroke (`tests/command-palette.cjs` holds the node-reuse
+  contract). Rebuilding the list was measurable under WebKit.
+- Theme entries are in-place `scope` links. Opening Appearance must not close
+  and reopen the modal; that re-entered the top layer and flashed.
+- Expensive commands (theme changes) run one task after the dismissal paints
+  (`requestAnimationFrame` then `setTimeout`, with a timed fallback for
+  throttled frames). Applying a theme synchronously after `dialog.close()`
+  held the closing palette on screen through the whole document restyle.
+- `applyTheme` clears only the inline tokens it owns. Removing the whole
+  `style` attribute also dropped `--text-size` and the reader's spacing
+  preferences, forcing a full reflow with the wrong metrics. Derived
+  `--read-*`/`--diagram-*` tokens are cleared so an unresolved palette cannot
+  keep the previous theme's ink.
+- Diagram refreshes after a theme change are coalesced (160 ms). Rapid theme
+  switches pay for one Mermaid re-render, not one per switch.
+
 ## Performance guardrails
 
 ### Tauri ACLs

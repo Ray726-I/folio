@@ -371,7 +371,7 @@ function toggleRemoteImages() {
   if (current.active) editor?.refreshMedia(!remoteImages);
 }
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-  if (selectedTheme === 'system' && updatePreviewPalette()) refreshMermaid();
+  if (selectedTheme === 'system' && updatePreviewPalette()) scheduleDiagramRefresh();
 });
 // The outline steps aside for the file tree on narrow screens; give it back when there is room.
 window.matchMedia('(max-width:640px)').addEventListener('change', event => {
@@ -710,13 +710,13 @@ function renderRecent() {
   }
 }
 
-let commandScope = 'commands', filteredCommands = [], selectedCommand = 0;
+let commandScope = 'commands', commandRows = [], filteredRows = [], selectedCommand = 0;
 function allCommands() {
   const commands = [
-    { label: 'Open file…', icon: 'open', shortcut: 'Ctrl+O', action: openEntry },
-    { label: 'Open folder…', icon: 'open', detail: 'Open a folder with the selected picker', action: openFolderEntry },
+    { label: 'Open file…', icon: 'file', shortcut: 'Ctrl+O', action: openEntry },
+    { label: 'Open folder…', icon: 'folder-open', detail: 'Open a folder with the selected picker', action: openFolderEntry },
     { label: 'New document', icon: 'plus', shortcut: 'Ctrl+N', action: () => newDocument() },
-    { label: 'Change theme…', icon: 'theme', action: () => openCommands('themes') },
+    { label: 'Change theme…', icon: 'theme', scope: 'themes' },
     { label: filePicker() === 'native' ? 'Use Folio file picker' : 'Use system file picker', icon: 'open', detail: filePicker() === 'native' ? 'Folio dialog with folders and typed paths' : 'System dialog for files and folders', action: toggleFilePicker },
     { label: 'Try a sample document', icon: 'file', action: () => newDocument(true) },
     { label: 'Clear recent files', icon: 'close', action: () => { preferences.set('recent', []); renderRecent(); toast('Recent files cleared'); } }
@@ -725,13 +725,13 @@ function allCommands() {
   if (current.active) commands.splice(2, 0,
     { label: 'Save', icon: 'save', shortcut: 'Ctrl+S', action: () => requestSave() },
     { label: 'Save as…', icon: 'save', shortcut: 'Ctrl+Shift+S', action: () => requestSave(true) },
-    { label: documentReadOnly ? 'Unlock document' : 'Lock document', icon: 'read', action: toggleDocumentReadOnly },
+    { label: documentReadOnly ? 'Unlock document' : 'Lock document', icon: documentReadOnly ? 'unlock' : 'lock', action: toggleDocumentReadOnly },
     { label: 'Reading mode', icon: 'read', action: () => setDocumentMode('reading') },
     { label: 'Edit mode', icon: 'edit', action: () => setDocumentMode('edit') },
     { label: 'Source mode', icon: 'code', action: () => setDocumentMode('source') },
     { label: 'Source snapshot', icon: 'file', action: openSourceSnapshot },
-    { label: 'Undo', icon: 'edit', shortcut: 'Ctrl+Z', action: () => enqueue(() => undoRedo()) },
-    { label: 'Redo', icon: 'edit', shortcut: 'Ctrl+Shift+Z / Ctrl+Y', action: () => enqueue(() => undoRedo(true)) },
+    { label: 'Undo', icon: 'undo', shortcut: 'Ctrl+Z', action: () => enqueue(() => undoRedo()) },
+    { label: 'Redo', icon: 'redo', shortcut: 'Ctrl+Shift+Z / Ctrl+Y', action: () => enqueue(() => undoRedo(true)) },
     { label: 'Find in document', icon: 'search', shortcut: 'Ctrl+F', action: openFind },
     { label: 'Search folder contents', icon: 'search', shortcut: 'Ctrl+Shift+F', action: openFolderSearch },
     { label: remoteImages ? 'Block remote images' : 'Load remote images', icon: 'read', action: toggleRemoteImages },
@@ -742,65 +742,153 @@ function allCommands() {
     { label: formatToolbarVisible ? 'Hide formatting toolbar' : 'Show formatting toolbar', icon: 'format', action: () => setFormatToolbarVisible(!formatToolbarVisible) },
     { label: 'Zoom in', icon: 'plus', shortcut: 'Ctrl+=', action: () => zoomWindow(.1) },
     { label: 'Zoom out', icon: 'minus', shortcut: 'Ctrl+-', action: () => zoomWindow(-.1) },
-    { label: 'Reset window zoom', icon: 'read', shortcut: 'Ctrl+0', action: () => zoomWindow(0, true) },
+    { label: 'Reset window zoom', icon: 'refresh', shortcut: 'Ctrl+0', action: () => zoomWindow(0, true) },
     { label: 'Increase document text size', icon: 'plus', shortcut: 'Ctrl+Shift+=', action: () => zoomText(1) },
     { label: 'Decrease document text size', icon: 'minus', shortcut: 'Ctrl+Shift+-', action: () => zoomText(-1) },
-    { label: 'Reset document text size', icon: 'read', shortcut: 'Ctrl+Shift+0', action: () => zoomText(0, true) }
+    { label: 'Reset document text size', icon: 'refresh', shortcut: 'Ctrl+Shift+0', action: () => zoomText(0, true) }
   );
-  if (activeFolder) commands.splice(2, 0, { label: 'Toggle file tree', icon: 'open', shortcut: 'Ctrl+B', action: () => setFolderVisible(!folderVisible) });
+  if (activeFolder) commands.splice(2, 0, { label: 'Toggle file tree', icon: 'folder', shortcut: 'Ctrl+B', action: () => setFolderVisible(!folderVisible) });
   return commands;
 }
-function themeCommands() { return availableThemes().map(theme => ({ ...theme, label: `Theme: ${theme.label}`, action: () => applyTheme(theme.id) })); }
+function themeCommands() {
+  return availableThemes().map(theme => ({
+    ...theme,
+    label: `Theme: ${theme.label}`,
+    selected: theme.id === selectedTheme,
+    // Theme changes restyle the whole document; keep them out of the same
+    // task as the dismissal so the palette clears the screen first.
+    defer: true,
+    action: () => applyTheme(theme.id)
+  }));
+}
+// Rows are built once per scope change and reused while typing: each keystroke
+// only moves the already-built buttons, instead of recreating every label,
+// icon and swatch (which made search feel laggy under WebKit).
+function commandRow(command, index) {
+  const button = document.createElement('button');
+  button.id = `command-${index}`;
+  button.type = 'button';
+  button.className = 'command-item';
+  button.tabIndex = -1;
+  button.setAttribute('role', 'option');
+  button.setAttribute('aria-selected', 'false');
+  if (command.swatch) {
+    const swatch = document.createElement('span');
+    swatch.className = 'theme-swatch';
+    swatch.style.setProperty('--swatch', command.swatch);
+    button.append(swatch);
+  } else button.append(icon(command.icon));
+  const label = document.createElement('span');
+  label.className = 'command-label';
+  label.textContent = command.label;
+  button.append(label);
+  if (command.detail) {
+    const detail = document.createElement('span');
+    detail.className = 'command-detail';
+    detail.textContent = command.detail;
+    button.append(detail);
+  }
+  if (command.selected !== undefined) {
+    // Theme rows keep a fixed check slot so their descriptions line up
+    // whether or not the row is the active theme.
+    const check = document.createElement('span');
+    check.className = 'command-check';
+    if (command.selected) check.append(icon('check'));
+    button.append(check);
+  }
+  if (command.shortcut) {
+    const shortcut = document.createElement('span');
+    shortcut.className = 'shortcut';
+    shortcut.textContent = command.shortcut;
+    button.append(shortcut);
+  }
+  button.onclick = () => executeCommand(filteredRows.findIndex(row => row.element === button));
+  return { command, element: button };
+}
+function buildCommandRows() {
+  const list = commandScope === 'themes' ? themeCommands() : [...allCommands(), ...themeCommands()];
+  commandRows = list.map(commandRow);
+}
+function updateActiveCommand() {
+  filteredRows.forEach((row, index) => {
+    const active = index === selectedCommand;
+    row.element.classList.toggle('active', active);
+    row.element.setAttribute('aria-selected', String(active));
+  });
+  $('command-search').setAttribute('aria-activedescendant', filteredRows.length ? filteredRows[selectedCommand].element.id : '');
+}
+function filterCommands() {
+  const query = $('command-search').value.trim().toLocaleLowerCase();
+  filteredRows = commandRows.filter(row => `${row.command.label} ${row.command.detail || ''}`.toLocaleLowerCase().includes(query));
+  selectedCommand = Math.max(0, Math.min(selectedCommand, filteredRows.length - 1));
+  $('command-list').replaceChildren(...filteredRows.map(row => row.element));
+  $('command-empty').hidden = filteredRows.length > 0;
+  $('command-scope').textContent = commandScope === 'themes' ? 'Appearance' : query ? 'Search results' : 'Commands';
+  $('palette-hint').hidden = commandScope !== 'themes';
+  $('command-results').scrollTop = 0;
+  updateActiveCommand();
+}
 function openCommands(scope = 'commands') {
   if ($('confirm-dialog').open) return;
-  commandScope = scope; selectedCommand = 0; $('command-search').value = ''; $('command-search').placeholder = scope === 'themes' ? 'Search themes…' : 'Search commands or themes…';
-  renderCommands(); if (!$('command-dialog').open) $('command-dialog').showModal(); $('command-search').focus();
+  commandScope = scope;
+  selectedCommand = 0;
+  $('command-search').value = '';
+  $('command-search').placeholder = scope === 'themes' ? 'Search themes…' : 'Search commands or themes…';
+  buildCommandRows();
+  // Opening Appearance lands on the theme that is already applied, so the
+  // checked row and the highlighted row agree.
+  if (scope === 'themes') selectedCommand = Math.max(0, commandRows.findIndex(row => row.command.id === selectedTheme));
+  filterCommands();
+  if (!$('command-dialog').open) $('command-dialog').showModal();
+  if (scope === 'themes') filteredRows[selectedCommand]?.element.scrollIntoView({ block: 'nearest' });
+  $('command-search').focus({ preventScroll: true });
 }
 function renderCommands() {
-  const query = $('command-search').value.trim().toLocaleLowerCase();
-  const list = commandScope === 'themes' ? themeCommands() : [...allCommands(), ...themeCommands()];
-  filteredCommands = list.filter(command => `${command.label} ${command.detail || ''}`.toLocaleLowerCase().includes(query));
-  selectedCommand = Math.max(0, Math.min(selectedCommand, filteredCommands.length - 1));
-  $('command-scope').textContent = commandScope === 'themes' ? 'Appearance' : query ? 'Search results' : 'Commands';
-  $('command-results').replaceChildren();
-  if (!filteredCommands.length) { const empty = document.createElement('p'); empty.className = 'empty-results'; empty.textContent = 'No matching commands'; $('command-results').append(empty); }
-  filteredCommands.forEach((command, index) => {
-    const button = document.createElement('button'); button.id = `command-${index}`; button.className = `command-item${index === selectedCommand ? ' active' : ''}`;
-    button.setAttribute('role', 'option'); button.setAttribute('aria-selected', String(index === selectedCommand)); button.tabIndex = -1;
-    if (command.swatch) { const swatch = document.createElement('span'); swatch.className = 'theme-swatch'; swatch.style.setProperty('--swatch', command.swatch); button.append(swatch); }
-    else button.append(icon(command.icon));
-    const label = document.createElement('span'); label.className = 'command-label'; label.textContent = command.label; button.append(label);
-    if (command.id === selectedTheme) button.append(icon('check'));
-    else if (command.detail) { const detail = document.createElement('span'); detail.className = 'command-detail'; detail.textContent = command.detail; button.append(detail); }
-    if (command.shortcut) { const shortcut = document.createElement('span'); shortcut.className = 'shortcut'; shortcut.textContent = command.shortcut; button.append(shortcut); }
-    button.onclick = () => executeCommand(index); $('command-results').append(button);
-  });
-  $('command-search').setAttribute('aria-activedescendant', filteredCommands.length ? `command-${selectedCommand}` : '');
+  buildCommandRows();
+  filterCommands();
 }
 function executeCommand(index) {
-  const command = filteredCommands[index]; if (!command) return;
-  $('command-dialog').close(); Promise.resolve(command.action()).catch(toast);
+  const row = filteredRows[index];
+  if (!row) return;
+  // Scope entries (Change theme…) swap the list in place. Closing and
+  // reopening the dialog for a submenu flashed the modal and re-entered the
+  // top layer on every step.
+  if (row.command.scope) { openCommands(row.command.scope); return; }
+  const dialog = $('command-dialog');
+  const wasOpen = dialog.open;
+  if (wasOpen) dialog.close();
+  const action = () => Promise.resolve(row.command.action()).catch(toast);
+  if (!wasOpen || !row.command.defer) { action(); return; }
+  // Paint the dismissal before running expensive commands. A theme change
+  // restyles the whole document, and doing that in the same task held the
+  // closing palette on screen for the entire restyle.
+  let ran = false;
+  const run = () => { if (ran) return; ran = true; action(); };
+  requestAnimationFrame(() => setTimeout(run, 0));
+  setTimeout(run, 120);
 }
-$('command-search').addEventListener('input', () => { selectedCommand = 0; renderCommands(); });
+$('command-search').addEventListener('input', () => { selectedCommand = 0; filterCommands(); });
 $('command-dialog').addEventListener('keydown', event => {
   if (event.isComposing) return;
   const focusedOption = event.target.closest?.('.command-item');
-  const focusedIndex = focusedOption ? Number(focusedOption.id.slice('command-'.length)) : selectedCommand;
+  const focusedIndex = focusedOption ? filteredRows.findIndex(row => row.element === focusedOption) : selectedCommand;
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
     event.preventDefault(); event.stopPropagation();
-    if (!filteredCommands.length) return;
-    const previous = $(`command-${selectedCommand}`);
-    previous?.classList.remove('active'); previous?.setAttribute('aria-selected', 'false');
-    selectedCommand = (focusedIndex + (event.key === 'ArrowDown' ? 1 : -1) + filteredCommands.length) % filteredCommands.length;
-    const next = $(`command-${selectedCommand}`);
-    next?.classList.add('active'); next?.setAttribute('aria-selected', 'true');
-    $('command-search').setAttribute('aria-activedescendant', `command-${selectedCommand}`);
+    if (!filteredRows.length) return;
+    const step = event.key === 'ArrowDown' ? 1 : -1;
+    selectedCommand = ((focusedIndex < 0 ? selectedCommand : focusedIndex) + step + filteredRows.length) % filteredRows.length;
+    updateActiveCommand();
     $('command-search').focus({ preventScroll: true });
-    next?.scrollIntoView({ block: 'nearest' });
-  } else if (event.key === 'Enter') { event.preventDefault(); executeCommand(focusedIndex); }
-  else if (event.key === 'Backspace' && event.target === $('command-search') && !$('command-search').value && commandScope === 'themes') openCommands();
+    filteredRows[selectedCommand].element.scrollIntoView({ block: 'nearest' });
+  } else if (event.key === 'Enter') {
+    // Let the Back hint activate itself; Enter on any other target selects
+    // the highlighted command.
+    if (event.target === $('palette-hint')) return;
+    event.preventDefault(); executeCommand(focusedIndex);
+  } else if (event.key === 'Backspace' && event.target === $('command-search') && !$('command-search').value && commandScope === 'themes') openCommands();
 });
-for (const id of ['command-dialog']) $(id).addEventListener('click', event => { const bounds = $(id).getBoundingClientRect(); if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) $(id).close(); });
+$('command-dialog').addEventListener('click', event => { if (event.target === $('command-dialog')) $('command-dialog').close(); });
+$('palette-hint').addEventListener('click', () => openCommands());
 
 let matches = [], findIndex = -1, findSource = null;
 function openFind() { if (!current.active) return; $('find-bar').hidden = false; $('find-input').focus(); $('find-input').select(); updateFind(); syncFindControl(); }

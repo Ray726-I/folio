@@ -28,6 +28,8 @@
     <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"/><path d="M5.5 9.5V21h13V9.5M9.5 21v-6h5v6"/></symbol>
     <symbol id="i-open" viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h5l3 3h6a2 2 0 0 1 2 2v3M3 8h18l-3 12H6L3 8Z"/></symbol>
     <symbol id="i-save" viewBox="0 0 24 24"><path d="M4 3h13l4 4v14H3V4a1 1 0 0 1 1-1Zm3 0v7h10V3M7 21v-7h10v7"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="m9 8-5 4 5 4"/><path d="M4 12h9a6 6 0 0 1 6 6v2"/></symbol>
+    <symbol id="i-redo" viewBox="0 0 24 24"><path d="m15 8 5 4-5 4"/><path d="M20 12h-9a6 6 0 0 0-6 6v2"/></symbol>
     <symbol id="i-edit" viewBox="0 0 24 24"><path d="m15 4 5 5M4 20l5-1L21 7a2 2 0 0 0-4-4L5 15l-1 5Z"/></symbol>
     <symbol id="i-read" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
     <symbol id="i-outline" viewBox="0 0 16 16"><path style="fill:currentColor;stroke:none" d="M2.5 2.007812s-.5.222657-.5.5v.988282c0 .273437.5.5.5.5h1s.5-.226563.5-.5v-.988282c0-.277343-.5-.5-.5-.5zm4 0c-.277344 0-.5.222657-.5.5v.988282c0 .273437.222656.5.5.5h8c.277344 0 .5-.226563.5-.5v-.988282c0-.277343-.222656-.5-.5-.5zm-4 5s-.5.222657-.5.5v.988282c0 .273437.5.5.5.5h1s.5-.226563.5-.5v-.988282c0-.277343-.5-.5-.5-.5zm4 0s-.5.222657-.5.5v.988282c0 .273437.222656.5.5.5h8c.277344 0 .5-.226563.5-.5v-.988282c0-.277343-.5-.5-.5-.5zm-4 5c-.277344 0-.5.222657-.5.5v.988282c0 .273437.5.5.5.5h1s.5-.226563.5-.5v-.988282c0-.277343-.222656-.5-.5-.5zm4 0c-.277344 0-.5.222657-.5.5v.988282c0 .273437.222656.5.5.5h8c.277344 0 .5-.226563.5-.5v-.988282c0-.277343-.222656-.5-.5-.5zm0 0"/></symbol>
@@ -262,10 +264,13 @@
   <div id="drop-overlay" hidden><div><svg class="icon" aria-hidden="true"><use href="#i-open"/></svg><h2>Drop to open</h2><p>One Markdown file. No setup.</p></div></div>
 
   <dialog id="command-dialog" class="command-dialog" aria-label="Command window">
-    <div class="command-input"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><input id="command-search" autocomplete="off" placeholder="Search commands or themes…" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="command-results" aria-label="Search commands or themes"><kbd>Esc</kbd></div>
+    <div class="command-input"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><input id="command-search" autocomplete="off" placeholder="Search commands or themes…" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="command-results" aria-label="Search commands or themes"><kbd class="command-esc">Esc</kbd></div>
     <div id="command-scope" class="command-scope">Commands</div>
-    <div id="command-results" role="listbox" aria-label="Commands"></div>
-    <div class="command-footer"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>Enter</kbd> select</span><span id="palette-hint">Themes, files, and controls</span></div>
+    <div id="command-results" class="command-results">
+      <div id="command-list" role="presentation"></div>
+      <p id="command-empty" class="empty-results" role="status" hidden>No matching commands</p>
+    </div>
+    <div class="command-footer"><span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span><span><kbd>Enter</kbd> Select</span><button id="palette-hint" class="palette-back" type="button" hidden><kbd>Backspace</kbd> All commands</button></div>
   </dialog>
 
   <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title"><h2 id="confirm-title"></h2><p id="confirm-message"></p><div id="confirm-actions"></div></dialog>

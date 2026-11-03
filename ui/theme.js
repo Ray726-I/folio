@@ -74,7 +74,7 @@ function updatePreviewPalette() {
       paletteRetries++;
       paletteFrame = requestAnimationFrame(() => {
         paletteFrame = 0;
-        if (updatePreviewPalette() && typeof refreshMermaid === 'function') refreshMermaid();
+        if (updatePreviewPalette()) scheduleDiagramRefresh(0);
       });
     }
     return false;
@@ -192,9 +192,29 @@ function mermaidThemeVariables() {
   };
 }
 function availableThemes() { return omarchy ? [...themes, { id: 'omarchy', label: 'Omarchy', detail: `Current: ${omarchy.name}`, swatch: omarchy.colors.accent || '#7d82d9' }] : themes; }
+// Tokens written to the root by the Omarchy palette. Theme changes clear just
+// these; a blanket style reset also dropped --text-size and the reader's
+// spacing preferences, forcing a full reflow with the wrong metrics.
+const inlineThemeVariables = ['--bg', '--fg', '--surface', '--panel', '--accent', '--selection', '--green', '--red', '--yellow', '--blue', '--purple', '--accent-ink',
+  // Derived colours are recomputed below; drop stale ones so a palette that
+  // cannot resolve yet never leaves the previous theme's reading ink behind.
+  '--read-body', '--read-strong', '--read-accent', '--read-blue', '--read-purple', '--read-green', '--read-yellow', '--read-red',
+  '--diagram-node', '--diagram-border', '--diagram-line'];
+let diagramRefreshTimer = 0;
+// Theme switches can arrive in quick succession (arrow keys in the palette,
+// an OS appearance event). Coalesce the diagram refresh so only the settled
+// theme pays for re-rendering every Mermaid block.
+function scheduleDiagramRefresh(delay = 160) {
+  clearTimeout(diagramRefreshTimer);
+  diagramRefreshTimer = setTimeout(() => {
+    diagramRefreshTimer = 0;
+    if (typeof refreshMermaid === 'function') refreshMermaid();
+  }, delay);
+}
 function applyTheme(id, persist = true) {
   selectedTheme = id;
-  root.removeAttribute('style'); zoomText(0);
+  for (const variable of inlineThemeVariables) root.style.removeProperty(variable);
+  root.style.removeProperty('color-scheme');
   root.dataset.theme = id === 'omarchy' && !omarchy ? 'system' : id;
   if (id === 'omarchy' && omarchy) {
     const colors = omarchy.colors;
@@ -214,5 +234,5 @@ function applyTheme(id, persist = true) {
   $('theme-label').textContent = id === 'omarchy' && omarchy ? `Omarchy · ${omarchy.name}` : availableThemes().find(theme => theme.id === id)?.label || 'System';
   if (persist) preferences.set('theme', id);
   if ($('command-dialog').open) renderCommands();
-  if (paletteReady) refreshMermaid();
+  if (paletteReady) scheduleDiagramRefresh();
 }
