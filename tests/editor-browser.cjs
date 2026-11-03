@@ -1,4 +1,4 @@
-const { chromium } = require('playwright');
+const { chromium, webkit } = require('playwright');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -6,7 +6,7 @@ const { pathToFileURL } = require('node:url');
 const { execFileSync } = require('node:child_process');
 
 async function openEditor(source, viewport = { width: 1180, height: 900 }, options = {}) {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await (process.env.FOLIO_BROWSER === 'webkit' ? webkit : chromium).launch({ headless: true });
   const page = await browser.newPage({ viewport });
   const errors = [], requests = [];
   page.on('pageerror', error => errors.push(String(error)));

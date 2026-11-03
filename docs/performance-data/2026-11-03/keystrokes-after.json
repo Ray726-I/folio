@@ -1,0 +1,798 @@
+{
+  "timestamp": "2026-11-02T21:17:16.601Z",
+  "environment": {
+    "platform": "linux",
+    "release": "7.2.14-1-omarchy",
+    "cpu": "13th Gen Intel(R) Core(TM) i5-13500H",
+    "cpus": 16,
+    "node": "v26.13.0",
+    "bundleSHA256": "bf5c2a0bb074578ee894e67d387998176b3a7e67fc6745bfa01cfed2f5694abe",
+    "build": "checked-in production editor bundle, browser shell with mocked Tauri bridge",
+    "viewport": "1180x900",
+    "refresh": "headless virtual display; rAF intervals reported, physical refresh unknown",
+    "browser": "151.0.7922.34"
+  },
+  "options": {
+    "sizes": [
+      10,
+      50,
+      100
+    ],
+    "chars": 12,
+    "warmup": 3,
+    "scenarios": [
+      "interior",
+      "boundary",
+      "punctuation",
+      "backspace",
+      "marked",
+      "unicode",
+      "composition"
+    ]
+  },
+  "limitations": [
+    "Canonical publication includes a minimal setter hook; no layout/geometry instrumentation in this pass.",
+    "keyDownToSource applies only to keyboard events; Unicode insertText starts at beforeinput.",
+    "Double-rAF from beforeinput is a frame approximation, not input-to-paint or presentation.",
+    "EventTiming durations (where supported) are browser event-to-next-render estimates rounded by the browser and thresholded at 16ms; include warmup events and are not native presentation timestamps.",
+    "Composition is synthetic compositionstart/end around browser insertText; no OS IME, candidate UI, or native WebKit measured."
+  ],
+  "results": [
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 24,
+          "worst": 24,
+          "count": 35
+        }
+      },
+      "kb": 10,
+      "bytes": 10240,
+      "scenario": "interior",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": 4.400000002235174,
+        "p95": 5.199999999254942,
+        "worst": 5.199999999254942,
+        "count": 12
+      },
+      "inputToSource": {
+        "median": 4.300000000745058,
+        "p95": 5,
+        "worst": 5,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 26.100000001490116,
+        "p95": 28.700000002980232,
+        "worst": 28.700000002980232,
+        "count": 12
+      }
+    },
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 16,
+          "worst": 16,
+          "count": 53
+        }
+      },
+      "kb": 10,
+      "bytes": 10240,
+      "scenario": "boundary",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": 4.199999999254942,
+        "p95": 4.900000002235174,
+        "worst": 4.900000002235174,
+        "count": 12
+      },
+      "inputToSource": {
+        "median": 4.100000001490116,
+        "p95": 4.800000000745058,
+        "worst": 4.800000000745058,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 26.700000002980232,
+        "p95": 27.799999997019768,
+        "worst": 27.799999997019768,
+        "count": 12
+      }
+    },
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 16,
+          "worst": 16,
+          "count": 59
+        }
+      },
+      "kb": 10,
+      "bytes": 10240,
+      "scenario": "punctuation",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": 3.800000000745058,
+        "p95": 4.100000001490116,
+        "worst": 4.100000001490116,
+        "count": 12
+      },
+      "inputToSource": {
+        "median": 3.699999999254942,
+        "p95": 4,
+        "worst": 4,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 27.100000001490116,
+        "p95": 28.100000001490116,
+        "worst": 28.100000001490116,
+        "count": 12
+      }
+    },
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 16,
+          "worst": 16,
+          "count": 41
+        }
+      },
+      "kb": 10,
+      "bytes": 10240,
+      "scenario": "backspace",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": 3.899999998509884,
+        "p95": 5.099999997764826,
+        "worst": 5.099999997764826,
+        "count": 12
+      },
+      "inputToSource": {
+        "median": 3.699999999254942,
+        "p95": 4.899999998509884,
+        "worst": 4.899999998509884,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 26.800000000745058,
+        "p95": 27.5,
+        "worst": 27.5,
+        "count": 12
+      }
+    },
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 16,
+          "worst": 16,
+          "count": 57
+        }
+      },
+      "kb": 10,
+      "bytes": 10240,
+      "scenario": "marked",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": 3.900000002235174,
+        "p95": 4.699999999254942,
+        "worst": 4.699999999254942,
+        "count": 12
+      },
+      "inputToSource": {
+        "median": 3.800000000745058,
+        "p95": 4.5,
+        "worst": 4.5,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 27.199999999254942,
+        "p95": 27.5,
+        "worst": 27.5,
+        "count": 12
+      }
+    },
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 16,
+          "worst": 16,
+          "count": 28
+        }
+      },
+      "kb": 10,
+      "bytes": 10240,
+      "scenario": "unicode",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": null,
+        "p95": null,
+        "worst": null,
+        "count": 0
+      },
+      "inputToSource": {
+        "median": 4.199999999254942,
+        "p95": 5,
+        "worst": 5,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 27.600000001490116,
+        "p95": 28.899999998509884,
+        "worst": 28.899999998509884,
+        "count": 12
+      }
+    },
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 32,
+          "worst": 32,
+          "count": 16
+        }
+      },
+      "kb": 10,
+      "bytes": 10240,
+      "scenario": "composition",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": null,
+        "p95": null,
+        "worst": null,
+        "count": 0
+      },
+      "inputToSource": {
+        "median": 4.100000001490116,
+        "p95": 5,
+        "worst": 5,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 26.800000000745058,
+        "p95": 29.300000000745058,
+        "worst": 29.300000000745058,
+        "count": 12
+      }
+    },
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 24,
+          "worst": 24,
+          "count": 58
+        }
+      },
+      "kb": 50,
+      "bytes": 51200,
+      "scenario": "interior",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": 9.200000002980232,
+        "p95": 12.399999998509884,
+        "worst": 12.399999998509884,
+        "count": 12
+      },
+      "inputToSource": {
+        "median": 9,
+        "p95": 12.199999999254942,
+        "worst": 12.199999999254942,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 27.599999997764826,
+        "p95": 28.699999999254942,
+        "worst": 28.699999999254942,
+        "count": 12
+      }
+    },
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 24,
+          "worst": 24,
+          "count": 57
+        }
+      },
+      "kb": 50,
+      "bytes": 51200,
+      "scenario": "boundary",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": 9.200000002980232,
+        "p95": 9.899999998509884,
+        "worst": 9.899999998509884,
+        "count": 12
+      },
+      "inputToSource": {
+        "median": 9.100000001490116,
+        "p95": 9.899999998509884,
+        "worst": 9.899999998509884,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 27.800000000745058,
+        "p95": 30.100000001490116,
+        "worst": 30.100000001490116,
+        "count": 12
+      }
+    },
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 16,
+          "worst": 16,
+          "count": 56
+        }
+      },
+      "kb": 50,
+      "bytes": 51200,
+      "scenario": "punctuation",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": 9,
+        "p95": 9.5,
+        "worst": 9.5,
+        "count": 12
+      },
+      "inputToSource": {
+        "median": 8.899999998509884,
+        "p95": 9.300000000745058,
+        "worst": 9.300000000745058,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 27.399999998509884,
+        "p95": 28,
+        "worst": 28,
+        "count": 12
+      }
+    },
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 16,
+          "worst": 16,
+          "count": 31
+        }
+      },
+      "kb": 50,
+      "bytes": 51200,
+      "scenario": "backspace",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": 9.199999999254942,
+        "p95": 9.5,
+        "worst": 9.5,
+        "count": 12
+      },
+      "inputToSource": {
+        "median": 8.900000002235174,
+        "p95": 9.200000002980232,
+        "worst": 9.200000002980232,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 27.099999997764826,
+        "p95": 30.5,
+        "worst": 30.5,
+        "count": 12
+      }
+    },
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 16,
+          "worst": 16,
+          "count": 57
+        }
+      },
+      "kb": 50,
+      "bytes": 51200,
+      "scenario": "marked",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": 9.200000002980232,
+        "p95": 9.300000000745058,
+        "worst": 9.300000000745058,
+        "count": 12
+      },
+      "inputToSource": {
+        "median": 9,
+        "p95": 9.300000000745058,
+        "worst": 9.300000000745058,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 27.5,
+        "p95": 27.900000002235174,
+        "worst": 27.900000002235174,
+        "count": 12
+      }
+    },
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 16,
+          "worst": 24,
+          "count": 22
+        }
+      },
+      "kb": 50,
+      "bytes": 51200,
+      "scenario": "unicode",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": null,
+        "p95": null,
+        "worst": null,
+        "count": 0
+      },
+      "inputToSource": {
+        "median": 10.5,
+        "p95": 11.099999997764826,
+        "worst": 11.099999997764826,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 27.899999998509884,
+        "p95": 30.199999999254942,
+        "worst": 30.199999999254942,
+        "count": 12
+      }
+    },
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 32,
+          "worst": 32,
+          "count": 18
+        }
+      },
+      "kb": 50,
+      "bytes": 51200,
+      "scenario": "composition",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": null,
+        "p95": null,
+        "worst": null,
+        "count": 0
+      },
+      "inputToSource": {
+        "median": 10.5,
+        "p95": 11.900000002235174,
+        "worst": 11.900000002235174,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 27.199999999254942,
+        "p95": 30.299999997019768,
+        "worst": 30.299999997019768,
+        "count": 12
+      }
+    },
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 24,
+          "worst": 32,
+          "count": 61
+        }
+      },
+      "kb": 100,
+      "bytes": 102400,
+      "scenario": "interior",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": 11.199999999254942,
+        "p95": 14.100000001490116,
+        "worst": 14.100000001490116,
+        "count": 12
+      },
+      "inputToSource": {
+        "median": 11,
+        "p95": 13.800000000745058,
+        "worst": 13.800000000745058,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 28.899999998509884,
+        "p95": 30.800000000745058,
+        "worst": 30.800000000745058,
+        "count": 12
+      }
+    },
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 24,
+          "worst": 24,
+          "count": 53
+        }
+      },
+      "kb": 100,
+      "bytes": 102400,
+      "scenario": "boundary",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": 11,
+        "p95": 11.900000002235174,
+        "worst": 11.900000002235174,
+        "count": 12
+      },
+      "inputToSource": {
+        "median": 10.900000002235174,
+        "p95": 11.900000002235174,
+        "worst": 11.900000002235174,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 28.700000002980232,
+        "p95": 29.799999997019768,
+        "worst": 29.799999997019768,
+        "count": 12
+      }
+    },
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 24,
+          "worst": 24,
+          "count": 56
+        }
+      },
+      "kb": 100,
+      "bytes": 102400,
+      "scenario": "punctuation",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": 11.700000002980232,
+        "p95": 17.800000000745058,
+        "worst": 17.800000000745058,
+        "count": 12
+      },
+      "inputToSource": {
+        "median": 11.600000001490116,
+        "p95": 17.800000000745058,
+        "worst": 17.800000000745058,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 29.399999998509884,
+        "p95": 30.400000002235174,
+        "worst": 30.400000002235174,
+        "count": 12
+      }
+    },
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 16,
+          "worst": 24,
+          "count": 45
+        }
+      },
+      "kb": 100,
+      "bytes": 102400,
+      "scenario": "backspace",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": 12.699999999254942,
+        "p95": 16.099999997764826,
+        "worst": 16.099999997764826,
+        "count": 12
+      },
+      "inputToSource": {
+        "median": 12.400000002235174,
+        "p95": 15.899999998509884,
+        "worst": 15.899999998509884,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 29.100000001490116,
+        "p95": 30.199999999254942,
+        "worst": 30.199999999254942,
+        "count": 12
+      }
+    },
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 24,
+          "worst": 24,
+          "count": 56
+        }
+      },
+      "kb": 100,
+      "bytes": 102400,
+      "scenario": "marked",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": 12.600000001490116,
+        "p95": 16,
+        "worst": 16,
+        "count": 12
+      },
+      "inputToSource": {
+        "median": 12.5,
+        "p95": 15.800000000745058,
+        "worst": 15.800000000745058,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 29.300000000745058,
+        "p95": 30.800000000745058,
+        "worst": 30.800000000745058,
+        "count": 12
+      }
+    },
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 24,
+          "worst": 24,
+          "count": 29
+        }
+      },
+      "kb": 100,
+      "bytes": 102400,
+      "scenario": "unicode",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": null,
+        "p95": null,
+        "worst": null,
+        "count": 0
+      },
+      "inputToSource": {
+        "median": 12.799999997019768,
+        "p95": 18.800000000745058,
+        "worst": 18.800000000745058,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 29.299999997019768,
+        "p95": 30.5,
+        "worst": 30.5,
+        "count": 12
+      }
+    },
+    {
+      "eventTiming": {
+        "supported": true,
+        "durationThreshold": 16,
+        "includesWarmup": true,
+        "duration": {
+          "median": 16,
+          "p95": 16,
+          "worst": 48,
+          "count": 30
+        }
+      },
+      "kb": 100,
+      "bytes": 102400,
+      "scenario": "composition",
+      "warmup": 3,
+      "samples": 12,
+      "keyDownToSource": {
+        "median": null,
+        "p95": null,
+        "worst": null,
+        "count": 0
+      },
+      "inputToSource": {
+        "median": 12.5,
+        "p95": 16.399999998509884,
+        "worst": 16.399999998509884,
+        "count": 12
+      },
+      "inputToDoubleRAF": {
+        "median": 29.400000002235174,
+        "p95": 30.400000002235174,
+        "worst": 30.400000002235174,
+        "count": 12
+      }
+    }
+  ]
+}

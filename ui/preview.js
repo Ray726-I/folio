@@ -41,7 +41,6 @@ function setActiveOutline(index) {
     if (!entry) return;
     const selected = entryIndex === active;
     entry.button.classList.toggle('active', selected);
-    entry.button.tabIndex = selected ? 0 : -1;
     if (selected) entry.button.setAttribute('aria-current', 'location');
     else entry.button.removeAttribute('aria-current');
   };

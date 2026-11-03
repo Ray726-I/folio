@@ -24,7 +24,8 @@ function build() {
     stdin: {
       contents: [
         "export { parseSource } from './ui/editor/model.js';",
-        "export { tryTextEdits } from './ui/editor/source-edits.js';",
+        "export { mapSource, mapRich } from './ui/editor/source-ledger.js';",
+        "export { tryTextEdits, trySourceEdit } from './ui/editor/source-edits.js';",
         "export { EditorState, TextSelection } from 'prosemirror-state';",
       ].join('\n'),
       resolveDir: process.cwd(),
@@ -54,9 +55,15 @@ const DOCS = [
   '> quote text\n> second line\n\nAfter the quote.\n',
   '```js\nconst answer = 42;\n```\n\nAfter code.\n',
   '# One\n\n## Two\n\n### Three\n\nText.\n',
+  '1 item\n\nwww.example.co end\n',
+  'First [reference][a].\n\nPlain text.\n\n[a]: https://example.com\n',
+  'Plain words\r\n\r\nNext paragraph.\r\n',
+  'Before **bold** and _em_ text.\n\nEscaped \\*star\\* &fjlig; end.\n',
+  'Plain **bold** text.\n\nIncomplete [link](https://example.co',
+  'Incomplete [link](https://example.co\n\nPlain **bold** text.\n',
 ];
 
-const CHARS = ['a', 'Z', ' ', '.', 'x', 'é', '1'];
+const CHARS = ['a', 'Z', ' ', '.', 'x', 'é', '1', '*', '_', '[', ']', '&', '`', ':', '/', '😀', '字', '\t'];
 
 (async () => {
   build();
@@ -84,7 +91,7 @@ const CHARS = ['a', 'Z', ' ', '.', 'x', 'é', '1'];
 
   let accepted = 0, rejected = 0;
   const random = prng(0x5EED);
-  for (let iteration = 0; iteration < 400; iteration++) {
+  for (let iteration = 0; iteration < 4000; iteration++) {
     const source = DOCS[Math.floor(random() * DOCS.length)];
     const model = parseSource(source);
     // Random text position inside a paragraph-like text run.
@@ -119,11 +126,49 @@ const CHARS = ['a', 'Z', ' ', '.', 'x', 'é', '1'];
       runs: model.ledger.runs.map(run => [run.kind, run.pmFrom, run.pmTo, run.sourceFrom, run.sourceTo, run.linear ? 1 : 0, run.charMap]),
       owners: model.ledger.owners.map(owner => [owner.type, owner.pmFrom, owner.pmTo, owner.sourceFrom, owner.sourceTo, owner.confidence]),
       segments: model.segments.map(segment => [segment.from, segment.to]),
+      gaps: model.ledger.gaps,
+      metadata: model.ledger.metadata,
     });
     assert.deepEqual(shape(next), shape(reparsed),
       `iteration ${iteration}: the returned ledger diverges from a fresh parse of the same source`);
-    assert.equal(next.source.length >= 0, true);
+    const mappingShape = mapping => [mapping.source, mapping.pm, mapping.exact, mapping.confidence, mapping.owner?.id];
+    for (const bias of ['left', 'right']) {
+      for (let at = 0; at <= next.source.length; at++) assert.deepEqual(
+        mappingShape(modules.mapSource(next.ledger, at, {bias})),
+        mappingShape(modules.mapSource(reparsed.ledger, at, {bias})), `iteration ${iteration}: source mapping ${at}`);
+      for (let at = 0; at <= next.doc.content.size; at++) assert.deepEqual(
+        mappingShape(modules.mapRich(next.ledger, at, {bias})),
+        mappingShape(modules.mapRich(reparsed.ledger, at, {bias})), `iteration ${iteration}: rich mapping ${at}`);
+    }
   }
+  let sourceAccepted = 0;
+  for (let iteration = 0; iteration < 2000; iteration++) {
+    const source = DOCS[Math.floor(random() * DOCS.length)];
+    const model = parseSource(source);
+    const from = Math.floor(random() * (source.length + 1));
+    const to = random() < 0.35 ? Math.min(from + 1, source.length) : from;
+    const insert = to > from ? '' : CHARS[Math.floor(random() * CHARS.length)];
+    const next = modules.trySourceEdit(model, {from, to, insert});
+    if (!next) continue;
+    sourceAccepted++;
+    assert.equal(next.source, source.slice(0, from) + insert + source.slice(to));
+    const fresh = parseSource(next.source);
+    assert.ok(next.doc.eq(fresh.doc), `source-first iteration ${iteration}: document`);
+    assert.deepEqual(next.ledger.runs, fresh.ledger.runs, `source-first iteration ${iteration}: runs`);
+    assert.deepEqual(next.ledger.gaps, fresh.ledger.gaps, `source-first iteration ${iteration}: gaps`);
+    assert.deepEqual(next.ledger.metadata, fresh.ledger.metadata, `source-first iteration ${iteration}: metadata`);
+    for (const bias of ['left', 'right']) {
+      const shape = mapping => [mapping.source, mapping.pm, mapping.exact, mapping.confidence, mapping.owner?.id];
+      for (let at = 0; at <= next.source.length; at++) assert.deepEqual(
+        shape(modules.mapSource(next.ledger, at, {bias})), shape(modules.mapSource(fresh.ledger, at, {bias})),
+        `source-first iteration ${iteration}: source ${at}`);
+      for (let at = 0; at <= next.doc.content.size; at++) assert.deepEqual(
+        shape(modules.mapRich(next.ledger, at, {bias})), shape(modules.mapRich(fresh.ledger, at, {bias})),
+        `source-first iteration ${iteration}: rich ${at}`);
+    }
+  }
+  assert.ok(sourceAccepted > 100, `source-first fuzz accepted ${sourceAccepted} cases`);
+  console.log(`PASS: ${sourceAccepted} source-first edits exactly match fresh source/document/mappings.`);
   assert.ok(accepted > 50, `the fuzz must accept a meaningful number of edits, got ${accepted} (rejected ${rejected})`);
   console.log(`PASS: ${accepted} random text edits kept source and document in agreement (${rejected} fell back).`);
   fs.rmSync(scratch, { recursive: true, force: true });

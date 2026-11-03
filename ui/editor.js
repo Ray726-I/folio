@@ -1,7 +1,7 @@
 'use strict';
 // Shell adapter. The engines live in the locally bundled editor/ modules.
 let editor = null, editorDocument = null, editorPath = null, outlineTimer, fallbackCheckedContent = null;
-let outlineRevision = 0;
+let outlineRevision = 0, outlineFallbackIdentity = 0;
 // Anything larger is shown read-only: ProseMirror would have to parse it in JS.
 const MAX_RICH_LENGTH = 2 * 1024 * 1024;
 // Temporary protection while a queued open replaces the active document. This
@@ -59,9 +59,13 @@ function lineStartsFor(text) {
 function refreshEditorOutline() {
   if (!editor || !current.active) return;
   if ($('outline').hidden) return;
-  const headings = window.FolioEditor.headings(current.content);
+  const headings = editor.getHeadings?.() ?? window.FolioEditor.headings(current.content);
+  const previousEntries = outlineEntries;
+  const previousByKey = new Map((outlineStateDocument === current ? previousEntries : []).filter(entry => entry.key).map(entry => [entry.key, entry]));
+  const previousActive = previousEntries[outlineActiveIndex];
+  const nextEntries = [];
+  let treeChanged = headings.length !== previousEntries.length;
   let lineStarts;
-  $('outline-items').replaceChildren(); outlineEntries = []; outlineActiveIndex = -1;
   const elements = [...$('preview').querySelectorAll('h1,h2,h3,h4,h5,h6')];
   const seenIds = new Set();
   let cursor = 0;
@@ -91,15 +95,34 @@ function refreshEditorOutline() {
       while (seenIds.has(id)) id = `${base}-${suffix++}`;
     }
     seenIds.add(id);
-    const button = document.createElement('button'); button.className = 'outline-link'; button.textContent = text; button.title = text;
-    button.dataset.level = heading.level; button.style.setProperty('--indent', `${Math.min(heading.level - 1, 3) * 10}px`); button.tabIndex = outlineEntries.length ? -1 : 0;
-    button.onclick = () => { if (documentMode === 'source') { jumpToSource(heading.offset); setActiveOutline(outlineEntries.indexOf(entry)); return; } editor.selectRange(heading.offset); setActiveOutline(outlineEntries.indexOf(entry)); element?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); };
-    const entry = { id, element, button, offset: heading.offset, level: heading.level, text };
-    outlineEntries.push(entry);
+    let entry = heading.key ? previousByKey.get(heading.key) : null;
+    if (!entry) {
+      const button = document.createElement('button'); button.className = 'outline-link'; button.tabIndex = -1;
+      entry = { button, key: heading.key || `outline-fallback-${++outlineFallbackIdentity}` };
+      button.onclick = () => {
+        if (documentMode === 'source') { jumpToSource(entry.offset); setActiveOutline(outlineEntries.indexOf(entry)); return; }
+        editor.selectRange(entry.offset); setActiveOutline(outlineEntries.indexOf(entry));
+        entry.element?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+      };
+      treeChanged = true;
+    }
+    if (entry !== previousEntries[nextEntries.length] || entry.level !== heading.level) treeChanged = true;
+    if (entry.text !== text) {
+      entry.button.textContent = text; entry.button.title = text;
+      if (entry.toggle) entry.toggle.setAttribute('aria-label', (outlineCollapsed.has(entry.key || id) ? 'Expand ' : 'Collapse ') + text);
+    }
+    if (entry.level !== heading.level) {
+      entry.button.dataset.level = heading.level;
+      entry.button.style.setProperty('--indent', `${Math.min(heading.level - 1, 3) * 10}px`);
+    }
+    Object.assign(entry, { id, element, offset: heading.offset, level: heading.level, text });
+    nextEntries.push(entry);
   }
+  outlineEntries = nextEntries;
+  outlineActiveIndex = previousActive ? outlineEntries.indexOf(previousActive) : -1;
   $('outline-count').textContent = outlineEntries.length ? `${outlineEntries.length} ${outlineEntries.length === 1 ? 'section' : 'sections'}` : 'No headings';
-  buildOutlineTree();
-  if (!outlineEntries.length) { const empty = document.createElement('p'); empty.className = 'sidebar-empty'; empty.textContent = 'Add a heading to build the outline.'; $('outline-items').append(empty); }
+  if (treeChanged || outlineStateDocument !== current) buildOutlineTree(previousEntries);
+  if (!outlineEntries.length && !$('outline-items').querySelector('.sidebar-empty')) { const empty = document.createElement('p'); empty.className = 'sidebar-empty'; empty.textContent = 'Add a heading to build the outline.'; $('outline-items').append(empty); }
   requestAnimationFrame(updateActiveOutline);
 }
 

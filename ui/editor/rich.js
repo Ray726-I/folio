@@ -1,5 +1,5 @@
 import { Fragment } from 'prosemirror-model';
-import { EditorState, Plugin, TextSelection, Selection, AllSelection } from 'prosemirror-state';
+import { EditorState, Plugin, TextSelection, NodeSelection, Selection, AllSelection } from 'prosemirror-state';
 import { EditorView, Decoration, DecorationSet } from 'prosemirror-view';
 import { keymap } from 'prosemirror-keymap';
 import { baseKeymap, toggleMark, setBlockType, wrapIn, chainCommands, exitCode } from 'prosemirror-commands';
@@ -11,7 +11,8 @@ import MarkdownIt from 'markdown-it';
 import { decodeHTML, decodeHTMLAttribute } from 'entities';
 import { schema, parseSource, updateSource, sourceToRich, richToSource, sourceMapping, richMapping, INLINE_HTML_SPAN_TAGS } from './model.js';
 import { buildLedger, applySourcePatches } from './source-ledger.js';
-import { tryTextEdits } from './source-edits.js';
+import { tryTextEdits, trySourceEdit } from './source-edits.js';
+import { createHeadingMetadata } from './headings.js';
 import { parser as markdownParser, GFM } from '@lezer/markdown';
 
 const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
@@ -233,8 +234,25 @@ function selectionAt(doc, anchor, head = anchor) {
 
 export function createRichEditor(parent, options) {
   let model = parseSource(options.content), view;
-  let revision = 0, bookmark = null, tabSelection = null, commitOutcome = null;
+  let revision = 0, bookmark = null, tabSelection = null, commitOutcome = null, pendingTail = false;
+  const headingMetadata = createHeadingMetadata();
+  headingMetadata.read(model);
   const refreshers = new Set();
+  // The observer narrows gutter discovery to mounted, visible tables. A point
+  // probe below covers the first frame before observer delivery after layout.
+  const nearbyTables = new Set();
+  const tableObserver = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) nearbyTables.add(entry.target);
+      else nearbyTables.delete(entry.target);
+    }
+  }, { root: parent.closest('.reader-scroll'), rootMargin: '60px' }) : null;
+  function tableView(node) {
+    const table = new TableView(node, 80);
+    tableObserver?.observe(table.dom);
+    table.destroy = () => { tableObserver?.unobserve(table.dom); nearbyTables.delete(table.dom); };
+    return table;
+  }
 
   // A logical bookmark keeps the exact source endpoints selected in the source
   // presentation, the source revision they belong to, and the actual
@@ -296,8 +314,10 @@ export function createRichEditor(parent, options) {
     let ledger = parsed.ledger;
     if (ledger) {
       ledger.doc = doc;
+      const nodes = new Map();
+      doc.descendants((node, position) => { nodes.set(position, node); });
       for (const owner of ledger.owners) {
-        const node = doc.nodeAt(owner.pmFrom);
+        const node = nodes.get(owner.pmFrom);
         if (!node || !node.eq(owner.node)) { ledger = null; break; }
         owner.node = node;
       }
@@ -305,10 +325,10 @@ export function createRichEditor(parent, options) {
     if (!ledger) {
       try { ledger = buildLedger(parsed.source, doc, { segments }); } catch { ledger = null; }
     }
-    return { doc, source: parsed.source, prefix: parsed.prefix, segments, gaps: parsed.gaps, ledger };
+    return { ...parsed, doc, segments, ledger };
   }
 
-  function commitCandidate(candidate, nextSelection, typing) {
+  function commitCandidate(candidate, nextSelection, typing, sourceEdit) {
     const size = view.state.doc.content.size;
     const pmAnchor = sourceToRich(candidate, nextSelection.anchor);
     const pmHead = sourceToRich(candidate, nextSelection.head);
@@ -316,7 +336,7 @@ export function createRichEditor(parent, options) {
     try {
       tr = view.state.tr.replaceWith(0, size, candidate.doc.content);
       tr = tr.setSelection(TextSelection.between(tr.doc.resolve(pmAnchor), tr.doc.resolve(pmHead)));
-      tr.setMeta('folio-source-commit', { model: candidate, selection: nextSelection, typing });
+      tr.setMeta('folio-source-commit', { model: candidate, selection: nextSelection, typing, sourceEdit });
     } catch {
       options.message('This edit could not be applied as an exact source change. The previous document is preserved.');
       return false;
@@ -359,7 +379,15 @@ export function createRichEditor(parent, options) {
       return { handled: true, committed: false };
     }
     let parsed;
-    try { parsed = parseSource(patched.source); }
+    try {
+      let sourceEdit = model.sourceEdit;
+      if (sourceEdit) {
+        const delta = insert.length - (to - from);
+        sourceEdit = { from: from < sourceEdit.from ? Math.min(from, sourceEdit.from + delta) : sourceEdit.from,
+          to: to <= sourceEdit.to ? sourceEdit.to + delta : Math.max(from + insert.length, sourceEdit.to) };
+      }
+      parsed = sourceEdit ? parseSource(patched.source, sourceEdit) : trySourceEdit(model, { from, to, insert }) || parseSource(patched.source);
+    }
     catch {
       options.message('This edit could not be applied as an exact source change. The previous document is preserved.');
       return { handled: true, committed: false };
@@ -371,7 +399,7 @@ export function createRichEditor(parent, options) {
     const relativeHead = nextSelection ? nextSelection.head : insert.length;
     const anchor = Math.max(0, Math.min(patched.source.length, from + relativeAnchor));
     const head = Math.max(0, Math.min(patched.source.length, from + relativeHead));
-    const committed = commitCandidate(parsed, { anchor, head }, origin === 'typing' || origin === 'paste');
+    const committed = commitCandidate(parsed, { anchor, head }, origin === 'typing' || origin === 'paste', { from, to, insert });
     return { handled: true, committed };
   }
 
@@ -434,6 +462,7 @@ export function createRichEditor(parent, options) {
     void editDestination({ title: 'Edit link destination', ...range, fallbackFrom: range.from, fallbackTo: range.to });
   }
   function editLinkMarkdown(anchor, from, to) {
+    if (revealSourceBlock(anchor)) return;
     if (options.isLocked()) return;
     const mapped = verifiedSourceRange(from, to);
     if (!mapped) { options.message('This link cannot be mapped safely to Markdown.'); return; }
@@ -668,11 +697,12 @@ export function createRichEditor(parent, options) {
     }, { passive: false });
     panel.append(input, apply, cancel);
     const openEditor = () => {
+      if (revealSourceBlock(dom)) return;
       if (options.isLocked()) return;
       if (!panel.hidden) return;
       input.value = node.attrs.tex; panel.hidden = false; input.focus();
     };
-    formula.addEventListener('click', event => {
+    formula.addEventListener('dblclick', event => {
       if (event.button !== 0 || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
       event.preventDefault(); event.stopPropagation(); openEditor();
     });
@@ -774,6 +804,7 @@ export function createRichEditor(parent, options) {
     const dom = document.createElement('div'); dom.className = 'code-container';
     let codeSourceEditing = false;
     dom.addEventListener('dblclick', event => {
+      if (revealSourceBlock(dom)) { event.preventDefault(); return; }
       if (options.isLocked() || codeSourceEditing || event.target.closest('input,textarea,button')) return;
       let pos;
       try { pos = getPos(); } catch { return; }
@@ -865,14 +896,6 @@ export function createRichEditor(parent, options) {
     // continue to represent the same part of a long line.
     pre.addEventListener('scroll', () => { highlight.scrollLeft = pre.scrollLeft; }, { passive: true });
     const code = document.createElement('code'); pre.append(code);
-    const details = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'Diagram source'; details.append(summary, pre);
-    // Opening or focusing the source is an explicit editing intent. A later
-    // successful render may close source that it opened automatically for an
-    // error, but it must never close the editor out from under the user.
-    let sourceTouched = false, sourceAutoOpened = false;
-    summary.addEventListener('click', () => { sourceTouched = true; });
-    details.addEventListener('focusin', () => { sourceTouched = true; });
-    details.addEventListener('toggle', () => { if (!details.open) sourceAutoOpened = false; });
     let generation = 0, source = null, theme = null, abortController = null, renderTimer = 0;
     let highlightGeneration = 0, highlightTimer = 0, highlightedSource = null, highlightedLanguage = null;
     dom.addEventListener('focusin', () => dom.classList.add('code-editing'));
@@ -922,9 +945,8 @@ export function createRichEditor(parent, options) {
       if (language === 'math') {
         clearHighlight(); clearTimeout(renderTimer); renderTimer = 0; abortController?.abort(); source = null; theme = null;
         dom.classList.remove('mermaid-host'); delete dom.dataset.mermaidSource; delete dom.dataset.diagramState;
-        summary.textContent = 'Math source';
-        if (pre.parentNode !== details) details.append(summary, pre);
-        if (!drawing.isConnected || !details.isConnected) dom.replaceChildren(fenceInfo, drawing, details);
+        pre.hidden = true;
+        if (pre.parentNode !== dom || drawing.parentNode !== dom) dom.replaceChildren(fenceInfo, drawing, pre);
         const current = ++generation, tex = node.textContent;
         drawing.className = 'math-block math-formula'; drawing.textContent = tex;
         try {
@@ -934,7 +956,7 @@ export function createRichEditor(parent, options) {
         } catch {
           if (current !== generation) return;
           drawing.textContent = 'Formula could not be rendered. Its source is preserved.';
-          drawing.classList.add('math-error'); details.open = true;
+          drawing.classList.add('math-error');
         }
         return;
       }
@@ -942,15 +964,15 @@ export function createRichEditor(parent, options) {
         generation++; clearTimeout(renderTimer); renderTimer = 0; abortController?.abort(); source = null; theme = null;
         dom.classList.remove('mermaid-host'); delete dom.dataset.mermaidSource; delete dom.dataset.diagramState;
         code.className = /^[a-z0-9_+#.-]+$/i.test(language) ? `language-${language}` : '';
+        pre.hidden = false;
         if (pre.parentNode !== dom || highlight.nextSibling !== pre) dom.replaceChildren(fenceInfo, highlight, pre);
         scheduleHighlight(language);
         return;
       }
       clearHighlight();
-      summary.textContent = 'Diagram source';
       dom.classList.add('mermaid-host'); dom.dataset.mermaidSource = node.textContent;
-      if (pre.parentNode !== details) details.append(summary, pre);
-      if (!drawing.isConnected || !details.isConnected) dom.replaceChildren(fenceInfo, drawing, details);
+      pre.hidden = true;
+      if (pre.parentNode !== dom || drawing.parentNode !== dom) dom.replaceChildren(fenceInfo, drawing, pre);
       const text = node.textContent, nextTheme = options.themeRevision();
       if (source === text && theme === nextTheme) return;
       // A keystroke changes the exact source, so any render still in flight is
@@ -974,23 +996,16 @@ export function createRichEditor(parent, options) {
           if (outcome?.ok && outcome.sanitized && outcome.svg) {
             drawing.className = ''; drawing.innerHTML = outcome.svg; code.className = '';
             dom.dataset.diagramState = 'rendered';
-            // Only an error-opened source auto-collapses, and only when the
-            // user has not opened or focused it since. A user-opened source
-            // stays open for the whole editing session.
-            if (sourceAutoOpened && !sourceTouched && !details.contains(document.activeElement)) details.open = false;
-            sourceAutoOpened = false;
           } else {
             drawing.textContent = outcome?.error?.code === 'unsupported_external_images' ? 'This diagram needs external images, which are blocked while rendering offline.' : 'Mermaid diagram could not be rendered.';
             drawing.className = 'mermaid-error'; code.className = 'mermaid-source';
             dom.dataset.diagramState = 'error';
-            if (!details.open) { sourceAutoOpened = true; details.open = true; }
           }
         } catch {
           if (current !== generation || !dom.isConnected) return;
           drawing.textContent = 'Mermaid diagram could not be rendered.';
           drawing.className = 'mermaid-error'; code.className = 'mermaid-source';
           dom.dataset.diagramState = 'error';
-          if (!details.open) { sourceAutoOpened = true; details.open = true; }
         }
       }, hadDiagram ? 120 : 0);
     };
@@ -1010,7 +1025,7 @@ export function createRichEditor(parent, options) {
     try {
       const selection = window.getSelection();
       if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return false;
-      const rendered = view?.dom.querySelectorAll('.extension-preview, .html-inline');
+      const rendered = view?.dom.querySelectorAll('.extension-preview, .html-inline, .mermaid-host, .math-block, .math-inline, .image-widget');
       if (!rendered || !rendered.length) return false;
       for (let i = 0; i < selection.rangeCount; i++) {
         const range = selection.getRangeAt(i);
@@ -1044,93 +1059,66 @@ export function createRichEditor(parent, options) {
     setSelectionGuarded(false);
     try { view?.domObserver.flush(); } catch {}
   }
-  function selectionIncludesRenderedAtom() {
-    try {
-      const selection = view?.state?.selection;
-      if (!selection || selection.empty) return false;
-      let found = false;
-      view.state.doc.nodesBetween(selection.from, selection.to, node => {
-        if (node.type.name === 'raw_block' || node.type.name === 'raw_inline') { found = true; return false; }
-      });
-      return found;
-    } catch { return false; }
-  }
-  // Clipboard text for a reading range that covers rendered projections. Clone
-  // the DOM range instead of using the ProseMirror serializer (which would emit
-  // literal Markdown for raw atoms) and strip editor-only actions/backing
-  // layers so a selection never copies both rendered text and its source.
-  // Attaching the clone offscreen keeps innerText's block line breaks.
-  function cleanedRangeText(range) {
-    if (!range || range.collapsed) return null;
-    const fragment = range.cloneContents();
-    if (!fragment || !fragment.childNodes.length) return null;
-    const host = document.createElement('div');
-    host.style.cssText = 'position:fixed;left:-100000px;top:0;width:720px;pointer-events:none;';
-    host.append(fragment);
-    host.querySelectorAll('.extension-actions, button, input, [aria-hidden="true"]').forEach(node => node.remove());
-    document.body.append(host);
-    try {
-      const text = host.innerText ?? host.textContent ?? '';
-      return text || null;
-    } finally { host.remove(); }
-  }
-  function renderedDomText(node, pos) {
-    let dom = null;
-    try { dom = view.nodeDOM(pos); } catch {}
-    if (!dom || typeof dom.cloneNode !== 'function') return node.textContent;
-    const clone = dom.cloneNode(true);
-    clone.querySelectorAll('.extension-actions, button, input, [aria-hidden="true"]').forEach(child => child.remove());
-    const host = document.createElement('div');
-    host.style.cssText = 'position:fixed;left:-100000px;top:0;width:720px;pointer-events:none;';
-    host.append(clone);
-    document.body.append(host);
-    try { return host.innerText ?? host.textContent ?? node.textContent; }
-    finally { host.remove(); }
-  }
-  // Keyboard selections can cover an atom without the browser's native range
-  // covering its rendered DOM. Mirror textBetween but substitute the rendered
-  // projection for stored source, so copy never emits literal Markdown.
-  function renderedSelectionText(from, to) {
-    let text = '', first = true;
-    try {
-      view.state.doc.nodesBetween(from, to, (node, pos) => {
-        if (node.type.name === 'raw_block') {
-          const nodeText = renderedDomText(node, pos);
-          if (first) first = false; else text += '\n\n';
-          text += nodeText;
-          return false;
+  function markdownClipboardRange() {
+    const logical = bookmarkRange(view.state);
+    if (logical && logical.from < logical.to) return logical;
+    const domSelection = window.getSelection();
+    if (domSelection && domSelection.rangeCount && !domSelection.isCollapsed && view.dom.contains(domSelection.anchorNode) && view.dom.contains(domSelection.focusNode)) {
+      const range = domSelection.getRangeAt(0);
+      const endpoint = (container, offset, end) => {
+        let pos = view.posAtDOM(container, offset, end ? -1 : 1);
+        let mapped = richToSource(model, pos);
+        let pmFrom = 0;
+        for (const segment of model.segments) {
+          const dom = view.nodeDOM(pmFrom);
+          if (dom && (dom === container || dom.contains(container))) {
+            // Rendered atoms have no text-to-source bijection. Include their
+            // complete source rather than copying labels or omitting fences.
+            const projected = segment.node.type.name === 'raw_block' && segment.node.attrs.kind !== 'source-edit'
+              || dom.matches?.('.mermaid-host,.math-block,.image-widget');
+            if (projected) return end ? segment.to : segment.from;
+            const walker = document.createTreeWalker(dom, NodeFilter.SHOW_TEXT);
+            const texts = []; let text;
+            while ((text = walker.nextNode())) {
+              if (!text.parentElement.closest('button,input,textarea,.code-highlight,.katex-mathml,[hidden]')) texts.push(text);
+            }
+            if (!end && container === texts[0] && offset === 0) mapped = segment.from;
+            const last = texts.at(-1);
+            if (end && container === last && offset === last?.length) mapped = segment.to;
+            break;
+          }
+          pmFrom += segment.node.nodeSize;
         }
-        const nodeText = node.isText ? node.text.slice(Math.max(from, pos) - pos, to - pos)
-          : !node.isLeaf ? ''
-          : node.type.name === 'hard_break' ? '\n'
-          : node.type.name === 'raw_inline' ? renderedDomText(node, pos)
-          : node.type.spec.leafText ? node.type.spec.leafText(node) : '';
-        if (node.isBlock && (node.isLeaf && nodeText || node.isTextblock)) {
-          if (first) first = false; else text += '\n\n';
-        }
-        text += nodeText;
-      }, 0);
-    } catch { return null; }
-    return text || null;
+        return mapped;
+      };
+      try {
+        const from = endpoint(range.startContainer, range.startOffset, false);
+        const to = endpoint(range.endContainer, range.endOffset, true);
+        if (Number.isInteger(from) && Number.isInteger(to) && from < to) return { from, to };
+      } catch {}
+    }
+    if (view.state.selection instanceof AllSelection) return { from: 0, to: model.source.length };
+    if (!view.state.selection.empty) {
+      const selection = sourceSelection(view.state);
+      return { from: Math.min(selection.anchor, selection.head), to: Math.max(selection.anchor, selection.head) };
+    }
+    return null;
   }
-  function copyRenderedSelection(event) {
-    const data = event.clipboardData;
-    if (!data) return false;
-    // A live mouse/pointer range is authoritative for partial readings,
-    // including selections that start or end inside a projection. Keyboard
-    // selections over an atom need the state-aware text builder instead.
-    let text = null;
-    if (renderedRangeActive()) {
-      try { text = cleanedRangeText(window.getSelection().getRangeAt(0)); } catch {}
+  function copyMarkdownSelection(event) {
+    if (!event.clipboardData) return false;
+    const range = markdownClipboardRange();
+    if (!range) return false;
+    try {
+      event.clipboardData.setData('text/plain', model.source.slice(range.from, range.to));
+      // Do not attach rendered HTML: paste destinations should receive the
+      // same Markdown payload as plain-text clipboard consumers.
+      event.preventDefault();
+      return true;
+    } catch {
+      event.preventDefault();
+      options.message('The clipboard could not be written. Your document is preserved.');
+      return true;
     }
-    if (text === null && selectionIncludesRenderedAtom()) {
-      const selection = view.state.selection;
-      text = renderedSelectionText(selection.from, selection.to);
-    }
-    if (text === null) return false;
-    event.preventDefault();
-    try { data.setData('text/plain', text); } catch { return false; }
-    return true;
   }
   // Text-shaped reading paint via the CSS Custom Highlights API. The real DOM
   // range stays authoritative (selection, copy and editing all behave
@@ -1152,16 +1140,9 @@ export function createRichEditor(parent, options) {
     const root = range.commonAncestorContainer;
     const scope = root.nodeType === Node.ELEMENT_NODE ? root : root.parentElement;
     if (!scope || !view.dom.contains(scope)) return result;
-    // Fast path: nothing inside needs native-only painting.
-    if (typeof scope.querySelector !== 'function' || !scope.querySelector('.code-surface code')) {
-      result.push(range.cloneRange());
-      return result;
-    }
-    // Slow path: split around token-highlighted code, whose glyphs must stay
-    // transparent over the token layer. Per MDN the `how` argument names the
-    // SOURCE point first (END_TO_START compares this.start to source.end),
-    // so the receiver/argument order below is deliberate and covered by
-    // reading-custom-highlight.
+    // One range per real text node avoids the block-sized rectangles some
+    // engines paint for a range crossing element boundaries. Syntax overlays
+    // are duplicate, non-selectable glyphs and must never enter the mirror.
     const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
     const probe = document.createRange();
     let text;
@@ -1179,10 +1160,10 @@ export function createRichEditor(parent, options) {
       return out.collapsed ? null : out;
     };
     while ((text = walker.nextNode())) {
-      // Token-highlighted code keeps its native painting (wash background
-      // with transparent text over the token layer); everything else is
-      // mirrored per fragment.
-      if (text.parentElement && text.parentElement.closest('.code-surface code')) continue;
+      if (text.parentElement?.closest('.code-highlight,button,input,textarea,.katex-mathml')) continue;
+      // KaTeX's visible glyph tree is aria-hidden because MathML supplies
+      // accessibility. It is still the tree that selection must paint.
+      if (text.parentElement?.closest('[aria-hidden="true"]') && !text.parentElement.closest('.katex-html')) continue;
       const part = intersects(text);
       if (part) result.push(part);
     }
@@ -1190,6 +1171,11 @@ export function createRichEditor(parent, options) {
   }
   function applyFolioRanges(ranges) {
     if (!customHighlightSupported || !view) return;
+    view.dom.querySelectorAll('.code-selection-painted').forEach(node => node.classList.remove('code-selection-painted'));
+    for (const range of ranges) {
+      const code = range.startContainer.parentElement?.closest('.code-surface');
+      code?.closest('.code-container')?.classList.add('code-selection-painted');
+    }
     if (!ranges.length) {
       if (folioPaintActive) {
         folioPaintActive = false;
@@ -1200,13 +1186,12 @@ export function createRichEditor(parent, options) {
     }
     try {
       window.CSS.highlights.set(folioHighlightName, new Highlight(...ranges));
-      if (!folioPaintActive) {
-        folioPaintActive = true;
-        view.dom.classList.add('folio-paint');
-      }
+      folioPaintActive = true;
+      view.dom.classList.add('folio-paint');
     } catch {
       // Registry hiccup (detached nodes?): fall back to native painting.
       folioPaintActive = false;
+      view.dom.querySelectorAll('.code-selection-painted').forEach(node => node.classList.remove('code-selection-painted'));
       try { window.CSS.highlights.delete(folioHighlightName); } catch {}
       view.dom.classList.remove('folio-paint');
     }
@@ -1242,14 +1227,36 @@ export function createRichEditor(parent, options) {
     } catch { return false; }
   }
   function syncFolioHighlight() {
-    if (!customHighlightSupported || !view) return;
+    if (!view) return;
+    const native = window.getSelection();
+    const nativeRange = native && native.rangeCount && !native.isCollapsed ? native.getRangeAt(0) : null;
+    view.dom.querySelectorAll('.mermaid-host, .math-block, .math-inline, .image-widget').forEach(node => {
+      node.classList.toggle('folio-rendered-selected', Boolean(nativeRange && nativeRange.intersectsNode(node)));
+    });
+    if (!customHighlightSupported) {
+      const selection = window.getSelection();
+      const range = selection && !selection.isCollapsed && selection.rangeCount ? selection.getRangeAt(0) : null;
+      view.dom.querySelectorAll('.code-container').forEach(node => {
+        const surface = node.querySelector('.code-surface code');
+        node.classList.toggle('code-selection-painted', Boolean(range && surface && range.intersectsNode(surface)));
+      });
+      return;
+    }
     const selection = window.getSelection();
     let ranges = [];
     if (selection && selection.rangeCount > 0 && !selection.isCollapsed
-      && view.dom.contains(selection.anchorNode) && view.dom.contains(selection.focusNode)
-      && !view.dom.classList.contains('ProseMirror-hideselection')) {
+      && view.dom.contains(selection.anchorNode) && view.dom.contains(selection.focusNode)) {
       try { ranges = folioHighlightRanges(selection.getRangeAt(0)); }
       catch { ranges = []; }
+    }
+    if (!ranges.length && view.state.selection instanceof NodeSelection) {
+      const selected = view.nodeDOM(view.state.selection.from);
+      if (selected?.matches?.('.math-block,.math-inline,.image-widget')) {
+        selected.classList.add('folio-rendered-selected');
+        const range = document.createRange();
+        range.selectNodeContents(selected.querySelector('.katex-html') || selected);
+        ranges = folioHighlightRanges(range);
+      }
     }
     // A standing find highlight survives selectionchange events that belong
     // to the find field (the native document selection is empty there).
@@ -1500,6 +1507,11 @@ export function createRichEditor(parent, options) {
     }
   }
   function rawView(node, editor, getPos) {
+    if (node.attrs.kind === 'source-edit') {
+      const dom = document.createElement('pre'); dom.className = 'folio-source-edit';
+      const contentDOM = document.createElement('code'); dom.append(contentDOM);
+      return { dom, contentDOM, update(next) { return next.type === node.type && next.attrs.kind === 'source-edit'; } };
+    }
     const dom = document.createElement('section'); dom.className = 'extension-block';
     // Assert editability up front: ProseMirror marks atom DOM non-editable when
     // the attribute is absent, which would make the projection an atomic
@@ -1568,6 +1580,7 @@ export function createRichEditor(parent, options) {
       revealCurrentSelection();
     };
     function exposeSource(selectAll = true) {
+      if (revealSourceBlock(dom)) return;
       if (options.isLocked()) return;
       const frame = sourceFrame();
       if (!frame) { revealFallback(); return; }
@@ -1581,7 +1594,7 @@ export function createRichEditor(parent, options) {
     const edit = button(editLabel, () => exposeSource());
     // Definition lists are native-rendered extensions, so their DOM cannot be
     // edited as rich text. A plain click exposes only this block's exact source.
-    projection.addEventListener('click', event => {
+    projection.addEventListener('dblclick', event => {
       if (options.isLocked() || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
       const target = event.target instanceof Element ? event.target : event.target.parentElement;
       if (!target?.closest('dl') || target.closest('a,button,input,textarea,select')) return;
@@ -1725,7 +1738,7 @@ export function createRichEditor(parent, options) {
     // duplicate selectable text exists here. Source edits go through the
     // in-place panel above; task checkboxes are the one bounded exception,
     // because their whole state is one marker character in the exact raw slice.
-    return { dom, update(next) { if (next.type !== node.type) return false; const same = next.sameMarkup(node) && next.textContent === node.textContent; if (!same) { generation++; invalidateTasks(); } node = next; if (!same) Promise.resolve().then(render); return true; }, ignoreMutation: () => true, stopEvent: event => event.target.closest?.('.extension-source-editor, button, input[type="checkbox"]') != null, destroy() { generation++; removeListeners(); } };
+    return { dom, update(next) { if (next.type !== node.type || next.attrs.kind === 'source-edit') return false; const same = next.sameMarkup(node) && next.textContent === node.textContent; if (!same) { generation++; invalidateTasks(); } node = next; if (!same) Promise.resolve().then(render); return true; }, ignoreMutation: () => true, stopEvent: event => event.target.closest?.('.extension-source-editor, button, input[type="checkbox"]') != null, destroy() { generation++; removeListeners(); } };
   }
   const safeDestination = value => {
     const destination = String(value || '');
@@ -1927,134 +1940,24 @@ export function createRichEditor(parent, options) {
       // inserting an empty paragraph (and changing the file) on open or focus.
       new Plugin({ props: { decorations(state) {
         const widgets = [];
-        // Inline heading source: when the caret (or selection anchor) sits
-        // inside a heading, reveal its exact Markdown line (marker AND text,
-        // e.g. `### Slide …`) as an editable input before the heading text —
-        // no popup, no toolbar. The input is a decoration widget outside the
-        // document: it never joins heading text, copy output or the
-        // ProseMirror selection, so the marker cannot leak into the canonical
-        // text. While open, the rendered heading text is hidden by CSS so the
-        // line reads exactly once, as pure Markdown. Committing replaces the
-        // verified line bytes through the source-first path (reparse + undo
-        // preserved, keystrokes commit live with caret kept); Escape or blur
-        // cancels without touching the file. Non-ATX sources fail closed
-        // with a message.
-        let activeHeading = -1;
-        try {
-          const $from = state.selection.$from;
-          for (let depth = $from.depth; depth > 0; depth--) {
-            if ($from.node(depth).type === schema.nodes.heading) { activeHeading = $from.before(depth); break; }
-          }
-        } catch {}
-        state.doc.descendants((node, pos) => {
-          if (node.type !== schema.nodes.heading || pos !== activeHeading) return;
-          const line = headingLineRange(pos);
-          if (!line) return;
-          if (node.content.size > 0) {
-            widgets.push(Decoration.inline(pos + 1, pos + 1 + node.content.size, { class: 'folio-heading-source-dim' }));
-          }
-          widgets.push(Decoration.widget(pos + 1, () => {
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.className = 'folio-heading-source';
-            input.setAttribute('aria-label', `Heading source, level ${node.attrs.level}`);
-            input.title = 'Edit heading Markdown (Enter to apply, Escape to cancel)';
-            input.spellcheck = false;
-            input.autocomplete = 'off';
-            const original = line.text;
-            input.value = original;
-            input.size = Math.max(1, Math.min(72, original.length));
-            let done = false;
-            let composing = false;
-            const revert = () => { input.value = original; input.size = Math.max(1, Math.min(72, original.length)); };
-            const commit = () => {
-              if (options.isLocked()) { revert(); return; }
-              done = commitHeadingLine(pos, input.value, original);
-              if (!done) revert();
-            };
-            const refresh = () => { input.disabled = options.isLocked(); };
-            input.folioRefresh = refresh; refreshers.add(refresh); refresh();
-            const updateSourceWhileTyping = () => {
-              input.size = Math.max(1, Math.min(72, input.value.length));
-              if (composing || options.isLocked() || !/^( {0,3})(#{1,6})[ \t]+/.test(input.value)) return;
-              const value = input.value, start = input.selectionStart, end = input.selectionEnd;
-              if (value === original) return;
-              if (!commitHeadingLine(pos, value, original, { typing: true, start, end })) return;
-              // Trailing source whitespace has no rich position and can map
-              // to the next block. Keep the projection anchored to this
-              // heading while its source input remains active.
-              const heading = view.state.doc.nodeAt(pos);
-              if (heading?.type === schema.nodes.heading && view.state.selection.$from.parent !== heading) {
-                const caret = Math.min(pos + heading.nodeSize - 1, pos + 1 + heading.content.size);
-                view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, caret)));
-              }
-              // Replacing the focused widget leaves the editor unfocused.
-              // Restore its focus first so the idle-heading CSS makes the
-              // replacement input visible and able to receive focus.
-              view.focus();
-              const dom = view.nodeDOM(pos);
-              const next = dom instanceof HTMLElement ? dom.querySelector('.folio-heading-source') : null;
-              if (next instanceof HTMLInputElement) {
-                next.focus(); next.setSelectionRange(Math.min(start, next.value.length), Math.min(end, next.value.length));
-              }
-            };
-            input.addEventListener('compositionstart', () => { composing = true; });
-            input.addEventListener('compositionend', () => { composing = false; updateSourceWhileTyping(); });
-            input.addEventListener('input', updateSourceWhileTyping);
-            input.addEventListener('keydown', event => {
-              event.stopPropagation();
-              // Undo/redo from inside the input goes through the shell history
-              // (the rebuilt input owns no native undo stack after a live
-              // commit). The caret is restored onto the rebuilt input so
-              // repeated undo keeps typing context instead of dropping focus.
-              const mod = event.ctrlKey || event.metaKey;
-              if (mod && !event.altKey && (event.key === 'z' || event.key === 'Z' || event.key === 'y' || event.key === 'Y') && !composing) {
-                event.preventDefault();
-                if (options.isLocked()) return;
-                const caret = typeof input.selectionStart === 'number' ? input.selectionStart : input.value.length;
-                try { options.undo(event.key.toLowerCase() === 'y' || event.shiftKey); } catch {}
-                try {
-                  view.focus();
-                  const dom = view.nodeDOM(pos);
-                  const next = dom instanceof HTMLElement ? dom.querySelector('.folio-heading-source') : null;
-                  if (next instanceof HTMLInputElement) {
-                    next.focus();
-                    const at = Math.max(0, Math.min(next.value.length, caret));
-                    next.setSelectionRange(at, at);
-                  }
-                } catch {}
-                return;
-              }
-              if (event.key === 'Enter') { event.preventDefault(); commit(); }
-              else if (event.key === 'Escape') { event.preventDefault(); done = true; revert(); try { view.focus(); } catch {} }
-            });
-            input.addEventListener('blur', () => { if (!done) revert(); });
-            return input;
-          }, { side: -1, stopEvent: () => true, destroy: node => refreshers.delete(node.folioRefresh) }));
-        });
         widgets.push(Decoration.widget(state.doc.content.size, () => {
-          const input = document.createElement('textarea');
-          input.className = 'editor-trailing-input'; input.rows = 1;
+          const input = document.createElement('button');
+          input.type = 'button'; input.className = 'editor-trailing-input';
+          input.textContent = 'Type / for blocks…';
           input.setAttribute('aria-label', 'Write a new paragraph at the end of the document');
-          input.placeholder = 'Type / for blocks…';
           const refresh = () => { input.disabled = options.isLocked(); };
           input.folioRefresh = refresh; refreshers.add(refresh); refresh();
-          let composing = false;
-          const commit = () => {
-            if (composing || !input.value || options.isLocked()) return;
-            const text = input.value;
-            const source = model.source, newline = source.includes('\r\n') ? '\r\n' : '\n';
-            const separator = !source || /(?:\r?\n){2}$/.test(source) ? '' : /\n$/.test(source) ? newline : newline + newline;
-            const end = source.length;
-            const result = replaceLogicalSelection(separator + text, 'typing', { from: end, to: end, all: false, collapsed: true });
-            if (result.committed) {
-              input.value = ''; view.focus();
-              if (text === '/') openSlashMenu(view.dom);
-            }
-          };
-          input.addEventListener('compositionstart', () => { composing = true; });
-          input.addEventListener('compositionend', () => { composing = false; commit(); });
-          input.addEventListener('input', commit);
+          input.addEventListener('click', () => {
+            if (options.isLocked()) return;
+            pendingTail = true;
+            const paragraph = schema.nodes.paragraph.create();
+            const pos = model.doc.content.size;
+            const doc = model.doc.copy(model.doc.content.append(schema.nodes.doc.create(null, paragraph).content));
+            model = { ...model, doc, ledger: null, segments: [...model.segments, { node: paragraph, from: model.source.length, to: model.source.length, raw: '' }] };
+            view.updateState(stateFor(doc));
+            view.dispatch(view.state.tr.setSelection(TextSelection.create(doc, pos + 1)));
+            view.focus();
+          });
           return input;
         }, { side: 1, stopEvent: () => true, destroy: node => refreshers.delete(node.folioRefresh) }));
         return DecorationSet.create(state.doc, widgets);
@@ -2071,7 +1974,7 @@ export function createRichEditor(parent, options) {
           return fixTables(newState, oldState);
         }
       }),
-      inputRules({ rules }),
+      inputRules({ rules: rules.map(rule => new InputRule(rule.match, (state, match, start, end) => state.selection.$from.parent.attrs.kind === 'source-edit' ? null : rule.handler(state, match, start, end))) }),
       keymap({
         'Mod-b': toggleMark(schema.marks.strong), 'Mod-i': toggleMark(schema.marks.em), 'Mod-`': toggleMark(schema.marks.code),
         'Mod-a': selectAllLogical, 'F2': () => focusHeadingMarker(),
@@ -2128,11 +2031,6 @@ export function createRichEditor(parent, options) {
     return { table: isInTable(state), heading };
   }
   let activePopup = null;
-  // Pending plain-press on a heading for click-to-edit: a plain left press
-  // (no modifiers) records its point so the later click can tell a tap from
-  // a drag. Anything else (modifiers, lock, the source input itself) leaves
-  // this null and the click path below does nothing.
-  let headingPress = null;
   function closePopup(restore = false) {
     if (!activePopup) return;
     const { menu, trigger, cleanup } = activePopup; activePopup = null;
@@ -2146,118 +2044,9 @@ export function createRichEditor(parent, options) {
     menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
     menu.style.top = `${Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - height - 8))}px`;
   }
-  // Exact first source line of the heading at `pos`, verified against the
-  // ledger owner. The range covers the line bytes only (never the line
-  // break), and the text must be single-line ATX; anything else (setext,
-  // unprovable or unsafe ranges, CR bytes) returns null so the inline editor
-  // never appears and the source presentation stays the only path.
-  function headingLineRange(pos) {
-    try {
-      const owner = model.ledger?.owners?.find(item => item.type === 'heading' && item.pmFrom === pos && item.confidence === 'exact' && item.supported !== false);
-      if (!owner || !Number.isInteger(owner.sourceFrom) || !Number.isInteger(owner.sourceTo)) return null;
-      if (owner.sourceFrom < 0 || owner.sourceTo > model.source.length || owner.sourceFrom >= owner.sourceTo) return null;
-      let end = model.source.indexOf('\n', owner.sourceFrom);
-      if (end < 0 || end > owner.sourceTo) end = owner.sourceTo;
-      const text = model.source.slice(owner.sourceFrom, end);
-      if (!text || /[\r]/.test(text)) return null;
-      if (!/^( {0,3})(#{1,6})([ \t]+|$)/.test(text)) return null;
-      return { from: owner.sourceFrom, to: end, text };
-    } catch { return null; }
-  }
-  // Write an inline heading-line edit through the exact source splice. The
-  // verified line range is replaced wholesale and reparsed, so levels, text
-  // and spacing all round-trip with shell undo; every other byte is
-  // preserved. A hashes-only value (`###`) is a level change: only the marker
-  // bytes are replaced and the rest of the line is kept. Empty values,
-  // multi-line values and non-heading values are rejected; stale seeds (the
-  // line changed under the open editor) fail closed.
-  function commitHeadingLine(pos, value, original, typing = null) {
-    if (options.isLocked()) return false;
-    if (!value || !value.trim()) {
-      if (!typing) options.message('Heading text cannot be empty. Press Escape to cancel.');
-      return false;
-    }
-    if (/[\r\n]/.test(value)) {
-      if (!typing) options.message('A heading is a single line. Press Escape to cancel.');
-      return false;
-    }
-    const range = headingLineRange(pos);
-    if (!range) { if (!typing) options.message('This heading cannot be edited safely in place.'); return false; }
-    if (model.source.slice(range.from, range.to) !== original) {
-      if (!typing) options.message('This heading changed while editing. Your edit was not applied.');
-      return false;
-    }
-    let from = range.from, to = range.to, insert = value;
-    const hashesOnly = /^(#{1,6})$/.exec(value);
-    if (hashesOnly) {
-      const marker = /^( {0,3})(#{1,6})([ \t]+|$)/.exec(original);
-      if (!marker) return false;
-      from = range.from + marker[1].length;
-      to = from + marker[2].length;
-      insert = hashesOnly[1];
-    } else if (!/^( {0,3})(#{1,6})([ \t]+|$)/.test(value)) {
-      if (!typing) options.message('Headings need 1 to 6 # characters followed by a space.');
-      return false;
-    }
-    const result = replaceLogicalSelection(insert, typing ? 'typing' : 'command', { from, to, all: false, collapsed: false }, typing ? { anchor: typing.start, head: typing.end } : null);
-    if (result.committed && !typing) view.focus();
-    return result.committed;
-  }
-  // Keyboard path to the inline source: with the caret in a heading, F2
-  // focuses its source input for direct editing (Enter commits, Esc cancels).
   function focusHeadingMarker() {
-    if (options.isLocked() || !view) return false;
-    try {
-      const $from = view.state.selection.$from;
-      let pos = -1;
-      for (let depth = $from.depth; depth > 0; depth--) {
-        if ($from.node(depth).type === schema.nodes.heading) { pos = $from.before(depth); break; }
-      }
-      if (pos < 0) return false;
-      const dom = view.nodeDOM(pos);
-      const input = dom instanceof HTMLElement ? dom.querySelector('.folio-heading-source') : null;
-      if (!(input instanceof HTMLInputElement)) return false;
-      input.focus();
-      input.select();
-      return true;
-    } catch { return false; }
-  }
-  // Click-to-edit handoff: after a plain click lands the caret in a heading,
-  // move DOM focus into its inline source input at the offset matching the
-  // click point, so typing edits the visible Markdown at once. Only plain
-  // primary taps qualify (recorded by mousedown, minimal travel, collapsed
-  // selection, unlocked, trusted event); modifier/drag/multi-click gestures
-  // and the input itself are left to their native behavior, and programmatic
-  // selection changes never reach this path because there is no click.
-  function focusHeadingInputAtPoint(clientX, clientY) {
-    if (!view || options.isLocked()) return false;
-    try {
-      const selection = view.state.selection;
-      if (!(selection instanceof TextSelection) || !selection.empty) return false;
-      const $from = selection.$from;
-      let pos = -1;
-      for (let depth = $from.depth; depth > 0; depth--) {
-        if ($from.node(depth).type === schema.nodes.heading) { pos = $from.before(depth); break; }
-      }
-      if (pos < 0) return false;
-      const line = headingLineRange(pos);
-      if (!line) return false;
-      const dom = view.nodeDOM(pos);
-      const input = dom instanceof HTMLElement ? dom.querySelector('.folio-heading-source') : null;
-      if (!(input instanceof HTMLInputElement)) return false;
-      if (document.activeElement === input) return true;
-      let offset = line.text.length;
-      try {
-        const hit = view.posAtCoords({ left: clientX, top: clientY });
-        if (hit && Number.isInteger(hit.pos)) {
-          const source = richToSource(model, Math.max(0, Math.min(view.state.doc.content.size, hit.pos)));
-          if (Number.isInteger(source)) offset = Math.max(0, Math.min(line.text.length, source - line.from));
-        }
-      } catch {}
-      input.focus();
-      try { input.setSelectionRange(offset, offset); } catch {}
-      return true;
-    } catch { return false; }
+    const dom = view.domAtPos(view.state.selection.head).node;
+    return revealSourceBlock(dom instanceof Element ? dom : dom.parentElement);
   }
   function openSlashMenu(trigger) {
     if (options.isLocked()) return;
@@ -2342,8 +2131,8 @@ export function createRichEditor(parent, options) {
     // Keep the view focusable during temporary transition protection; the
     // transaction filter below enforces the effective lock for document edits.
     state: stateFor(model.doc), editable: () => !options.isUserLocked(),
-    attributes: { 'aria-label': 'Formatted Markdown editor', spellcheck: 'true' },
-    nodeViews: { list_item: listItem, image: imageView, math_inline: mathView, math_block: mathView, code_block: codeView, raw_block: rawView, raw_inline: rawInlineView, table: node => new TableView(node, 80) },
+    attributes: () => ({ 'aria-label': 'Formatted Markdown editor', spellcheck: 'true', class: folioPaintActive ? 'folio-paint' : '' }),
+    nodeViews: { list_item: listItem, image: imageView, math_inline: mathView, math_block: mathView, code_block: codeView, raw_block: rawView, raw_inline: rawInlineView, table: tableView },
     dispatchTransaction(tr) {
       const beforeSelection = sourceSelection(view.state);
       const tabMeta = tr.getMeta('folio-tab-cell');
@@ -2360,6 +2149,8 @@ export function createRichEditor(parent, options) {
           return;
         }
         revision++;
+        if (commit.sourceEdit) headingMetadata.splice(model, commit.model, commit.sourceEdit);
+        else headingMetadata.reset();
         model = attachModel(commit.model, result.state.doc);
         view.updateState(result.state);
         options.onContext?.(currentContext(result.state));
@@ -2370,8 +2161,10 @@ export function createRichEditor(parent, options) {
         activePopup?.update?.();
         return;
       }
-      const nextModel = changed ? tryTextEdits(model, result.transactions, result.state.doc) || updateSource(result.state.doc, model) : model;
+      let nextModel = changed ? tryTextEdits(model, result.transactions, result.state.doc) || updateSource(result.state.doc, model) : model;
+      if (changed && model.sourceEdit) nextModel.sourceEdit = { from: model.sourceEdit.from, to: model.sourceEdit.to + nextModel.source.length - model.source.length };
       if (changed && nextModel.source !== model.source) { revision++; bookmark = null; }
+      if (changed) headingMetadata.map(result.transactions);
       model = nextModel;
       view.updateState(result.state);
       options.onContext?.(currentContext(result.state));
@@ -2382,9 +2175,37 @@ export function createRichEditor(parent, options) {
         options.onChange(model.source, sourceSelection(result.state), beforeSelection, typing);
       }
       activePopup?.update?.();
+      if (!changed && !selectionGuarded && !model.sourceEdit && result.state.selection.empty && result.state.selection.$from.parent.type === schema.nodes.heading && view.hasFocus()) {
+        queueMicrotask(() => {
+          if (view.isDestroyed || selectionGuarded || model.sourceEdit || !view.state.selection.empty || view.state.selection.$from.parent.type !== schema.nodes.heading) return;
+          const pos = view.state.selection.$from.before();
+          revealSourceBlock(view.nodeDOM(pos));
+        });
+      }
     },
     handleKeyDown(editor, event) {
       if (event.isComposing) return false;
+      if (model.sourceEdit && (event.ctrlKey || event.metaKey) && event.shiftKey && ['Home', 'End'].includes(event.key)) {
+        const edge = event.key === 'Home' ? 0 : editor.state.doc.content.size;
+        editor.dispatch(editor.state.tr.setSelection(TextSelection.between(editor.state.selection.$anchor, editor.state.doc.resolve(edge))).scrollIntoView());
+        event.preventDefault(); return true;
+      }
+      if (model.sourceEdit && !options.isLocked() && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        const selection = sourceSelection(editor.state);
+        let from = Math.min(selection.anchor, selection.head), to = Math.max(selection.anchor, selection.head);
+        if (event.key === 'Escape') {
+          model = parseSource(model.source); bookmark = null;
+          editor.updateState(stateFor(model.doc, selection)); editor.focus(); event.preventDefault(); return true;
+        }
+        if (['Enter', 'Backspace', 'Delete'].includes(event.key)) {
+          if (from === to && event.key !== 'Enter') {
+            if (event.key === 'Backspace' && from > 0) from -= /[\uDC00-\uDFFF]/.test(model.source[from - 1]) ? 2 : 1;
+            if (event.key === 'Delete' && to < model.source.length) to += /[\uD800-\uDBFF]/.test(model.source[to]) ? 2 : 1;
+          }
+          event.preventDefault();
+          return replaceLogicalSelection(event.key === 'Enter' ? '\n' : '', 'typing', { from, to, all: false }).handled;
+        }
+      }
       if (activePopup?.keydown?.(event)) return true;
       // A projection-only trailing input must not steal the browser's end of
       // document navigation from a final editable code block.
@@ -2403,6 +2224,16 @@ export function createRichEditor(parent, options) {
     },
     handleTextInput(editor, from, to, text) {
       if (editor.composing) return false;
+      if (pendingTail && editor.state.selection.$from.parent.content.size === 0 && from === editor.state.doc.content.size - 1) {
+        pendingTail = false;
+        const prefix = model.source.length ? (model.source.endsWith('\n') ? '\n' : '\n\n') : '';
+        const result = replaceLogicalSelection(prefix + text, 'typing', { from: model.source.length, to: model.source.length, all: false });
+        if (result.committed && text === '/') openSlashMenu(editor.dom);
+        return result.handled;
+      }
+      if (model.sourceEdit) {
+        return replaceLogicalSelection(text, 'typing', { from: richToSource(model, from), to: richToSource(model, to), all: false }).handled;
+      }
       if (text === '/' && from === to && editor.state.selection.$from.parent.type === schema.nodes.paragraph &&
           editor.state.selection.$from.parent.content.size === 0 && !options.isLocked()) {
         editor.dispatch(editor.state.tr.insertText(text, from, to));
@@ -2444,8 +2275,9 @@ export function createRichEditor(parent, options) {
       if (!data || data.types?.includes('text/html')) return false;
       const text = data.getData('text/plain');
       if (!text) return false;
-      const range = logicalRange(editor.state);
-      if (!range || range.collapsed) return false;
+      const logical = logicalRange(editor.state);
+      const caret = sourceSelection(editor.state);
+      const range = logical || { from: Math.min(caret.anchor, caret.head), to: Math.max(caret.anchor, caret.head), all: false };
       return replaceLogicalSelection(text, 'paste', range).handled;
     },
     handleDOMEvents: {
@@ -2462,29 +2294,6 @@ export function createRichEditor(parent, options) {
             && event.target.closest('.tableWrapper') && editor.dom.contains(event.target)) {
           hoverAnchor = null;
           hoverPending = null;
-        }
-        // Record a plain-press candidate for heading click-to-edit. Any
-        // modifier, a locked document, or a press starting in the source
-        // input itself clears it so those gestures keep native behavior.
-        // A press landing on rendered heading text while its source input
-        // holds focus first yields: blur the input (pending keystrokes are
-        // discarded, exactly like Escape without the refocus) so the native
-        // gesture — caret move, shift-extend, drag, word select — proceeds
-        // on the document instead of fighting the island.
-        headingPress = null;
-        if (event.target instanceof Element && !event.target.closest('.folio-heading-source')) {
-          try {
-            const heading = event.target.closest ? event.target.closest('h1,h2,h3,h4,h5,h6') : null;
-            const open = heading && editor.dom.contains(heading) ? heading.querySelector('.folio-heading-source') : null;
-            if (open && document.activeElement === open) open.blur();
-          } catch {}
-        }
-        if (event.button === 0 && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
-            && !options.isLocked() && event.target instanceof Element && event.isTrusted !== false) {
-          const heading = event.target.closest ? event.target.closest('h1,h2,h3,h4,h5,h6') : null;
-          if (heading && editor.dom.contains(heading) && !event.target.closest('.folio-heading-source')) {
-            headingPress = { x: event.clientX, y: event.clientY };
-          }
         }
         return false;
       },
@@ -2511,15 +2320,14 @@ export function createRichEditor(parent, options) {
         return false;
       },
       copy(editor, event) {
-        // A reading range touching a projection copies the rendered text under
-        // the highlight. The editor's serializer would emit literal source
-        // for the atom, so the native range is served here instead.
-        return copyRenderedSelection(event);
+        // Clipboard text is the exact canonical Markdown, including rendered
+        // objects between the native range endpoints.
+        return copyMarkdownSelection(event);
       },
       cut(editor, event) {
         // Cutting a reading range must never mutate the document: serve the
         // rendered text as a copy and keep the Markdown intact.
-        if (copyRenderedSelection(event)) return true;
+        if (renderedRangeActive() && copyMarkdownSelection(event)) return true;
         const range = logicalRange(editor.state);
         if (!range || range.collapsed || !event.clipboardData) return false;
         const text = model.source.slice(range.from, range.to);
@@ -2540,18 +2348,6 @@ export function createRichEditor(parent, options) {
         return true;
       },
       click(editor, event) {
-      // Heading click-to-edit runs before link handling: a plain tap on
-      // heading text hands focus to the inline source input at the tapped
-      // offset. Modifier taps, drags (pointer travelled), non-collapsed
-      // selections and taps already inside the input fall through untouched.
-      if (headingPress && event.button === 0 && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
-          && event.isTrusted !== false && !options.isLocked()
-          && Math.hypot(event.clientX - headingPress.x, event.clientY - headingPress.y) < 6) {
-        headingPress = null;
-        if (!(event.target instanceof Element && event.target.closest('.folio-heading-source'))) {
-          focusHeadingInputAtPoint(event.clientX, event.clientY);
-        }
-      } else headingPress = null;
       const anchor = event.target.closest('a'); if (!anchor) return false;
       event.preventDefault(); const href = anchor.getAttribute('href') || '';
       if (event.ctrlKey || event.metaKey || options.isLocked()) options.openLink(href);
@@ -2564,7 +2360,7 @@ export function createRichEditor(parent, options) {
         for (let i = index - 1; i >= 0 && ranges[i].to === from; i--) from = ranges[i].from;
         for (let i = index + 1; i < ranges.length && ranges[i].from === to; i++) to = ranges[i].to;
         if (event.altKey) editLinkMarkdown(anchor, from, to);
-        else revealLinkSource(from, to, href);
+        // Ordinary clicks leave links rendered; double-click reveals source.
       }
       return true;
     }, auxclick(editor, event) { const anchor = event.target.closest('a'); if (!anchor || event.button !== 1) return false; event.preventDefault(); options.openLink(anchor.getAttribute('href') || ''); return true; } }
@@ -2767,12 +2563,27 @@ export function createRichEditor(parent, options) {
     const reader = view.dom.closest('.reader-scroll');
     if (!target || !reader?.contains(target)) { scheduleHoverClear(); return; }
     let wrapper = target.closest('.tableWrapper');
+    const rectangles = new Map();
+    const boundsFor = candidate => {
+      if (!rectangles.has(candidate)) rectangles.set(candidate, candidate.getBoundingClientRect());
+      return rectangles.get(candidate);
+    };
     if (!wrapper || !view.dom.contains(wrapper)) {
       // A narrow, non-intercepting gutter makes controls discoverable even
       // when the pointer approaches from outside the table.
       wrapper = null;
-      for (const candidate of view.dom.querySelectorAll('.tableWrapper')) {
-        const bounds = candidate.getBoundingClientRect();
+      const candidates = new Set(nearbyTables);
+      // Hit testing finds the table just beyond a gutter without requiring a
+      // document-wide scan, including before the observer's first callback.
+      for (const [dx, dy] of [[0, 0], [-HOVER_EDGE, 0], [HOVER_EDGE, 0], [0, -HOVER_EDGE], [0, HOVER_EDGE]]) {
+        for (const hit of document.elementsFromPoint(clientX + dx, clientY + dy)) {
+          const table = hit.closest('.tableWrapper');
+          if (table && view.dom.contains(table)) candidates.add(table);
+        }
+      }
+      for (const candidate of candidates) {
+        if (!candidate.isConnected) { nearbyTables.delete(candidate); continue; }
+        const bounds = boundsFor(candidate);
         const insideX = clientX >= bounds.left && clientX <= bounds.right;
         const insideY = clientY >= bounds.top && clientY <= bounds.bottom;
         if ((insideY && clientX >= bounds.left - HOVER_EDGE && clientX <= bounds.right + HOVER_EDGE) ||
@@ -2783,7 +2594,7 @@ export function createRichEditor(parent, options) {
     }
     if (!wrapper) { scheduleHoverClear(); return; }
     cancelHoverClear();
-    const rect = wrapper.getBoundingClientRect();
+    const rect = boundsFor(wrapper);
     if (rect.width <= 0 || rect.height <= 0) return;
     const x = clientX, y = clientY;
     let zone = 'cell';
@@ -2810,7 +2621,7 @@ export function createRichEditor(parent, options) {
     }
     if (!anchor || sameHover(hoverAnchor, anchor)) return;
     hoverAnchor = anchor;
-    try { syncTableChrome(); } catch {}
+    try { syncTableChrome(rectangles); } catch {}
   }
   document.addEventListener('pointermove', onTablePointerOver);
   function pinChromeOnHover(element) {
@@ -3352,7 +3163,17 @@ export function createRichEditor(parent, options) {
   // edge's control, or — for a caret without hover — the caret row/column
   // handles plus both append buttons. Repositioning only moves overlays;
   // hovering never dispatches, so the source is never touched by pointing.
-  function syncTableChrome() {
+  let handleWrapper = null;
+  function stableHandle(kind, index, wrapper) {
+    const existing = handlesLayer.firstElementChild;
+    const key = kind === 'row' ? 'handleRow' : 'handleCol';
+    if (handleWrapper === wrapper && existing?.dataset[key] === String(index)) return existing;
+    const button = makeHandle(kind, index);
+    handlesLayer.replaceChildren(button);
+    handleWrapper = wrapper;
+    return button;
+  }
+  function syncTableChrome(rectangles) {
     if (!view) return;
     const locked = options.isLocked();
     let anchor = null;
@@ -3380,7 +3201,7 @@ export function createRichEditor(parent, options) {
       closeTableMenu();
       return;
     }
-    const wrapRect = anchor.wrapper.getBoundingClientRect();
+    const wrapRect = rectangles?.get(anchor.wrapper) || anchor.wrapper.getBoundingClientRect();
     if (wrapRect.bottom < 0 || wrapRect.top > window.innerHeight || wrapRect.width <= 0 || wrapRect.height <= 0) {
       addRowBtn.hidden = true;
       addColBtn.hidden = true;
@@ -3414,34 +3235,104 @@ export function createRichEditor(parent, options) {
       addColBtn.style.top = `${Math.round(colTop)}px`;
     }
     handlesLayer.hidden = !(showRowHandle || showColHandle);
-    handlesLayer.replaceChildren();
+    if (!showRowHandle && !showColHandle && handlesLayer.childElementCount) handlesLayer.replaceChildren();
     if (showRowHandle) {
       const r = Math.max(0, Math.min(anchor.height - 1, anchor.row));
-      const btn = makeHandle('row', r);
+      const btn = stableHandle('row', r, anchor.wrapper);
       btn.disabled = locked;
       const dom = cellDomAt(anchor, r, 0);
       const b = dom ? dom.getBoundingClientRect() : null;
       const y = b ? b.top + b.height / 2 : wrapRect.top + wrapRect.height * ((r + 0.5) / anchor.height);
       btn.style.left = `${Math.round(Math.max(8, wrapRect.left - 30))}px`;
       btn.style.top = `${Math.round(y - 12)}px`;
-      handlesLayer.append(btn);
     }
     if (showColHandle) {
       const c = Math.max(0, Math.min(anchor.width - 1, anchor.col));
-      const btn = makeHandle('col', c);
+      const btn = stableHandle('col', c, anchor.wrapper);
       btn.disabled = locked;
       const dom = cellDomAt(anchor, 0, c);
       const b = dom ? dom.getBoundingClientRect() : null;
       const x = b ? b.left + b.width / 2 : wrapRect.left + wrapRect.width * ((c + 0.5) / anchor.width);
       btn.style.left = `${Math.round(x - 12)}px`;
       btn.style.top = `${Math.round(Math.max(8, wrapRect.top - 30))}px`;
-      handlesLayer.append(btn);
     }
   }
-  const syncTableChromeOnScroll = () => { try { syncTableChrome(); } catch {} };
+  let tableChromeFrame = 0;
+  const syncTableChromeOnScroll = () => {
+    const focused = handlesLayer.contains(document.activeElement) ||
+      document.activeElement === addRowBtn || document.activeElement === addColBtn;
+    if (tableChromeFrame || (!hoverAnchor && !focused && handlesLayer.hidden && addRowBtn.hidden && addColBtn.hidden && !handleDrag)) return;
+    tableChromeFrame = requestAnimationFrame(() => {
+      tableChromeFrame = 0;
+      try { syncTableChrome(); } catch {}
+    });
+  };
   window.addEventListener('scroll', syncTableChromeOnScroll, true);
   window.addEventListener('resize', syncTableChromeOnScroll);
   const refreshTableChrome = () => { try { syncTableChrome(); } catch {} };
+  function revealSourceBlock(target) {
+    if (options.isLocked() || !target || target.closest('.folio-source-edit')) return false;
+    let offset = 0, index = -1;
+    for (let i = 0; i < model.segments.length; i++) {
+      const dom = view.nodeDOM(offset);
+      if (dom === target || dom?.contains?.(target)) { index = i; break; }
+      offset += model.segments[i].node.nodeSize;
+    }
+    const segment = model.segments[index];
+    if (!segment) return false;
+    const oldCaret = richToSource(model, view.state.selection.head);
+    const caret = oldCaret >= segment.from && oldCaret < segment.to ? Math.min(oldCaret, segment.to - (segment.raw.endsWith('\n') ? 1 : 0)) : segment.from;
+    const candidate = parseSource(model.source, { from: segment.from, to: segment.to });
+    setSelectionGuarded(false);
+    model = candidate; bookmark = null;
+    view.updateState(stateFor(candidate.doc, { anchor: caret, head: caret }));
+    view.focus();
+    return true;
+  }
+  let sourcePress = null;
+  view.dom.addEventListener('mousedown', event => {
+    sourcePress = event.button === 0 ? { x:event.clientX, y:event.clientY } : null;
+  }, true);
+  const sourceGesture = event => {
+    if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || event.button > 0) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target || target.closest('.folio-source-edit')) return;
+    const selection = window.getSelection();
+    if (event.type === 'click' && selection && !selection.isCollapsed) {
+      // Atom clicks can leave a node selection (or the previous text range)
+      // standing. A stationary primary click still reveals source; a drag
+      // must keep its native reading range.
+      const plainClick = event.detail === 1 && sourcePress && Math.hypot(event.clientX-sourcePress.x, event.clientY-sourcePress.y) < 6;
+      if (!plainClick) return;
+    }
+    const control = target.closest('button,input,textarea,select');
+    if (control && !control.matches('.code-fence-info,.extension-edit,[aria-label="Edit image"]')) return;
+    const sourceTarget = event.type === 'dblclick'
+      ? target.closest('h1,h2,h3,h4,h5,h6,a,.math-formula,.code-container,.image-widget,.html-inline,.extension-preview,blockquote,li,ul,ol,table,hr,strong,em,s,code')
+      : target.closest('h1,h2,h3,h4,h5,h6,.code-fence-info,.extension-edit,[aria-label="Edit image"]');
+    if (sourceTarget && revealSourceBlock(sourceTarget)) { event.preventDefault(); event.stopImmediatePropagation(); }
+    else if (model.sourceEdit && event.type === 'click' && !target.closest('button,input,textarea')) {
+      const selection = sourceSelection(view.state);
+      model = parseSource(model.source); bookmark = null;
+      view.updateState(stateFor(model.doc, selection)); view.focus();
+    }
+  };
+  view.dom.addEventListener('focusout', () => {
+    requestAnimationFrame(() => {
+      if (view.isDestroyed || !model.sourceEdit || view.dom.contains(document.activeElement)) return;
+      const selection = sourceSelection(view.state);
+      model = parseSource(model.source); bookmark = null;
+      view.updateState(stateFor(model.doc, selection));
+    });
+  });
+  view.dom.addEventListener('click', sourceGesture, true);
+  view.dom.addEventListener('dblclick', sourceGesture, true);
+  view.dom.addEventListener('keydown', event => {
+    if (['Enter', ' '].includes(event.key) && event.target.closest?.('.extension-edit,.math-formula,[aria-label="Edit image"]')) sourceGesture(event);
+  }, true);
+  view.dom.addEventListener('focusin', event => {
+    if (event.target.matches?.('.code-fence-info')) sourceGesture(event);
+  }, true);
   refreshers.add(refreshTableChrome);
   try { syncTableChrome(); } catch {}
   // A drag ending outside the editor (or cancelled) still settles the guard.
@@ -3457,6 +3348,7 @@ export function createRichEditor(parent, options) {
   document.addEventListener('pointerdown', dismissPopup, true);
   return {
     view,
+    headings: () => headingMetadata.read(model),
     captureSelection() {
       captureDOMSelection();
     },
@@ -3471,7 +3363,9 @@ export function createRichEditor(parent, options) {
     setDocument(content, selection, meta = {}) {
       if (content !== model.source) {
         revision++; bookmark = null;
-        model = parseSource(content);
+        model = parseSource(content, model.sourceEdit ? { from: model.sourceEdit.from, to: model.sourceEdit.to + content.length - model.source.length } : null);
+        headingMetadata.reset();
+        headingMetadata.read(model);
         const state = stateFor(model.doc, selection);
         view.updateState(state);
         if (meta.logical && selection) setBookmark(selection.anchor, selection.head, state);
@@ -3537,6 +3431,11 @@ export function createRichEditor(parent, options) {
       view.focus();
     },
     destroy() {
+      if (hoverRaf) cancelAnimationFrame(hoverRaf);
+      if (tableChromeFrame) cancelAnimationFrame(tableChromeFrame);
+      hoverPending = null;
+      tableObserver?.disconnect();
+      nearbyTables.clear();
       closePopup();
       try { addRowBtn.remove(); } catch {}
       try { addColBtn.remove(); } catch {}

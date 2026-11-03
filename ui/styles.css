@@ -1319,24 +1319,21 @@ input,textarea,[contenteditable="true"],.ProseMirror {
   color:var(--selection-ink,currentcolor)
 }
 
-/* Text-shaped reading paint via the CSS Custom Highlights registry (see
-   syncFolioHighlight in the rich editor). The real DOM range stays
-   authoritative; the mirrored folio-selection Highlight repaints it per text
-   fragment, so engines that would otherwise fill whole blocks paint the same
-   calm per-line wash. The paint class suppresses ONLY the native ::selection
-   background, and only once the mirror has a range to show: text color,
-   table/node indicators and the code-token transparency below are untouched.
-   Token-highlighted code keeps its native painting (wash background with
-   transparent glyphs over the token layer), so its ranges are excluded from
-   the mirror and its background is restored here. */
+/* Mirror native ranges per text fragment; only one layer paints the wash.
+   Selected code uses real surface glyphs so its wash cannot obscure the
+   separate syntax overlay below it. Collapse restores normal syntax colors. */
 ::highlight(folio-selection) {
   background-color:var(--selection-wash,color-mix(in srgb,var(--accent) 45%,var(--bg)))
 }
-#preview .ProseMirror.folio-paint ::selection {
+#preview .ProseMirror.folio-paint::selection,
+#preview .ProseMirror.folio-paint ::selection,
+#preview .ProseMirror.folio-paint .code-container.code-highlighted:not(.code-editing)>.code-surface code::selection {
   background-color:transparent
 }
-#preview .ProseMirror.folio-paint .code-container.code-highlighted:not(.code-editing)>.code-surface code::selection {
-  background-color:var(--selection-wash,color-mix(in srgb,var(--accent) 45%,var(--bg)))
+#preview .code-container.code-selection-painted>.code-highlight { visibility:hidden; }
+#preview .code-container.code-selection-painted>.code-surface code,
+#preview .code-container.code-selection-painted>.code-surface code::selection {
+  color:var(--selection-ink,var(--fg));
 }
 
 /* Text-shaped reading paint for the source presentation: same mirror contract
@@ -3549,3 +3546,15 @@ body.focus-mode #folder-search { display:none!important; }
 /* An idle document displays headings without a caret or Markdown input. */
 .ProseMirror:not(:focus-within) .folio-heading-source { display:none; }
 .ProseMirror:not(:focus-within) .folio-heading-source-dim { display:inline; }
+
+/* Source is an editable document block, so selections cross its boundaries. */
+.ProseMirror .folio-source-edit { white-space: pre-wrap; overflow-wrap: anywhere; font: 1em/1.6 var(--font-mono); color: var(--fg); cursor: text; }
+.ProseMirror .folio-source-edit code { font: inherit; background: none; padding: 0; }
+button.editor-trailing-input { display: block; text-align: left; cursor: text; }
+
+/* Rendered non-text objects still belong to a spanning document selection. */
+#preview .folio-rendered-selected { box-shadow:inset 0 0 0 2px var(--selection-wash,var(--accent)); }
+#preview .mermaid-host.folio-rendered-selected { background:color-mix(in srgb,var(--selection-wash,var(--accent)) 18%,transparent); }
+/* WebKit paints the active atom's native range at its editing boundary too. */
+#preview .ProseMirror.folio-paint .math-block::selection,
+#preview .ProseMirror.folio-paint .math-inline::selection { background:transparent; }

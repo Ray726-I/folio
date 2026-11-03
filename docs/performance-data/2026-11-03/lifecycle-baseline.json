@@ -1,0 +1,270 @@
+{
+  "timestamp": "2026-11-02T21:03:02.226Z",
+  "mode": "lifecycle-only",
+  "environment": {
+    "uiRoot": "/tmp/folio-baseline/ui",
+    "bundleSHA256": "62110256ebb5d89dcbdf58be6470c5d75943bc27c3c4a395a7f171c103a41b2d",
+    "cpu": "13th Gen Intel(R) Core(TM) i5-13500H",
+    "platform": "linux",
+    "release": "7.2.14-1-omarchy",
+    "build": "production editor bundle, mocked Tauri bridge",
+    "viewport": "1180x900",
+    "physicalRefresh": "unknown; headless virtual display",
+    "browser": "151.0.7922.34"
+  },
+  "warmupWorkloads": 1,
+  "timedWorkloads": 1,
+  "limitations": [
+    "Frame intervals measure the headless browser rAF clock, not native presentation or input latency.",
+    "Diagnostic trace function durations include nested calls and must not be summed as CPU utilization.",
+    "Geometry instrumentation and tracing occur only in a separate diagnostic pass.",
+    "For --repeat >1, reset/settle time between workloads is included in the measured frame segment.",
+    "No native WebKit, GPU/compositor trace, real window resize, or OS IME measured.",
+    "Bounded forced-GC replacement diagnostics run after tracing for prose (10 replacements) and tables150 (5); no browser-close retention claim."
+  ],
+  "results": [
+    {
+      "fixture": "prose",
+      "bytes": 102400,
+      "lifecycle": {
+        "replacements": 10,
+        "settleMs": 550,
+        "note": "Forced-GC Chromium JS heap and CDP DOM counters only; repeated document replacement, not native resident memory or a proof of no leaks. Replacement wall time includes harness roundtrips and settling.",
+        "samples": [
+          {
+            "cycle": 0,
+            "replaceWallMs": null,
+            "jsHeapUsedBytes": 9038012,
+            "documents": 1,
+            "nodes": 19176,
+            "jsEventListeners": 257,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 1,
+            "replaceWallMs": 769.5981790000001,
+            "jsHeapUsedBytes": 9164668,
+            "documents": 1,
+            "nodes": 19189,
+            "jsEventListeners": 259,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 2,
+            "replaceWallMs": 775.4232820000002,
+            "jsHeapUsedBytes": 9267792,
+            "documents": 1,
+            "nodes": 19202,
+            "jsEventListeners": 261,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 3,
+            "replaceWallMs": 763.6916799999999,
+            "jsHeapUsedBytes": 9334604,
+            "documents": 1,
+            "nodes": 19215,
+            "jsEventListeners": 263,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 4,
+            "replaceWallMs": 766.1527250000004,
+            "jsHeapUsedBytes": 9446692,
+            "documents": 1,
+            "nodes": 19217,
+            "jsEventListeners": 264,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 5,
+            "replaceWallMs": 793.1879479999998,
+            "jsHeapUsedBytes": 9404764,
+            "documents": 1,
+            "nodes": 19219,
+            "jsEventListeners": 265,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 6,
+            "replaceWallMs": 759.9891250000001,
+            "jsHeapUsedBytes": 9486292,
+            "documents": 1,
+            "nodes": 19219,
+            "jsEventListeners": 265,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 7,
+            "replaceWallMs": 769.4068450000004,
+            "jsHeapUsedBytes": 9489820,
+            "documents": 1,
+            "nodes": 19219,
+            "jsEventListeners": 265,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 8,
+            "replaceWallMs": 787.5730509999994,
+            "jsHeapUsedBytes": 9684268,
+            "documents": 1,
+            "nodes": 19219,
+            "jsEventListeners": 265,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 9,
+            "replaceWallMs": 772.9089899999999,
+            "jsHeapUsedBytes": 9644184,
+            "documents": 1,
+            "nodes": 19219,
+            "jsEventListeners": 265,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 10,
+            "replaceWallMs": 812.2900730000001,
+            "jsHeapUsedBytes": 9700344,
+            "documents": 1,
+            "nodes": 19219,
+            "jsEventListeners": 265,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "tables150",
+      "bytes": 8710,
+      "lifecycle": {
+        "replacements": 5,
+        "settleMs": 550,
+        "note": "Forced-GC Chromium JS heap and CDP DOM counters only; repeated document replacement, not native resident memory or a proof of no leaks. Replacement wall time includes harness roundtrips and settling.",
+        "samples": [
+          {
+            "cycle": 0,
+            "replaceWallMs": null,
+            "jsHeapUsedBytes": 4514656,
+            "documents": 1,
+            "nodes": 4566,
+            "jsEventListeners": 257,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 1,
+            "replaceWallMs": 615.4382970000006,
+            "jsHeapUsedBytes": 4612068,
+            "documents": 1,
+            "nodes": 4579,
+            "jsEventListeners": 259,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 2,
+            "replaceWallMs": 614.9736570000005,
+            "jsHeapUsedBytes": 4726912,
+            "documents": 1,
+            "nodes": 4592,
+            "jsEventListeners": 261,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 3,
+            "replaceWallMs": 607.4939200000008,
+            "jsHeapUsedBytes": 4801512,
+            "documents": 1,
+            "nodes": 4605,
+            "jsEventListeners": 263,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 4,
+            "replaceWallMs": 605.130161000001,
+            "jsHeapUsedBytes": 4857524,
+            "documents": 1,
+            "nodes": 4607,
+            "jsEventListeners": 264,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 5,
+            "replaceWallMs": 606.2911920000006,
+            "jsHeapUsedBytes": 4872960,
+            "documents": 1,
+            "nodes": 4609,
+            "jsEventListeners": 265,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

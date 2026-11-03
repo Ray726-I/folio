@@ -12,7 +12,7 @@ fs.mkdirSync('target', { recursive: true });
 const outfile = path.resolve('target/editor-source-edits.cjs');
 esbuild.buildSync({
   stdin: {
-    contents: `export { tryTextEdits } from './ui/editor/source-edits.js'; export { parseSource, schema } from './ui/editor/model.js'; export { mapSource, mapRich } from './ui/editor/source-ledger.js';`,
+    contents: `export { tryTextEdits, trySourceEdit } from './ui/editor/source-edits.js'; export { parseSource, schema, tokenizer } from './ui/editor/model.js'; export { mapSource, mapRich } from './ui/editor/source-ledger.js';`,
     resolveDir: process.cwd(),
     sourcefile: 'tests/editor-source-edits-entry.js'
   },
@@ -23,7 +23,7 @@ esbuild.buildSync({
   logLevel: 'silent'
 });
 
-const { tryTextEdits, parseSource, schema, mapSource, mapRich } = require(outfile);
+const { tryTextEdits, trySourceEdit, parseSource, schema, tokenizer, mapSource, mapRich } = require(outfile);
 
 function textPosition(doc, needle, occurrence = 0) {
   let seen = 0, found = null;
@@ -269,3 +269,157 @@ function assertModelShape(model, intended, probes = []) {
 }
 
 console.log('PASS: source text edits preserve delimiter spelling, references, escapes/entities, repeated occurrences, nested lists, reject semantic markup drift/raw input and handle multi-step transactions.');
+
+// Owner rebasing must traverse once, rather than searching from the document
+// root for every owner (quadratic for many small paragraphs).
+{
+  const model = parseSource('alpha beta\n\n'.repeat(200));
+  const tr = transaction(model.doc, [{ from: 3, to: 3, text: 'X' }]);
+  let searches = 0;
+  const nodeAt = tr.doc.nodeAt;
+  tr.doc.nodeAt = function (...args) { searches++; return nodeAt.apply(this, args); };
+  const next = tryTextEdits(model, [tr], tr.doc);
+  delete tr.doc.nodeAt;
+  assert.ok(next);
+  assert.ok(searches < 10, `owner rebasing should not search once per owner: ${searches}`);
+  assertModelShape(next, tr.doc);
+}
+
+// Independent owner edits parse only that owner. Compare every mapping in both
+// directions with a fresh full parse, including decoded text in later blocks.
+for (const [raw, needle, offset, insert, remove] of [
+  ['Plain words end\n', 'end', 3, 'X', 0],
+  ['Plain words end\n', 'words', 2, ' ', 0],
+  ['Plain words end\n', 'words', 2, '😀', 0],
+  ['Plain words end\n', 'words', 2, ',', 0],
+  ['Plain words end\n', 'end', 2, '', 1],
+  ['Plain **bold** end\n', 'bold', 2, 'é', 0],
+  ['# Plain words\n', 'words', 2, '字', 0],
+]) {
+  const source = raw + '\nEscapes \\*literal\\* &amp; &fjlig;.\n\n[ref]: https://example.com\n';
+  const model = parseSource(source), target = textPosition(model.doc, needle);
+  const from = target.from + offset;
+  const tr = transaction(model.doc, [{from, to: from + remove, text: insert, remove: !insert, marks: target.marks}]);
+  const originalParse = tokenizer.parse;
+  const parsedLengths = [];
+  tokenizer.parse = function (source, ...args) { parsedLengths.push(source.length); return originalParse.call(this, source, ...args); };
+  let next;
+  try { next = tryTextEdits(model, [tr], tr.doc); } finally { tokenizer.parse = originalParse; }
+  assert.ok(next, JSON.stringify({raw, needle, offset, insert, remove}));
+  assert.ok(parsedLengths.every(length => length <= raw.length + insert.length), 'typing must not parse unrelated source');
+  assertModelShape(next, tr.doc);
+  const fresh = parseSource(next.source);
+  assert.ok(fresh.doc.eq(tr.doc));
+  for (const bias of ['left', 'right']) {
+    const shape = mapping => [mapping.source, mapping.pm, mapping.exact, mapping.confidence, mapping.owner?.id];
+    for (let at = 0; at <= next.source.length; at++) assert.deepEqual(shape(mapSource(next.ledger, at, {bias})), shape(mapSource(fresh.ledger, at, {bias})));
+    for (let at = 0; at <= next.doc.content.size; at++) assert.deepEqual(shape(mapRich(next.ledger, at, {bias})), shape(mapRich(fresh.ledger, at, {bias})));
+  }
+}
+
+// CRLF remains conservative where the existing ledger cannot verify an owner.
+{
+  const model = parseSource('Plain words\r\n\r\nNext paragraph.\r\n');
+  const tr = transaction(model.doc, [{from: 3, to: 3, text: 'X'}]);
+  const next = tryTextEdits(model, [tr], tr.doc);
+  if (next) assertModelShape(next, tr.doc);
+}
+
+{
+  const source = 'Plain words [link](https://example.com) end.\n\nUntouched prose.\n';
+  const model = parseSource(source), target = textPosition(model.doc, 'words');
+  const tr = transaction(model.doc, [{from: target.from + 2, to: target.from + 2, text: 'X'}]);
+  const originalParse = tokenizer.parse, lengths = [];
+  tokenizer.parse = function (source, ...args) { lengths.push(source.length); return originalParse.call(this, source, ...args); };
+  let next;
+  try { next = tryTextEdits(model, [tr], tr.doc); } finally { tokenizer.parse = originalParse; }
+  assert.ok(next);
+  assert.ok(lengths.every(length => length < source.length), 'inline links with no reference environment must keep edits local');
+  assertModelShape(next, tr.doc);
+}
+
+// The source-first typing path uses the same local proof before publishing.
+for (const [source, from, to, insert] of [
+  ['Plain text.\n\nNext &amp; &fjlig; paragraph.\n', 10, 10, 'X'],
+  ['Plain text.\n\nNext paragraph.\n', 3, 3, ' '],
+  ['Plain **bold** text.\n\nNext paragraph.\n', 10, 10, 'é'],
+  ['Words [link](https://example.com) text.\n\nNext paragraph.\n', 3, 3, '字'],
+]) {
+  const model = parseSource(source), lengths = [], original = tokenizer.parse;
+  tokenizer.parse = function (source, ...args) { lengths.push(source.length); return original.call(this, source, ...args); };
+  let next;
+  try { next = trySourceEdit(model, {from, to, insert}); } finally { tokenizer.parse = original; }
+  assert.ok(next);
+  assert.equal(next.source, source.slice(0, from) + insert + source.slice(to));
+  assert.ok(lengths.every(length => length < source.length));
+  assert.ok(next.doc.eq(parseSource(next.source).doc));
+  assertModelShape(next, next.doc);
+}
+
+// An incomplete link in another paragraph must not force an exact, independent
+// owner through a full parse; its partial mapping must shift without changing.
+for (const source of [
+  'Plain text.\n\nA paragraph with **bold**, *italic*, `code` and a [link](https://example.co',
+  'A paragraph with **bold**, *italic*, `code` and a [link](https://example.co\n\nPlain text.\n',
+]) {
+  const model = parseSource(source);
+  assert.equal(model.ledger.metadata.complete, false);
+  const from = source.indexOf('Plain') + 3;
+  const lengths = [], original = tokenizer.parse;
+  tokenizer.parse = function (text, ...args) { lengths.push(text.length); return original.call(this, text, ...args); };
+  let next;
+  try { next = trySourceEdit(model, { from, to: from, insert: 'é ' }); } finally { tokenizer.parse = original; }
+  assert.ok(next, 'an unrelated partial owner must not disable exact local typing');
+  assert.equal(next.source, source.slice(0, from) + 'é ' + source.slice(from));
+  assert.ok(lengths.every(length => length < source.length));
+  assertModelShape(next, next.doc);
+  const fresh = parseSource(next.source);
+  for (const bias of ['left', 'right']) {
+    for (let i = 0; i <= next.source.length; i++) assert.deepEqual(mapSource(next.ledger, i, {bias}), mapSource(fresh.ledger, i, {bias}));
+    for (let i = 0; i <= next.doc.content.size; i++) assert.deepEqual(mapRich(next.ledger, i, {bias}), mapRich(fresh.ledger, i, {bias}));
+  }
+}
+
+// A plain-text caret at a marked run's opening boundary inherits the left
+// marks. Prove the left-affinity source insertion against the intended doc.
+{
+  const source = 'Plain **bold** tail.\n\nNext paragraph.\n';
+  const model = parseSource(source), at = textPosition(model.doc, 'Plain ').to;
+  const tr = transaction(model.doc, [{from: at, to: at, text: 'x'}]);
+  const lengths = [], original = tokenizer.parse;
+  tokenizer.parse = function (text, ...args) { lengths.push(text.length); return original.call(this, text, ...args); };
+  let next;
+  try { next = tryTextEdits(model, [tr], tr.doc); } finally { tokenizer.parse = original; }
+  assert.ok(next, 'plain typing beside a marked run must validate the left-affinity patch');
+  assert.equal(next.source, 'Plain x**bold** tail.\n\nNext paragraph.\n');
+  assert.ok(lengths.every(length => length < source.length), 'boundary typing must validate only the independent owner');
+  assertModelShape(next, tr.doc);
+}
+
+// Preserve cheap typing for a very long, lexically plain paragraph. A local
+// parse of this entire owner would regress the old in-run text shortcut.
+{
+  const source = 'Plain words '.repeat(9000).trimEnd() + '.\n';
+  const model = parseSource(source), from = 8;
+  const lengths = [], original = tokenizer.parse;
+  tokenizer.parse = function (text, ...args) { lengths.push(text.length); return original.call(this, text, ...args); };
+  let next;
+  try { next = trySourceEdit(model, {from, to: from, insert: 'x'}); } finally { tokenizer.parse = original; }
+  assert.ok(next);
+  assert.equal(lengths.length, 0, 'lexically plain large paragraphs must not reparse per character');
+  assert.equal(next.source, source.slice(0, from) + 'x' + source.slice(from));
+  assert.ok(next.doc.eq(parseSource(next.source).doc));
+}
+
+// A numeric line can become an empty ordered list by typing its final dot;
+// it must never use the parser-free plain-paragraph proof.
+{
+  const model = parseSource('12\n\nNext paragraph.\n');
+  assert.equal(trySourceEdit(model, {from: 2, to: 2, insert: '.'}), null);
+}
+
+// Markdown trims trailing whitespace: source-first edits that create it must
+// keep the canonical parser path, including deletion exposing an old space.
+for (const [source, from, to, insert] of [
+  ['Hello\n', 5, 5, ' '], ['Hello', 5, 5, '\t'], ['Hello x\n', 6, 7, ''],
+]) assert.equal(trySourceEdit(parseSource(source), {from, to, insert}), null);

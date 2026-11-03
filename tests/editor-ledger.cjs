@@ -394,3 +394,17 @@ function findRun(ledger, text, occurrence = 0) {
 }
 
 console.log('PASS: source ledger exact paragraph start, occurrence-aware mapping, escapes/entities, nested tasks, math, tables, links/images, literal raw blocks, partial/unmapped mismatch metadata and verified source patches.');
+
+// Exact rich-position lookup should inspect a local neighborhood even when
+// the revision has thousands of unrelated runs.
+{
+  const model = parseSource('plain words\n\n'.repeat(2000));
+  const original = model.ledger.runs;
+  let reads = 0;
+  model.ledger.runs = new Proxy(original, { get(target, key, receiver) {
+    if (/^\d+$/.test(String(key))) reads++;
+    return Reflect.get(target, key, receiver);
+  } });
+  assert.equal(mapRich(model.ledger, 3).source, 2);
+  assert.ok(reads < 30, `exact lookup inspected ${reads} runs`);
+}

@@ -34,10 +34,9 @@ async function copied(page) {
   return page.evaluate(() => window.copyProbe.at(-1));
 }
 function assertRendered(text, label) {
-  assert.ok(text.includes('Press Use to run and stop here.'), `${label} copies rendered projection text, got ${JSON.stringify(text)}`);
-  assert.ok(!text.includes('<kbd>') && !text.includes('</'), `${label} copies no literal HTML source, got ${JSON.stringify(text)}`);
-  assert.ok(!text.includes('[^1]'), `${label} copies no Markdown footnote source, got ${JSON.stringify(text)}`);
-  assert.ok(!text.includes('Edit source'), `${label} copies no editor action chrome, got ${JSON.stringify(text)}`);
+  assert.ok(text.includes('Press <kbd>Use</kbd>'), `${label} preserves literal Markdown/HTML source`);
+  assert.ok(text.includes('[^1]'), `${label} preserves footnote source`);
+  assert.ok(!text.includes('Edit source'), `${label} excludes editor controls`);
 }
 
 (async () => {
@@ -100,6 +99,6 @@ function assertRendered(text, label) {
     assert.equal(await page.evaluate(() => current.content), source, 'drag copy never mutates the document');
 
     assert.deepEqual(session.errors, []);
-    console.log('PASS: copy serves rendered projection text without source duplication or editor action chrome.');
+    console.log('PASS: copy preserves Markdown source and excludes editor controls.');
   } finally { await session.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

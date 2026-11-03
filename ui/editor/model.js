@@ -282,9 +282,10 @@ function sourceGaps(previous) {
   return gaps;
 }
 
-export function parseSource(source) {
+export function parseSource(source, sourceEdit = null) {
   const environment = {};
-  const doc = parser.parse(source, environment), tokens = environment.folioSourceTokens;
+  let doc = parser.parse(source, environment);
+  const tokens = environment.folioSourceTokens;
   const offsets = [0]; for (let i = 0; i < source.length; i++) if (source[i] === '\n') offsets.push(i + 1);
   const blocks = [];
   for (const token of tokens) {
@@ -315,7 +316,28 @@ export function parseSource(source) {
     }
     gaps.push(source.slice(cursor));
   }
-  return { doc, source, prefix: gaps[0] ?? '', segments, gaps, ledger: buildLedger(source, doc, { tokens, segments }) };
+  if (sourceEdit) {
+    const first = segments.findIndex(segment => segment.to > sourceEdit.from || segment.from === sourceEdit.from);
+    let last = first;
+    while (last + 1 < segments.length && segments[last + 1].from < sourceEdit.to) last++;
+    if (first >= 0) {
+      const from = segments[first].from, to = segments[last].to;
+      const raw = source.slice(from, to);
+      const text = raw.replace(/\r?\n$/, '');
+      const node = schema.nodes.raw_block.create({ kind: 'source-edit' }, text ? schema.text(text) : null);
+      segments.splice(first, last - first + 1, { node, from, to, raw });
+      doc = schema.nodes.doc.create(null, segments.map(segment => segment.node));
+      sourceEdit = { from, to };
+      // Projection can merge several parsed blocks; its gap ledger must
+      // describe those displayed segments too (composition uses this path).
+      gaps.length = 0; cursor = 0;
+      for (const segment of segments) { gaps.push(source.slice(cursor, segment.from)); cursor = segment.to; }
+      gaps.push(source.slice(cursor));
+    }
+  }
+  return { doc, source, sourceEdit, prefix: gaps[0] ?? '', segments, gaps,
+    syntaxFacts: { hasReferences: Object.keys(environment.references || {}).length > 0 },
+    ledger: buildLedger(source, doc, { tokens, segments }) };
 }
 
 export function updateSource(doc, previous) {
