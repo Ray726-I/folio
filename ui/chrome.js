@@ -127,23 +127,151 @@ function openRecentMenu(focus = true) {
   positionRecentMenu();
   if (focus) $('open-recent-menu').querySelector('button')?.focus();
 }
+// Document preferences: one settings surface for typography, theme, reading
+// behaviour and layout. Sliders preview the document live, but the restyle is
+// coalesced to one frame because a width or line-height change reflows the
+// whole document and a drag can deliver several input events per frame.
+const preferenceRanges = {
+  'preference-font-size': { key: 'fontSize', fallback: 19, min: 12, max: 40, read: value => `${value}px` },
+  'preference-line-height': { key: 'lineHeight', fallback: 1.7, min: 1.2, max: 2.4, read: value => `${Math.round(value * 10) / 10}` },
+  'preference-width': { key: 'contentWidth', fallback: 900, min: 480, max: 1400, read: value => `${value}px` },
+  'preference-spacing': { key: 'paragraphSpacing', fallback: 1.15, min: .4, max: 2.4, read: value => `${Math.round(value * 100) / 100}em` }
+};
+let preferenceFrame = 0, preferenceThemeFrame = 0;
+
+function preferenceNumber(key, fallback, min, max) {
+  const stored = preferences.get(key, null), value = Number(stored);
+  return stored !== null && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
+}
+// The readout and the filled part of the track are painted from the range's
+// own snapped value, so the number always agrees with the thumb.
+function paintPreferenceRange(id) {
+  const input = $(id), value = Number(input.value), min = Number(input.min), max = Number(input.max);
+  $(id + '-value').value = preferenceRanges[id].read(value);
+  input.style.setProperty('--preference-fill', `${max > min ? ((value - min) / (max - min)) * 100 : 0}%`);
+}
+function scheduleDocumentPreferences() {
+  if (!preferenceFrame) preferenceFrame = requestAnimationFrame(applyDocumentPreferences);
+}
 function applyDocumentPreferences() {
+  if (preferenceFrame) { cancelAnimationFrame(preferenceFrame); preferenceFrame = 0; }
   $('preference-open-edit').checked = preferences.get('openInEditMode', true) !== false;
   $('preference-touchpad-zoom-row').hidden = nativePlatform !== 'linux';
   $('preference-touchpad-zoom').checked = touchpadZoom;
-  const number = (key, fallback, min, max) => Math.min(max, Math.max(min, Number(preferences.get(key, fallback)) || fallback));
-  const lineHeight = number('lineHeight', 1.7, 1.2, 2.4), spacing = number('paragraphSpacing', 1.15, .4, 2.4), width = number('contentWidth', 900, 480, 1400);
-  root.style.setProperty('--document-line-height', lineHeight);
-  root.style.setProperty('--document-paragraph-spacing', `${spacing}em`);
-  if (preferences.get('contentWidth', null) !== null) root.style.setProperty('--preferred-reading-width', `${width}px`);
-  else root.style.removeProperty('--preferred-reading-width');
-  for (const [id, value] of [['font', readingFont], ['font-size', fontSize], ['line-height', lineHeight], ['width', width], ['spacing', spacing], ['theme', selectedTheme]]) $('preference-' + id).value = value;
+  for (const [id, spec] of Object.entries(preferenceRanges)) {
+    const input = $(id);
+    input.value = String(id === 'preference-font-size' ? fontSize : preferenceNumber(spec.key, spec.fallback, spec.min, spec.max));
+    paintPreferenceRange(id);
+    const applied = Number(input.value);
+    if (id === 'preference-line-height') root.style.setProperty('--document-line-height', applied);
+    else if (id === 'preference-spacing') root.style.setProperty('--document-paragraph-spacing', `${applied}em`);
+    else if (id === 'preference-width') {
+      if (preferences.get(spec.key, null) !== null) root.style.setProperty('--preferred-reading-width', `${applied}px`);
+      else root.style.removeProperty('--preferred-reading-width');
+    }
+  }
+  $('preference-font').value = readingFont;
+  $('preference-theme').value = availableThemes().some(theme => theme.id === selectedTheme) ? selectedTheme : root.dataset.theme;
   for (const name of ['tasks', 'tables', 'code']) {
     const on = preferences.get('render-' + name, true) !== false;
     $('preference-' + name).checked = on; root.toggleAttribute('data-plain-' + name, !on);
   }
-  for (const [id, value] of [['font-size', `${fontSize}px`], ['line-height', lineHeight], ['width', `${width}px`], ['spacing', `${spacing}em`]]) $('preference-' + id + '-value').value = value;
 }
+function preferencesFocusables() {
+  return [...$('view-menu').querySelectorAll('button,select,input,summary')]
+    .filter(element => !element.disabled && element.offsetParent !== null && !element.closest('.preference-disclosure:not([open])'));
+}
+// The panel is fixed, not positioned by CSS: it is taller than a menu and must
+// stay inside the window on narrow or short screens, so its place is computed
+// from the trigger and re-clamped when the panel or the window changes size.
+function positionPreferencesPanel() {
+  const menu = $('view-menu');
+  if (menu.hidden) return;
+  const anchor = $('view-menu-button').getBoundingClientRect();
+  const width = menu.offsetWidth, height = menu.offsetHeight, edge = 8;
+  const left = Math.max(edge, Math.min(anchor.right - width, innerWidth - width - edge));
+  let top = anchor.bottom + 8;
+  if (top + height + edge > innerHeight) top = Math.max(edge, innerHeight - height - edge);
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+}
+function openPreferencesPanel() {
+  const menu = $('view-menu');
+  if (!menu.hidden) return;
+  closeAllMenus();
+  applyDocumentPreferences();
+  menu.hidden = false;
+  positionPreferencesPanel();
+  $('view-menu-button').setAttribute('aria-expanded', 'true');
+  $('preference-font').focus();
+}
+function closePreferencesPanel(returnFocus = false) {
+  const menu = $('view-menu');
+  if (menu.hidden) return;
+  const restore = returnFocus && menu.contains(document.activeElement);
+  menu.hidden = true;
+  $('view-menu-button').setAttribute('aria-expanded', 'false');
+  if (restore) $('view-menu-button').focus();
+}
+function initializePreferencesPanel() {
+  const menu = $('view-menu'), trigger = $('view-menu-button');
+  trigger.addEventListener('click', event => {
+    event.stopPropagation();
+    menu.hidden ? openPreferencesPanel() : closePreferencesPanel(true);
+  });
+  trigger.addEventListener('keydown', event => {
+    if (event.key === 'ArrowDown' && menu.hidden) { event.preventDefault(); openPreferencesPanel(); }
+    else if (event.key === 'Escape' && !menu.hidden) { event.preventDefault(); closePreferencesPanel(true); }
+  });
+  $('preferences-close').onclick = () => closePreferencesPanel(true);
+  window.addEventListener('resize', positionPreferencesPanel);
+  // Opening the rendering disclosure grows the panel; keep it on screen.
+  new ResizeObserver(positionPreferencesPanel).observe(menu);
+  menu.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closePreferencesPanel(true); return; }
+    if (event.key !== 'Tab') return;
+    const controls = preferencesFocusables(), index = controls.indexOf(document.activeElement);
+    if (index === -1) return;
+    if (!event.shiftKey && index === controls.length - 1) { event.preventDefault(); controls[0].focus(); }
+    else if (event.shiftKey && index === 0) { event.preventDefault(); controls[controls.length - 1].focus(); }
+  });
+  for (const [id, spec] of Object.entries(preferenceRanges)) {
+    const input = $(id);
+    input.addEventListener('input', () => {
+      const value = Number(input.value);
+      paintPreferenceRange(id);
+      preferences.set(spec.key, value);
+      // Font size owns the document-wide text-size variable and skips the
+      // restyle frame; it must not also queue a second document-wide pass.
+      if (id === 'preference-font-size') setTextSize(value, { persist: false, anchor: false, announce: false });
+      else scheduleDocumentPreferences();
+    });
+    input.addEventListener('change', () => {
+      if (id === 'preference-font-size') { preferences.set('fontSize', fontSize); status(`Document text: ${fontSize} px`); }
+      applyDocumentPreferences();
+    });
+  }
+  $('preference-open-edit').onchange = event => preferences.set('openInEditMode', event.target.checked);
+  $('preference-touchpad-zoom').onchange = event => setTouchpadZoom(event.target.checked);
+  for (const name of ['tasks', 'tables', 'code']) $('preference-' + name).onchange = event => { preferences.set('render-' + name, event.target.checked); applyDocumentPreferences(); };
+  $('preference-font').onchange = event => applyReadingFont(event.target.value);
+  // A theme switch recolours every node in the window. Let the select paint
+  // its new value first, then apply the palette.
+  $('preference-theme').onchange = event => {
+    const id = event.target.value;
+    if (preferenceThemeFrame) cancelAnimationFrame(preferenceThemeFrame);
+    preferenceThemeFrame = requestAnimationFrame(() => {
+      preferenceThemeFrame = 0;
+      if (id !== selectedTheme) applyTheme(id);
+    });
+  };
+  $('preferences-reset').onclick = () => {
+    for (const key of ['openInEditMode', 'lineHeight', 'paragraphSpacing', 'contentWidth', 'headingStyle', 'render-tasks', 'render-tables', 'render-code']) preferences.set(key, null);
+    zoomText(0, true); setTouchpadZoom(false, false); applyReadingFont('sans'); applyTheme('system');
+    setDocumentWidth(false); setFormatToolbarVisible(true); applyDocumentPreferences();
+  };
+}
+
 function showHelp(shortcuts = false) {
   $('help-title').textContent = shortcuts ? 'Keyboard Shortcuts' : 'About Folio';
   const content = $('help-content'); content.replaceChildren();
@@ -292,21 +420,8 @@ function initializeChrome() {
   });
   $('replace-one').onclick = () => replaceMatches(false); $('replace-all').onclick = () => replaceMatches(true);
   $('help-close').onclick = () => $('help-dialog').close();
-  $('preference-open-edit').onchange = event => preferences.set('openInEditMode', event.target.checked);
-  $('preference-touchpad-zoom').onchange = event => setTouchpadZoom(event.target.checked);
   const themeSelect = $('preference-theme');
   for (const theme of availableThemes()) { const option = document.createElement('option'); option.value = theme.id; option.textContent = theme.id === 'paper' ? 'Light · Adwaita' : theme.id === 'graphite' ? 'Dark · Adwaita' : theme.label; themeSelect.append(option); }
-  themeSelect.onchange = () => applyTheme(themeSelect.value);
-  $('preference-font').onchange = event => applyReadingFont(event.target.value);
-  $('preference-font-size').oninput = event => { const value = Number(event.target.value); if (value >= 12 && value <= 40) { zoomText(value - fontSize); $('preference-font-size-value').value = `${fontSize}px`; } };
-  for (const [id, key, min, max] of [['line-height', 'lineHeight', 1.2, 2.4], ['spacing', 'paragraphSpacing', .4, 2.4], ['width', 'contentWidth', 480, 1400]]) $('preference-' + id).oninput = event => {
-    const value = Number(event.target.value); if (value >= min && value <= max) { preferences.set(key, value); applyDocumentPreferences(); }
-  };
-  for (const name of ['tasks', 'tables', 'code']) $('preference-' + name).onchange = event => { preferences.set('render-' + name, event.target.checked); applyDocumentPreferences(); };
-  $('preferences-reset').onclick = () => {
-    for (const key of ['openInEditMode', 'lineHeight', 'paragraphSpacing', 'contentWidth', 'headingStyle', 'render-tasks', 'render-tables', 'render-code']) preferences.set(key, null);
-    zoomText(0, true); setTouchpadZoom(false, false); applyReadingFont('sans'); applyTheme('system'); setDocumentWidth(false); applyDocumentPreferences();
-  };
-  $('view-menu-button').addEventListener('click', applyDocumentPreferences);
+  initializePreferencesPanel();
   applyDocumentPreferences(); syncDocumentMode();
 }

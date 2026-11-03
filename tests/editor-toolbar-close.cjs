@@ -13,7 +13,7 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.equal(await page.locator('#format-toggle').getAttribute('aria-expanded'), 'false');
     assert.equal(await page.evaluate(() => document.activeElement.id), 'view-menu-button', 'focus returns to the view menu');
     await page.locator('#view-menu-button').click();
-    await page.getByRole('menuitem', { name: 'Show formatting toolbar' }).click();
+    await page.getByRole('button', { name: 'Show formatting toolbar' }).click();
     assert.equal(await toolbar.isVisible(), true, 'the view menu restores the toolbar');
     await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
     await page.locator('#format-toolbar-close').click();

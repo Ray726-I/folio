@@ -38,6 +38,7 @@ function openSourceSnapshot() {
   if (!current.active) return;
   // Without a mounted editor (over-limit documents) the snapshot still shows
   // the canonical buffer, so the exact bytes stay copyable.
+  closeAllMenus();
   editor?.captureSelection?.();
   $('source-snapshot-text').value = editor ? editor.getText() : current.content;
   $('source-snapshot-status').textContent = 'Exact Markdown at the time this snapshot was opened. Unsaved changes are included.';

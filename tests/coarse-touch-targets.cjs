@@ -16,7 +16,7 @@ const REPO_ROOT = path.resolve(__dirname, '..');
 // must stay compact, so it also asserts the fine-pointer rendering is still
 // under 44px.
 const TARGET = 44;
-const SELECTORS = ['.icon-button', '.icon-button.tiny', '.segmented button', '.outline-link', '.folder-entry', '.command-item', '.palette-back'];
+const SELECTORS = ['.icon-button', '.icon-button.tiny', '.segmented button', '.outline-link', '.folder-entry', '.command-item', '.palette-back', '.preference-row', '.preference-disclosure summary', '.preferences-close', '.preference-action', '.preference-foot-action'];
 const SIZE_PROPS = ['width', 'height', 'minWidth', 'minHeight'];
 
 const MIME = {

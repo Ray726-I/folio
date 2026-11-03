@@ -335,18 +335,21 @@ function readerScrollAnchor() {
   }
   return $('preview').querySelector('.ProseMirror > *') || null;
 }
-function zoomText(delta, reset = false) {
+function setTextSize(size, { persist = true, anchor = true, announce = true } = {}) {
   // Reflow from a font-size change moves every later line. Keep the block or
-  // source line at the top of the reader anchored, so zooming text does not
-  // throw the reader thousands of pixels away.
-  const anchor = readerScrollAnchor();
-  const previousTop = anchor?.getBoundingClientRect().top;
-  fontSize = reset ? 19 : Math.min(40, Math.max(12, fontSize + delta));
+  // source line at the top of the reader anchored, so discrete zoom changes
+  // and Reset do not throw the reader thousands of pixels away. The slider
+  // preview opts out: dragging must not read layout twice per pointer move,
+  // and the document settles when the pointer is released.
+  const snapshot = anchor ? readerScrollAnchor() : null;
+  const previousTop = snapshot?.getBoundingClientRect().top;
+  fontSize = Math.min(40, Math.max(12, Math.round(size)));
   root.style.setProperty('--text-size', `${fontSize}px`);
-  preferences.set('fontSize', fontSize);
-  status(`Document text: ${fontSize} px`);
-  if (anchor && previousTop !== undefined) $('reader-scroll').scrollTop += anchor.getBoundingClientRect().top - previousTop;
+  if (persist) preferences.set('fontSize', fontSize);
+  if (announce) status(`Document text: ${fontSize} px`);
+  if (snapshot && previousTop !== undefined) $('reader-scroll').scrollTop += snapshot.getBoundingClientRect().top - previousTop;
 }
+function zoomText(delta, reset = false) { setTextSize(reset ? 19 : fontSize + delta); }
 function zoomWindow(delta, reset = false) { windowZoom = reset ? 1 : Math.min(2, Math.max(.6, Math.round((windowZoom + delta) * 10) / 10)); $('zoom-reset').textContent = `${Math.round(windowZoom * 100)}%`; preferences.set('windowZoom', windowZoom); invoke('set_window_zoom', { scale: windowZoom }).catch(toast); }
 function setTouchpadZoom(enabled, announce = true) {
   touchpadZoom = nativePlatform === 'linux' && enabled === true;
@@ -830,6 +833,7 @@ function filterCommands() {
 }
 function openCommands(scope = 'commands') {
   if ($('confirm-dialog').open) return;
+  closeAllMenus();
   commandScope = scope;
   selectedCommand = 0;
   $('command-search').value = '';
@@ -959,7 +963,6 @@ function setDocumentWidth(full, persist = true) {
 function toggleDocumentWidth() { setDocumentWidth(!wideLayout); }
 function setFormatToolbarVisible(visible, persist = true) {
   formatToolbarVisible = visible !== false;
-  if (!formatToolbarVisible) closeAllMenus();
   $('format-tools').hidden = !formatToolbarVisible || !current.active || documentMode !== 'edit';
   const button = $('format-toggle');
   button.setAttribute('aria-pressed', String(formatToolbarVisible));
@@ -1021,10 +1024,11 @@ function setupMenu(triggerId, menuId) {
   });
 }
 document.addEventListener('pointerdown', event => {
-  if (!event.target.closest('.menu') && !event.target.closest('[aria-haspopup="menu"]')) closeAllMenus();
+  if (!event.target.closest('.menu') && !event.target.closest('[aria-haspopup]')) closeAllMenus();
 });
 
-setupMenu('view-menu-button', 'view-menu');
+// The document preferences panel owns its own open/close behaviour; every
+// other popup is still a menu.
 setupMenu('format-more', 'format-menu');
 
 $('home').onclick = goHome;

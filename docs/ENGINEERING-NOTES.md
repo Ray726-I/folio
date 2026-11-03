@@ -100,6 +100,43 @@ should outlive any one feature pass. Current performance numbers live in
 - Diagram refreshes after a theme change are coalesced (160 ms). Rapid theme
   switches pay for one Mermaid re-render, not one per switch.
 
+## Document preferences
+
+- The document preferences panel is a `role="dialog"` popover, not a
+  `role="menu"`. It holds form controls and action rows; choosing a theme or
+  toggling width, the toolbar or a rendering switch leaves it open. Escape,
+  the close button, a click outside or the preferences button dismisses it,
+  and Tab wraps inside while it is open.
+- Controls are drawn from theme tokens. WebKitGTK renders native checkboxes
+  and select focus rings with the GTK accent, which ignored the app palette
+  (blue boxes and an orange ring in an otherwise copper theme). Switches,
+  range tracks/thumbs and select chevrons use `appearance:none` and theme
+  colours.
+- Readouts are painted from the range's own snapped value, not from the stored
+  number. Defaults must sit on the step grid: content width 900 px on a 40 px
+  step snapped the thumb to 920 while the label still said 900, and 1.15 em
+  paragraph spacing snapped to 1.1 or 1.2 em. The ranges step by 20 px and
+  0.05 em.
+- Slider input persists the preference immediately but the document restyle
+  is coalesced into one animation frame. A drag can deliver several input
+  events per frame, and a width or line-height change reflows the whole
+  document. The readout and track fill update in the same task as the event,
+  so the control never waits for the document.
+- The font-size preview skips `readerScrollAnchor()` and the status line; that
+  path reads layout twice per step and is only needed for discrete zoom
+  changes. The value settles and is announced on `change`.
+- Selecting a theme applies the palette in the next animation frame, after the
+  native select has painted its new value. `applyTheme` recolours every node
+  in the window; doing that synchronously in the `change` handler made the
+  popup dismissal wait for the whole restyle.
+- The panel is fixed-positioned and clamped to the viewport (8 px edge),
+  because a 372 px trigger-anchored surface left the screen on narrow windows.
+  A `ResizeObserver` repositions it when the rendering disclosure opens.
+- `tests/preferences-panel.cjs` covers shared right edges, readout snapping,
+  one restyle per frame, the deferred theme, switches, reset, the viewport
+  clamp and the dismissal paths. `tests/coarse-touch-targets.cjs` holds the
+  44 px floor for rows and actions.
+
 ## Performance guardrails
 
 ### Tauri ACLs
