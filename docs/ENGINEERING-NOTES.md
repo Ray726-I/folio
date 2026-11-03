@@ -40,6 +40,19 @@ should outlive any one feature pass. Current performance numbers live in
   node containing many newlines) otherwise paints as a solid rectangle. Code
   selection also hides the syntax overlay and takes the selection ink so glyphs
   stay readable on the wash.
+- Blank mirror fragments (line breaks alone, whitespace, stray zero-width
+  characters) are never registered. A selection with no paintable text still
+  keeps `folio-paint`, because removing it would fall back to the engine's
+  full-width block paint for that same line break.
+- Pointer-up and blur reconcile the mirror even when the selection guard was
+  already off. WebKitGTK does not reliably emit `selectionchange` when a range
+  is cleared by clicking chrome, and a stale mirror would otherwise keep the old
+  wash on screen.
+- The ProseMirror surface fills the reader and carries the gutters as horizontal
+  padding; the text column is centered inside it. This keeps the configured
+  reading width while letting a pointer drag start in the empty side margin and
+  still select from the nearest text position. `document-over-limit` re-adds
+  its own gutters because it is not inside ProseMirror.
 
 ## Native WebKit and Linux pitfalls
 

@@ -37,6 +37,25 @@ const { openEditor } = require('./editor-browser.cjs');
   await page.evaluate(() => document.documentElement.dataset.theme = 'graphite');
   await page.screenshot({ path:'/tmp/folio-selection-paint-dark.png' });
   assert.equal(await page.locator('.code-surface code').evaluate(code => getComputedStyle(code, '::selection').backgroundColor), 'rgba(0, 0, 0, 0)', 'dark themes also have one paint layer');
+  const blank = await page.evaluate(() => {
+   const code = document.querySelector('.folio-source-edit code');
+   const text = code.firstChild;
+   const index = text.nodeValue.indexOf('\n');
+   const range = document.createRange(); range.setStart(text, index); range.setEnd(text, index + 1);
+   window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
+   document.dispatchEvent(new Event('selectionchange'));
+   const ranges = CSS.highlights.has('folio-selection') ? [...CSS.highlights.get('folio-selection')] : [];
+   return { painted: document.querySelector('#preview .ProseMirror').classList.contains('folio-paint'),
+    registered: CSS.highlights.has('folio-selection'), ranges: ranges.length,
+    containsNewline: ranges.some(range => range.toString().includes('\n')) };
+  });
+  assert.equal(blank.registered, false, 'a bare line break registers no paint range');
+  assert.equal(blank.ranges, 0, 'a bare line break has nothing to wash');
+  assert.equal(blank.painted, true, 'the mirror still suppresses native block paint for a bare line break');
+  assert.equal(blank.containsNewline, false, 'no mirror range may contain a line break');
+  await page.locator('#preview .ProseMirror p').last().click();
+  await page.waitForFunction(() => !document.querySelector('#preview .ProseMirror').classList.contains('folio-paint'));
+  assert.equal(await page.evaluate(() => CSS.highlights.has('folio-selection')), false, 'a plain click clears any stale mirror');
   await page.evaluate(() => { window.getSelection().removeAllRanges(); document.dispatchEvent(new Event('selectionchange')); });
   assert.equal(await page.locator('.code-selection-painted').count(), 0, 'collapse restores ordinary syntax paint');
   assert.deepEqual(session.errors, []);

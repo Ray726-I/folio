@@ -1060,12 +1060,19 @@ export function createRichEditor(parent, options) {
     } catch {}
   }
   function releaseSelectionGuard() {
-    if (!selectionGuarded) return;
+    if (!selectionGuarded) {
+      // Reconcile on a plain pointer-up/blur too. WebKitGTK does not always
+      // deliver a selectionchange when a range is cleared by clicking chrome,
+      // and a stale mirror would keep painting an old block.
+      try { syncFolioHighlight(); } catch {}
+      return;
+    }
     // A standing reading range keeps its guard; anything else hands selection
     // back to the editor so typing and caret movement stay predictable.
     if (renderedRangeActive()) return;
     setSelectionGuarded(false);
     try { view?.domObserver.flush(); } catch {}
+    try { syncFolioHighlight(); } catch {}
   }
   function resyncGuardedSelection() {
     if (!selectionGuarded) return;
@@ -1227,11 +1234,18 @@ export function createRichEditor(parent, options) {
       // accessibility. It is still the tree that selection must paint.
       if (text.parentElement?.closest('[aria-hidden="true"]') && !text.parentElement.closest('.katex-html')) continue;
       const part = intersects(text);
-      if (part) result.push(...lineFragments(part));
+      if (!part) continue;
+      // A range made only of a line break paints a full-width bar in WebKit,
+      // and whitespace alone has nothing to wash. Keep text-bearing fragments
+      // only; line splitting has already removed every interior newline.
+      for (const line of lineFragments(part)) {
+        const value = line.toString().replace(/[\u200B-\u200D\uFEFF]/g, '');
+        if (value.trim() && !/[\r\n]/.test(value)) result.push(line);
+      }
     }
     return result;
   }
-  function applyFolioRanges(ranges) {
+  function applyFolioRanges(ranges, hasSelection = false) {
     if (!customHighlightSupported || !view) return;
     view.dom.querySelectorAll('.code-selection-painted').forEach(node => node.classList.remove('code-selection-painted'));
     for (const range of ranges) {
@@ -1239,6 +1253,15 @@ export function createRichEditor(parent, options) {
       code?.closest('.code-container')?.classList.add('code-selection-painted');
     }
     if (!ranges.length) {
+      // A selection made only of line breaks or spaces has no text to wash.
+      // Keep suppression on anyway: falling back to native paint here is what
+      // turned that selection into a full-width engine rectangle.
+      if (hasSelection) {
+        try { window.CSS.highlights.delete(folioHighlightName); } catch {}
+        folioPaintActive = true;
+        view.dom.classList.add('folio-paint');
+        return;
+      }
       if (folioPaintActive) {
         folioPaintActive = false;
         try { window.CSS.highlights.delete(folioHighlightName); } catch {}
@@ -1305,16 +1328,17 @@ export function createRichEditor(parent, options) {
       return;
     }
     const selection = window.getSelection();
+    const hasSelection = Boolean(selection && selection.rangeCount > 0 && !selection.isCollapsed
+      && view.dom.contains(selection.anchorNode) && view.dom.contains(selection.focusNode));
     let ranges = [];
-    if (selection && selection.rangeCount > 0 && !selection.isCollapsed
-      && view.dom.contains(selection.anchorNode) && view.dom.contains(selection.focusNode)) {
+    if (hasSelection) {
       try { ranges = folioHighlightRanges(selection.getRangeAt(0)); }
       catch { ranges = []; }
     }
     // A standing find highlight survives selectionchange events that belong
     // to the find field (the native document selection is empty there).
     if (!ranges.length && paintSearchHighlight()) return;
-    applyFolioRanges(ranges);
+    applyFolioRanges(ranges, hasSelection);
   }
   function setSearchHighlight(from, to) {
     searchHighlight = Number.isInteger(from) && Number.isInteger(to) && to > from ? { from, to } : null;

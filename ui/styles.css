@@ -848,10 +848,26 @@ kbd {
 .markdown {
   max-width:var(--reading-width);
   margin:0 auto;
-  padding:clamp(26px,5vh,54px) var(--gutter) clamp(72px,14vh,150px);
+  /* Horizontal gutters live on the ProseMirror surface instead, so a drag can
+     start in the empty margin and still reach the nearest text position. */
+  padding:clamp(26px,5vh,54px) 0 clamp(72px,14vh,150px);
   font-size:var(--text-size);
   line-height:1.7;
   overflow-wrap:break-word
+}
+
+/* The editor surface spans the whole reader so a drag can start anywhere in
+   the empty side margins. The text column itself keeps the configured reading
+   width through symmetric padding; full-width mode drops that cap. */
+#preview.markdown { max-width:none }
+#preview>.ProseMirror {
+  box-sizing:border-box;
+  padding-left:max(var(--gutter),calc((100% - var(--preferred-reading-width,var(--reading-width)) + var(--gutter) * 2) / 2));
+  padding-right:max(var(--gutter),calc((100% - var(--preferred-reading-width,var(--reading-width)) + var(--gutter) * 2) / 2))
+}
+:root[data-document-width="full"] #preview>.ProseMirror {
+  padding-left:var(--gutter);
+  padding-right:var(--gutter)
 }
 
 .markdown>:first-child {
@@ -1414,7 +1430,7 @@ li.ProseMirror-selectednode:after {
     width:170px
   }
   .markdown {
-    padding:24px var(--gutter) 80px
+    padding:24px 0 80px
   }
   #theme-label,#reading-time,.status-start .status-divider {
     display:none
@@ -1871,8 +1887,8 @@ body.focus-mode #file-browser,body.focus-mode .sidebar-resizer {
 
 :root[data-document-width="full"] .markdown {
   max-width:none;
-  padding-left:var(--gutter);
-  padding-right:var(--gutter)
+  padding-left:0;
+  padding-right:0
 }
 
 .markdown .table-scroll {
@@ -3361,7 +3377,8 @@ dialog {
 .document-over-limit {
   max-width:var(--reading-width);
   margin:0 auto;
-  padding:0 0 4rem;
+  box-sizing:border-box;
+  padding:0 var(--gutter) 4rem;
   white-space:pre-wrap;
   overflow-wrap:anywhere;
   font-family:var(--font-mono);
