@@ -6,6 +6,12 @@
     "webviews": ["main"],
     "permissions": [
       "core:default",
+      "allow-toggle-fullscreen",
+      "allow-reveal-document",
+      "allow-rename-document",
+      "allow-duplicate-document",
+      "allow-export-html",
+      "allow-search-folder",
       "allow-bootstrap",
       "allow-open-document",
       "allow-open-folder",

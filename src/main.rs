@@ -20,6 +20,8 @@ use std::{
 use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
+#[cfg(target_os = "linux")]
+use gtk::{gdk::EventType, prelude::*};
 
 const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mdtxt"];
 const DEFAULT_INSPECTED_LIMIT: usize = 10_000;
@@ -40,6 +42,8 @@ struct AppState {
     /// `ready` or by the startup fallback. Test-and-set keeps `ready`
     /// idempotent and the fallback from re-showing a visible window.
     shown: AtomicBool,
+    /// Linux touchpad pinch gestures are blocked unless the user opts in.
+    touchpad_zoom: AtomicBool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -597,6 +601,11 @@ fn set_window_zoom(
     window.set_zoom(scale).map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn set_touchpad_zoom(enabled: bool, state: tauri::State<'_, Arc<AppState>>) {
+    state.touchpad_zoom.store(enabled, Ordering::SeqCst);
+}
+
 #[tauri::command(async)]
 fn document_changed(
     webview: tauri::Webview,
@@ -643,6 +652,266 @@ fn close_window(
         let _ = renderer.destroy();
     }
     window.destroy().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn toggle_fullscreen(webview: tauri::Webview, window: tauri::Window) -> Result<(), String> {
+    renderer::ensure_main(webview.label())?;
+    window
+        .set_fullscreen(!window.is_fullscreen().map_err(|error| error.to_string())?)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command(async)]
+fn reveal_document(
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    renderer::ensure_main(webview.label())?;
+    let path = state
+        .document
+        .lock()
+        .unwrap()
+        .as_ref()
+        .ok_or("Save the document first.")?
+        .path
+        .clone();
+    app.opener()
+        .reveal_item_in_dir(path)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command(async)]
+fn rename_document(
+    name: String,
+    webview: tauri::Webview,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<Saved, String> {
+    renderer::ensure_main(webview.label())?;
+    if !is_markdown(Path::new(&name)) {
+        return Err("Use a Markdown filename (.md, .markdown, .mdown or .mdtxt).".into());
+    }
+    let mut current = state.document.lock().unwrap();
+    let renamed = document::rename(
+        current
+            .as_ref()
+            .ok_or("Save the document before renaming it.")?,
+        &name,
+    )?;
+    let result = Saved {
+        path: renamed.path.to_string_lossy().into(),
+        name,
+    };
+    *current = Some(renamed);
+    Ok(result)
+}
+
+#[tauri::command(async)]
+fn duplicate_document(
+    content: String,
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<Option<String>, String> {
+    renderer::ensure_main(webview.label())?;
+    let original = state.document.lock().unwrap().clone();
+    let mut dialog = app
+        .dialog()
+        .file()
+        .add_filter("Markdown", &["md", "markdown"]);
+    if let Some(document) = &original {
+        let stem = document
+            .path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy();
+        dialog = dialog
+            .set_directory(document.path.parent().unwrap_or(Path::new(".")))
+            .set_file_name(format!("{stem} copy.md"));
+    } else {
+        dialog = dialog.set_file_name("Untitled copy.md");
+    }
+    let Some(file) = dialog.blocking_save_file() else {
+        return Ok(None);
+    };
+    let path = file.into_path().map_err(|error| error.to_string())?;
+    if original
+        .as_ref()
+        .is_some_and(|document| path.canonicalize().ok().as_ref() == Some(&document.path))
+    {
+        return Err("Choose a different destination for the duplicate.".into());
+    }
+    // Destination confirmation belongs to the native save dialog. The original
+    // stays active, with its fingerprint and unsaved buffer intact.
+    let saved = document::save(&path, &content, original.as_ref(), false)
+        .map_err(|error| error.message().to_string())?;
+    Ok(Some(saved.path.to_string_lossy().into()))
+}
+
+#[tauri::command(async)]
+fn export_html(
+    content: String,
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<Option<String>, String> {
+    renderer::ensure_main(webview.label())?;
+    let original = state.document.lock().unwrap().clone();
+    let Some(file) = app
+        .dialog()
+        .file()
+        .add_filter("HTML", &["html"])
+        .set_file_name("document.html")
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let path = file.into_path().map_err(|error| error.to_string())?;
+    if original
+        .as_ref()
+        .is_some_and(|document| path.canonicalize().ok().as_ref() == Some(&document.path))
+    {
+        return Err("Choose an HTML destination separate from the open document.".into());
+    }
+    // Render again through the native sanitizer; never export author-controlled
+    // webview HTML or implicitly fetch remote media.
+    let (html, _) = markdown::render_with_blocks_checked(
+        &content,
+        original
+            .as_ref()
+            .and_then(|document| document.path.parent()),
+        false,
+        &markdown::DEFAULT_RENDER_LIMITS,
+        false,
+    )
+    .map_err(|error| error.to_string())?;
+    let output = format!("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Folio document</title><style>body{{max-width:54rem;margin:3rem auto;padding:0 1.5rem;font:18px/1.7 Georgia,serif;color:#222}}pre{{overflow:auto;padding:1rem;background:#f4f4f4}}table{{border-collapse:collapse}}th,td{{border:1px solid #ccc;padding:.4rem .7rem}}img{{max-width:100%}}</style></head><body>{html}</body></html>");
+    let parent = path.parent().ok_or("Invalid export path")?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
+    use std::io::Write;
+    temp.write_all(output.as_bytes())
+        .map_err(|error| error.to_string())?;
+    temp.persist(&path).map_err(|error| error.to_string())?;
+    Ok(Some(path.to_string_lossy().into()))
+}
+
+#[derive(Serialize)]
+struct SearchHit {
+    path: String,
+    name: String,
+    snippet: String,
+    line: usize,
+    offset: usize,
+    length: usize,
+    fingerprint: String,
+}
+#[derive(Serialize)]
+struct SearchResults {
+    results: Vec<SearchHit>,
+    truncated: bool,
+}
+
+fn search_folder_at(path: &Path, query: &str) -> Result<SearchResults, String> {
+    use std::io::Read;
+    let (entries, truncated, skipped) = scan_folder(path)?;
+    let query = query.to_lowercase();
+    let mut result = SearchResults {
+        results: Vec::new(),
+        truncated: truncated || skipped > 0,
+    };
+    if query.is_empty() {
+        return Ok(result);
+    }
+    let mut budget = 16 * 1024 * 1024_u64;
+    for entry in entries.into_iter().filter(|entry| !entry.directory) {
+        if result.results.len() >= 100 || budget == 0 {
+            result.truncated = true;
+            break;
+        }
+        let candidate = match Path::new(&entry.path).canonicalize() {
+            Ok(candidate) if candidate.starts_with(path) => candidate,
+            _ => {
+                result.truncated = true;
+                continue;
+            }
+        };
+        let cap = budget.min(2 * 1024 * 1024);
+        let metadata = match fs::metadata(&candidate) {
+            Ok(metadata) if metadata.len() <= cap => metadata,
+            _ => {
+                result.truncated = true;
+                continue;
+            }
+        };
+        let mut content = String::with_capacity(metadata.len() as usize);
+        let read = fs::File::open(&candidate)
+            .and_then(|file| file.take(cap + 1).read_to_string(&mut content));
+        budget = budget.saturating_sub(content.len() as u64);
+        if read.is_err() || content.len() as u64 > cap {
+            result.truncated = true;
+            continue;
+        }
+        // Match the document loader's BOM/CRLF normalization and JavaScript's
+        // UTF-16 offsets so clicking a line opens the right source location.
+        let content = content.trim_start_matches('\u{feff}').replace("\r\n", "\n");
+        let mut offset = 0;
+        let mut fingerprint = None;
+        for (index, raw) in content.split_inclusive('\n').enumerate() {
+            let line = raw.strip_suffix('\n').unwrap_or(raw);
+            let folded = line.to_lowercase();
+            if let Some(found) = folded.find(&query) {
+                if result.results.len() >= 100 {
+                    result.truncated = true;
+                    break;
+                }
+                // Lowercase expansion (e.g. İ -> i + combining dot) changes
+                // folded lengths. Map back before slicing the original line.
+                let mut folded_bytes = 0;
+                let original_index = line
+                    .chars()
+                    .position(|character| {
+                        folded_bytes += character.to_lowercase().map(char::len_utf8).sum::<usize>();
+                        folded_bytes > found
+                    })
+                    .unwrap_or(0);
+                let start = original_index.saturating_sub(40);
+                let snippet = line.chars().skip(start).take(180).collect();
+                result.results.push(SearchHit {
+                    path: entry.path.clone(),
+                    name: entry.name.clone(),
+                    snippet,
+                    line: index + 1,
+                    offset,
+                    length: line.encode_utf16().count(),
+                    fingerprint: fingerprint
+                        .get_or_insert_with(|| document::fingerprint(content.as_bytes()))
+                        .clone(),
+                });
+            }
+            offset += raw.encode_utf16().count();
+        }
+    }
+    Ok(result)
+}
+
+#[tauri::command(async)]
+fn search_folder(
+    query: String,
+    webview: tauri::Webview,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<SearchResults, String> {
+    renderer::ensure_main(webview.label())?;
+    if query.len() > 1024 {
+        return Err("Use a shorter search query.".into());
+    }
+    let path = state
+        .folder
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("Open a folder to search files.")?;
+    search_folder_at(&path, &query)
 }
 
 #[tauri::command]
@@ -1530,7 +1799,7 @@ fn main() {
                     recycle_renderer(&cleanup, state.inner());
                 }
             });
-            tauri::WebviewWindowBuilder::new(
+            let main_window = tauri::WebviewWindowBuilder::new(
                 app,
                 renderer::MAIN_LABEL,
                 tauri::WebviewUrl::App("index.html".into()),
@@ -1542,6 +1811,21 @@ fn main() {
             .visible(false)
             .on_navigation(is_app_navigation)
             .build()?;
+            #[cfg(target_os = "linux")]
+            {
+                let state = app.state::<Arc<AppState>>().inner().clone();
+                main_window.with_webview(move |webview| {
+                    webview.inner().connect_event(move |_, event| {
+                        if event.event_type() == EventType::TouchpadPinch
+                            && !state.touchpad_zoom.load(Ordering::SeqCst)
+                        {
+                            gtk::glib::Propagation::Stop
+                        } else {
+                            gtk::glib::Propagation::Proceed
+                        }
+                    });
+                })?;
+            }
             // A frontend that never calls `ready` (a crash during boot, a broken
             // bundle) must not leave the app permanently invisible.
             let fallback = app.handle().clone();
@@ -1587,6 +1871,12 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            toggle_fullscreen,
+            reveal_document,
+            rename_document,
+            duplicate_document,
+            export_html,
+            search_folder,
             bootstrap,
             open_document,
             open_folder,
@@ -1600,6 +1890,7 @@ fn main() {
             preview_check,
             ready,
             set_window_zoom,
+            set_touchpad_zoom,
             document_changed,
             set_title,
             close_window,
@@ -1614,4 +1905,83 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("Folio could not start");
     app.run(handle_run_event);
+}
+
+#[cfg(test)]
+mod document_action_tests {
+    use super::*;
+    #[test]
+    fn folder_search_offsets_match_normalized_utf16_and_limit_lines() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("unicode.md"),
+            "\u{feff}😀 first\r\nneedle one\r\nneedle two\r\n",
+        )
+        .unwrap();
+        let result = search_folder_at(directory.path(), "needle").unwrap();
+        assert_eq!(result.results.len(), 2);
+        assert_eq!(result.results[0].line, 2);
+        assert_eq!(
+            result.results[0].offset,
+            "😀 first\n".encode_utf16().count()
+        );
+        assert_eq!(
+            result.results[1].offset,
+            "😀 first\nneedle one\n".encode_utf16().count()
+        );
+        fs::write(directory.path().join("many.md"), "needle\n".repeat(110)).unwrap();
+        let limited = search_folder_at(directory.path(), "needle").unwrap();
+        assert_eq!(limited.results.len(), 100);
+        assert!(limited.truncated);
+    }
+
+    #[test]
+    fn folder_search_snippets_survive_lowercase_expansion() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("unicode.md"),
+            format!("{} needle", "İ".repeat(200)),
+        )
+        .unwrap();
+        let result = search_folder_at(directory.path(), "needle").unwrap();
+        assert_eq!(result.results.len(), 1);
+        assert!(result.results[0].snippet.contains("needle"));
+    }
+
+    #[test]
+    fn folder_search_matches_content_lines_and_reports_limits() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("Report.md"), "No matching body").unwrap();
+        fs::write(
+            directory.path().join("notes.md"),
+            "# Heading\nA REPORT inside the document\nreport again",
+        )
+        .unwrap();
+        fs::write(directory.path().join("skip.txt"), "report").unwrap();
+        let results = search_folder_at(directory.path(), "report").unwrap();
+        assert_eq!(results.results.len(), 2);
+        assert!(!results.truncated);
+        assert!(
+            results.results.iter().all(|hit| hit.name == "notes.md"),
+            "filenames alone are not content matches"
+        );
+        assert_eq!(
+            serde_json::to_value(&results.results[1]).unwrap()["line"],
+            3
+        );
+        assert!(results
+            .results
+            .iter()
+            .any(|hit| hit.snippet.contains("REPORT")));
+        fs::write(
+            directory.path().join("large.md"),
+            vec![b'x'; 2 * 1024 * 1024 + 1],
+        )
+        .unwrap();
+        assert!(
+            search_folder_at(directory.path(), "report")
+                .unwrap()
+                .truncated
+        );
+    }
 }

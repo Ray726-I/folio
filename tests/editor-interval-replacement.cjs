@@ -48,6 +48,7 @@ async function openIsolated(source, outfile) {
   });
   await session.page.reload();
   await session.page.waitForFunction(() => typeof editor !== 'undefined' && editor && !busy);
+  await session.page.evaluate(() => setDocumentMode('edit'));
   assert.equal(served, 1, 'interval tests must run against the isolated editor bundle');
   return session;
 }
@@ -258,7 +259,7 @@ function pastePlainText(page, text) {
       const { page, errors } = session;
       const from = source.indexOf('Prose A');
       await selectSource(page, from, from + 'Prose A'.length);
-      await page.locator('#lock-document').click();
+      await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
       await page.waitForFunction(() => editor.isLocked());
       await pastePlainText(page, 'BLOCKED');
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
@@ -266,7 +267,7 @@ function pastePlainText(page, text) {
       await page.keyboard.type('X');
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
       assert.equal(await content(page), source, 'Lock must reject source-first typing');
-      await page.locator('#lock-document').click();
+      await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
       await page.waitForFunction(() => !editor.isLocked());
       assert.deepEqual(errors, []);
       console.log('PASS: Lock blocks logical source-first mutations.');

@@ -79,13 +79,13 @@ const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n
     // No requests on view/hover/focus. A deliberate Load remains possible
     // under Lock and must not become a source mutation or broad permission.
     await page.locator('.image-widget').hover(); assert.deepEqual(requests, []);
-    await page.locator('#lock-document').click(); const locked = await text();
+    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click(); const locked = await text();
     await page.getByRole('button', { name: 'Load image', exact: true }).click();
     await page.waitForFunction(() => window.calls.some(call => call.command === 'render_markdown' && call.args.remoteImages === true));
     await page.waitForFunction(() => document.querySelector('.image-widget img') !== null);
     assert.equal(await text(), locked);
     assert.deepEqual(requests, ['https://example.com/tracker2.png']);
-    await page.locator('#lock-document').click();
+    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
 
     // Rich plain prose is continuous: split/join doesn't mount a textarea.
     // Place the caret deterministically in the first paragraph. Pointer

@@ -55,7 +55,7 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
 
     // Load must remain available under Lock, must not mutate the document, and
     // must consent only to the clicked destination.
-    await page.locator('#lock-document').click();
+    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
     await page.waitForFunction(() => editor.isLocked());
     const before = await page.evaluate(() => current.content);
     await page.locator('.extension-preview .extension-image-load button').first().click();
@@ -85,7 +85,7 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
     assert.equal(await page.evaluate(() => editor.isLocked()), true, 'image Load works while the document stays locked');
 
     // The remaining image has independent consent and still works after unlock.
-    await page.locator('#lock-document').click();
+    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
     assert.ok(!requests.includes(second), 'the second image is not fetched until its own Load click');
     await page.locator('.extension-preview .extension-image-load button').first().click();
     await page.waitForFunction(value => document.querySelector('.extension-preview img[width="200"]')?.getAttribute('src') === value, second);

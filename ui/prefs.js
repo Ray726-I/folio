@@ -7,5 +7,5 @@
   const theme = read('theme');
   // 'omarchy' needs native palette data from bootstrap, so it starts on system.
   root.dataset.theme = typeof theme === 'string' && theme && theme !== 'omarchy' ? theme : 'system';
-  root.dataset.readingFont = read('readingFont') === 'sans' ? 'sans' : 'serif';
+  root.dataset.readingFont = ['serif', 'sans', 'mono'].includes(read('readingFont')) ? read('readingFont') : 'sans';
 })();

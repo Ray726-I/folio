@@ -1,5 +1,6 @@
 import { createRichEditor } from './rich.js';
 import { tokenizer } from './model.js';
+import { headingFromRawBlock } from './headings.js';
 import 'prosemirror-view/style/prosemirror.css';
 import 'prosemirror-tables/style/tables.css';
 
@@ -58,21 +59,6 @@ export function headings(content) {
   });
   result.sort((a, b) => a.offset - b.offset);
   return result;
-}
-function headingFromRawBlock(raw) {
-  const lines = String(raw || '').split(/\r?\n/);
-  if (!lines.length) return null;
-  // Blockquote and list markers can prefix a heading inside an extension block.
-  const prefix = /^(?:[ \t]*>[ \t]?)*[ \t]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)?/;
-  const first = lines[0].replace(prefix, '');
-  // Author HTML blocks keep their headings in the projection, not in the
-  // tokenizer fallback; never invent an ATX/setext heading from markup.
-  if (first.trimStart().startsWith('<')) return null;
-  const atx = /^(#{1,6})[ \t]+(.*?)(?:[ \t]+#+[ \t]*)?$/.exec(first);
-  if (atx) return { level: atx[1].length, text: atx[2].trim() };
-  const underline = lines[1] && /^[ \t]*(=+|-+)[ \t]*$/.exec(lines[1]);
-  if (underline && first.trim()) return { level: underline[1][0] === '=' ? 1 : 2, text: first.trim() };
-  return null;
 }
 export function create(options) {
   let content = options.content, locked = false, transitionLocked = Boolean(options.transitionLocked), richEditor = null;
@@ -176,6 +162,7 @@ export function create(options) {
   options.onPresentation?.(false, locked, false);
   return {
     getText: () => content,
+    getHeadings: () => richEditor?.headings() ?? null,
     checkpoint() { groupTime = 0; },
     getSelection: selection,
     captureSelection() { richEditor?.captureSelection?.(); },

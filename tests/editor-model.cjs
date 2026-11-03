@@ -116,3 +116,15 @@ for (const extensionSource of [':smile: hi\n', '==highlighted==\n', '++inserted+
 
 const empty = parseSource(''); assert.equal(updateSource(empty.doc, empty).source, '');
 console.log('PASS: source slices, unchanged extensions, GFM table/task/math model, table hard-break reparse, centered-alignment open and cross-projection position mapping.');
+
+// Multi-block source projections must keep source gaps consistent during IME/native edits.
+{
+ const source = '# Start\n\nOne.\n\nTwo.\n\n# End\n';
+ const projected = parseSource(source, {from:source.indexOf('One.'),to:source.indexOf('# End')});
+ assert.equal(projected.gaps.length, projected.segments.length+1);
+ assert.equal(updateSource(projected.doc, projected).source, source);
+ const children=projected.doc.content.content.slice();
+ const i=children.findIndex(node=>node.attrs.kind==='source-edit');
+ children[i]=schema.nodes.raw_block.create({kind:'source-edit'},schema.text(children[i].textContent.replace('One.','One edit.')));
+ assert.equal(updateSource(schema.nodes.doc.create(null,children),projected).source,source.replace('One.','One edit.'));
+}

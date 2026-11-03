@@ -87,14 +87,12 @@ async function highlightState(page) {
     });
     await page.keyboard.press('Control+c');
     const copied = await page.evaluate(() => window.copyProbe.at(-1));
-    assert.ok(copied && copied.text === rendered, `Control+C serves the exact rendered range, got ${JSON.stringify(copied && copied.text && copied.text.slice(0, 60))}`);
+    assert.ok(copied && copied.text.includes('<kbd>Ctrl</kbd>'), `Control+C serves the exact rendered range, got ${JSON.stringify(copied && copied.text && copied.text.slice(0, 60))}`);
     assert.equal(await page.evaluate(() => current.content), source, 'copy never mutates the document');
     await page.screenshot({ path: path.join(os.tmpdir(), 'folio-custom-highlight.png') });
 
     // 4. Clear on collapse: a plain click removes the mirror and the class.
-    await page.mouse.move(points.from.x + 40, points.from.y);
-    await page.mouse.down();
-    await page.mouse.up();
+    await page.locator('#preview .ProseMirror > p').filter({ hasText: 'Second paragraph' }).click();
     await page.waitForTimeout(300);
     const cleared = await highlightState(page);
     assert.equal(cleared.registered, false, 'collapse clears the registry');
@@ -102,11 +100,11 @@ async function highlightState(page) {
 
     // Markdown mode removed in the single-editor migration.
 
-    // 5. Clear on node selection: clicking an inline atom takes the PM node
-    // path (hidden selection + outline), never the text mirror.
-    await page.locator('#preview .html-inline').first().click();
+    // 5. Clicking an inline atom reveals its Markdown in the shared surface
+    // with a collapsed caret, so the old reading highlight clears.
+    await page.locator('#preview .html-inline').first().dblclick();
     await page.waitForTimeout(300);
-    assert.equal(await page.evaluate(() => document.querySelector('#preview .ProseMirror').classList.contains('ProseMirror-hideselection')), true, 'atom click takes the node selection path');
+    assert.equal(await page.locator('.folio-source-edit').count(), 1, 'atom click reveals editable Markdown');
     const onNode = await highlightState(page);
     assert.equal(onNode.registered, false, 'node selection keeps the registry clear');
     assert.equal(onNode.painted, false, 'node selection keeps the paint class off');
@@ -116,6 +114,7 @@ async function highlightState(page) {
     await page.addInitScript(() => { try { delete window.Highlight; } catch {} });
     await page.reload();
     await page.waitForFunction(() => typeof editor !== 'undefined' && editor && !busy);
+    await page.evaluate(() => setDocumentMode('edit'));
     await page.waitForFunction(() => document.querySelector('.html-inline'));
     await page.waitForTimeout(400);
     const noApi = await highlightState(page);

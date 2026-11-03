@@ -301,6 +301,11 @@ export function buildLedger(source, doc, options = {}) {
     for (let index = 0; index < trustedSegments.length; index++) {
       const segment = trustedSegments[index];
       const node = doc.child(index);
+      if (node.type.name === 'raw_block' && node.attrs.kind === 'source-edit') {
+        tokenBlocks.forEach((block, i) => { if (block.sourceFrom >= segment.from && block.sourceFrom < segment.to) used.add(i); });
+        blocks.push({ type: 'raw_block', sourceFrom: segment.from, sourceTo: segment.to });
+        continue;
+      }
       let match = -1;
       const bucket = tokenBlocksByKey.get(`${node.type.name}\u0000${segment.from}`);
       if (bucket) {
@@ -1091,7 +1096,18 @@ function findRunSource(runs, offset, bias) {
 }
 
 function findRunRich(runs, position, bias) {
-  const sorted = runs.filter(run => run.pmFrom <= position && run.pmTo >= position);
+  // Runs are emitted in rich-document order and do not overlap except at
+  // their endpoints. Find the last possible start, then inspect only touching
+  // runs, retaining the existing affinity/tie-breaking rules below.
+  let low = 0, high = runs.length - 1, last = -1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    if (runs[mid].pmFrom <= position) { last = mid; low = mid + 1; }
+    else high = mid - 1;
+  }
+  const sorted = [];
+  for (let i = last; i >= 0 && runs[i].pmTo >= position; i--) sorted.push(runs[i]);
+  sorted.reverse();
   if (!sorted.length) return null;
   const empty = sorted.find(run => run.pmFrom === run.pmTo && run.pmFrom === position);
   if (empty) return empty;

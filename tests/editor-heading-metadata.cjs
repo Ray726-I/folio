@@ -1,0 +1,56 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const esbuild = require('esbuild');
+const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'folio-headings-'));
+try {
+  const outfile = path.join(scratch, 'headings.cjs');
+  esbuild.buildSync({ stdin: { contents: `export {parseSource, updateSource, sourceToRich} from './ui/editor/model.js'; export {createHeadingMetadata} from './ui/editor/headings.js'; export {EditorState} from 'prosemirror-state';`, resolveDir: path.resolve(__dirname, '..') }, bundle: true, platform: 'node', format: 'cjs', outfile, logLevel: 'silent' });
+  const { parseSource, updateSource, sourceToRich, createHeadingMetadata, EditorState } = require(outfile);
+  let model = parseSource('# Same\n\n## Child\n\nBody\n\n# Same\n'), tracker = createHeadingMetadata();
+  const original = tracker.read(model);
+  assert.notEqual(original[0].key, original[2].key, 'duplicate labels have distinct identities');
+  function apply(makeTransaction) {
+    const tr = makeTransaction(EditorState.create({ doc: model.doc }));
+    tracker.map([tr]);
+    model = updateSource(tr.doc, model);
+    sourceToRich(model, 0);
+    return tracker.read(model);
+  }
+  let headings = apply(state => state.tr.setNodeMarkup(0, null, { level: 2 }));
+  assert.equal(headings[0].key, original[0].key, 'heading level changes retain identity');
+  assert.equal(headings[0].level, 2);
+  const firstSize = model.doc.firstChild.nodeSize;
+  headings = apply(state => state.tr.delete(0, firstSize));
+  assert.equal(headings[0].key, original[1].key, 'deleting a heading does not transfer its identity to the following heading');
+  const oldKeys = headings.map(heading => heading.key);
+  const inserted = model.doc.firstChild.type.create({ level: 1 }, model.doc.lastChild.content);
+  headings = apply(state => state.tr.insert(0, inserted));
+  assert.deepEqual(headings.slice(1).map(heading => heading.key), oldKeys, 'insertion before duplicates preserves their identities');
+  assert.ok(!oldKeys.includes(headings[0].key));
+  const splitOriginal = headings[0].key;
+  headings = apply(state => state.tr.split(2));
+  assert.equal(headings[0].key, splitOriginal, 'splitting retains identity on the original start');
+  assert.notEqual(headings[1].key, splitOriginal, 'the split-off heading gets a fresh identity');
+  headings = apply(state => state.tr.join(model.doc.firstChild.nodeSize));
+  assert.equal(headings[0].key, splitOriginal, 'merging retains the surviving heading start');
+  const before = model, edit = { from: model.source.indexOf('Body') + 1, to: model.source.indexOf('Body') + 1, insert: 'new' };
+  model = parseSource(before.source.slice(0, edit.from) + edit.insert + before.source.slice(edit.to));
+  tracker.splice(before, model, edit);
+  const shifted = tracker.read(model);
+  assert.deepEqual(shifted.map(heading => heading.key), headings.map(heading => heading.key), 'canonical source commits retain heading identities through the proven splice');
+  assert.equal(shifted.at(-1).offset, headings.at(-1).offset + 3);
+  tracker.reset();
+  assert.notEqual(tracker.read(model)[0].key, shifted[0].key, 'document replacement resets identities');
+  for (const source of ['> # Quoted\n', '- # Listed\n']) assert.equal(createHeadingMetadata().read(parseSource(source))[0].offset, 0, 'nested heading navigation retains the parser line-start offset');
+  const raw = parseSource('# :smile: Welcome\n\n## Math $x$ &amp; **bold** ![alt](image.png)\n');
+  const metadata = createHeadingMetadata().read(raw);
+  assert.equal(metadata[0].raw, true);
+  assert.equal(metadata[0].offset, 0);
+  assert.equal(metadata[1].semantic, 'Math x & bold alt');
+  assert.equal(metadata[1].offset, raw.source.indexOf('## Math'));
+  assert.equal(createHeadingMetadata().read(parseSource('# :smile: Welcome\r\n'))[0].raw, true);
+  assert.equal(createHeadingMetadata().read({ ...raw, ledger: null }), null, 'missing ledger retains the existing parser fallback');
+  console.log('PASS: heading metadata preserves duplicate identities, levels, deletion, insertion, source-splice offsets and raw extensions');
+} finally { fs.rmSync(scratch, { recursive: true, force: true }); }

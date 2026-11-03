@@ -15,7 +15,7 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.locator('#view-menu-button').click();
     await page.getByRole('menuitem', { name: 'Show formatting toolbar' }).click();
     assert.equal(await toolbar.isVisible(), true, 'the view menu restores the toolbar');
-    await page.locator('#lock-document').click();
+    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
     await page.locator('#format-toolbar-close').click();
     assert.equal(await toolbar.isHidden(), true, 'the close control remains available while locked');
     assert.deepEqual(session.errors, []);

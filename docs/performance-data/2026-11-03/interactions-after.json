@@ -1,0 +1,598 @@
+{
+  "timestamp": "2026-11-02T21:17:37.903Z",
+  "mode": "interactions",
+  "environment": {
+    "uiRoot": "/home/ray/Projects/folio/ui",
+    "bundleSHA256": "bf5c2a0bb074578ee894e67d387998176b3a7e67fc6745bfa01cfed2f5694abe",
+    "cpu": "13th Gen Intel(R) Core(TM) i5-13500H",
+    "platform": "linux",
+    "release": "7.2.14-1-omarchy",
+    "build": "production editor bundle, mocked Tauri bridge",
+    "viewport": "1180x900",
+    "physicalRefresh": "unknown; headless virtual display",
+    "browser": "151.0.7922.34"
+  },
+  "warmupWorkloads": 1,
+  "timedWorkloads": 1,
+  "limitations": [
+    "Frame intervals measure the headless browser rAF clock, not native presentation or input latency.",
+    "Diagnostic trace function durations include nested calls and must not be summed as CPU utilization.",
+    "Geometry instrumentation and tracing occur only in a separate diagnostic pass.",
+    "For --repeat >1, reset/settle time between workloads is included in the measured frame segment.",
+    "No native WebKit, GPU/compositor trace, real window resize, or OS IME measured.",
+    "Bounded forced-GC replacement diagnostics run after tracing for prose (10 replacements) and tables150 (5); no browser-close retention claim."
+  ],
+  "results": [
+    {
+      "fixture": "prose",
+      "bytes": 102400,
+      "timed": {
+        "frameIntervals": {
+          "median": 16.699999999999818,
+          "p95": 33.30000000000018,
+          "worst": 50,
+          "count": 152
+        },
+        "longTasks": {
+          "median": 52,
+          "p95": 63,
+          "worst": 63,
+          "count": 8
+        },
+        "intervalsOver20ms": 16
+      },
+      "diagnostic": {
+        "geometryReads": 49,
+        "functionCallDuration": {
+          "median": 0.019,
+          "p95": 0.834,
+          "worst": 3.998,
+          "count": 425
+        },
+        "eventDispatchDuration": {
+          "median": 0.016,
+          "p95": 0.134,
+          "worst": 1.91,
+          "count": 292
+        },
+        "layoutDuration": {
+          "median": 6.652,
+          "p95": 8.116,
+          "worst": 8.118,
+          "count": 26
+        },
+        "styleRecalculationDuration": {
+          "median": 1.534,
+          "p95": 34.65,
+          "worst": 35.355,
+          "count": 32
+        },
+        "animationFrameCallbackDuration": {
+          "median": 0.113,
+          "p95": 1.571,
+          "worst": 4.011,
+          "count": 146
+        }
+      },
+      "lifecycle": {
+        "replacements": 10,
+        "settleMs": 550,
+        "note": "Forced-GC Chromium JS heap and CDP DOM counters only; repeated document replacement, not native resident memory or a proof of no leaks. Replacement wall time includes harness roundtrips and settling.",
+        "samples": [
+          {
+            "cycle": 0,
+            "replaceWallMs": null,
+            "jsHeapUsedBytes": 10034936,
+            "documents": 1,
+            "nodes": 19189,
+            "jsEventListeners": 270,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 1,
+            "replaceWallMs": 742.1004880000019,
+            "jsHeapUsedBytes": 10057044,
+            "documents": 1,
+            "nodes": 19202,
+            "jsEventListeners": 272,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 2,
+            "replaceWallMs": 738.7514310000006,
+            "jsHeapUsedBytes": 10128776,
+            "documents": 1,
+            "nodes": 19215,
+            "jsEventListeners": 274,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 3,
+            "replaceWallMs": 727.8995350000005,
+            "jsHeapUsedBytes": 10178768,
+            "documents": 1,
+            "nodes": 19228,
+            "jsEventListeners": 276,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 4,
+            "replaceWallMs": 734.1793380000017,
+            "jsHeapUsedBytes": 10312124,
+            "documents": 1,
+            "nodes": 19230,
+            "jsEventListeners": 277,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 5,
+            "replaceWallMs": 727.2444020000003,
+            "jsHeapUsedBytes": 10282472,
+            "documents": 1,
+            "nodes": 19232,
+            "jsEventListeners": 278,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 6,
+            "replaceWallMs": 728.0432829999991,
+            "jsHeapUsedBytes": 10362344,
+            "documents": 1,
+            "nodes": 19232,
+            "jsEventListeners": 278,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 7,
+            "replaceWallMs": 742.321219999998,
+            "jsHeapUsedBytes": 10345120,
+            "documents": 1,
+            "nodes": 19232,
+            "jsEventListeners": 278,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 8,
+            "replaceWallMs": 733.3340129999997,
+            "jsHeapUsedBytes": 10540972,
+            "documents": 1,
+            "nodes": 19232,
+            "jsEventListeners": 278,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 9,
+            "replaceWallMs": 729.8167610000019,
+            "jsHeapUsedBytes": 10518800,
+            "documents": 1,
+            "nodes": 19232,
+            "jsEventListeners": 278,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 10,
+            "replaceWallMs": 737.8682829999998,
+            "jsHeapUsedBytes": 10602312,
+            "documents": 1,
+            "nodes": 19232,
+            "jsEventListeners": 278,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "headings300",
+      "bytes": 9280,
+      "timed": {
+        "frameIntervals": {
+          "median": 16.699999999999818,
+          "p95": 16.700000000000728,
+          "worst": 16.800000000000182,
+          "count": 141
+        },
+        "longTasks": {
+          "median": null,
+          "p95": null,
+          "worst": null,
+          "count": 0
+        },
+        "intervalsOver20ms": 0
+      },
+      "diagnostic": {
+        "geometryReads": 187,
+        "functionCallDuration": {
+          "median": 0.024,
+          "p95": 2.991,
+          "worst": 4.987,
+          "count": 433
+        },
+        "eventDispatchDuration": {
+          "median": 0.012,
+          "p95": 0.159,
+          "worst": 2.079,
+          "count": 326
+        },
+        "layoutDuration": {
+          "median": 2.867,
+          "p95": 4.027,
+          "worst": 10.441,
+          "count": 32
+        },
+        "styleRecalculationDuration": {
+          "median": 0.214,
+          "p95": 17.025,
+          "worst": 17.895,
+          "count": 88
+        },
+        "animationFrameCallbackDuration": {
+          "median": 0.141,
+          "p95": 4.038,
+          "worst": 5.003,
+          "count": 146
+        }
+      },
+      "outlineRefresh": {
+        "warmup": 10,
+        "samples": 30,
+        "unchangedDocument": true,
+        "duration": {
+          "median": 1.5,
+          "p95": 1.800000000745058,
+          "worst": 1.8999999985098839,
+          "count": 30
+        },
+        "note": "Synchronous refresh only; unchanged document, no geometry wrapper or trace active; frame wait outside duration."
+      }
+    },
+    {
+      "fixture": "headings1000",
+      "bytes": 31446,
+      "timed": {
+        "frameIntervals": {
+          "median": 16.699999999999818,
+          "p95": 33.399999999999636,
+          "worst": 50,
+          "count": 145
+        },
+        "longTasks": {
+          "median": 51,
+          "p95": 56,
+          "worst": 56,
+          "count": 5
+        },
+        "intervalsOver20ms": 15
+      },
+      "diagnostic": {
+        "geometryReads": 220,
+        "functionCallDuration": {
+          "median": 0.018,
+          "p95": 7.908,
+          "worst": 10.777,
+          "count": 432
+        },
+        "eventDispatchDuration": {
+          "median": 0.011,
+          "p95": 0.117,
+          "worst": 1.653,
+          "count": 325
+        },
+        "layoutDuration": {
+          "median": 8.304,
+          "p95": 16.938,
+          "worst": 24.956,
+          "count": 32
+        },
+        "styleRecalculationDuration": {
+          "median": 0.207,
+          "p95": 28.136,
+          "worst": 32.488,
+          "count": 89
+        },
+        "animationFrameCallbackDuration": {
+          "median": 0.097,
+          "p95": 9.454,
+          "worst": 10.798,
+          "count": 146
+        }
+      },
+      "outlineRefresh": {
+        "warmup": 10,
+        "samples": 30,
+        "unchangedDocument": true,
+        "duration": {
+          "median": 3.600000001490116,
+          "p95": 4,
+          "worst": 4.099999997764826,
+          "count": 30
+        },
+        "note": "Synchronous refresh only; unchanged document, no geometry wrapper or trace active; frame wait outside duration."
+      }
+    },
+    {
+      "fixture": "tables150",
+      "bytes": 8710,
+      "timed": {
+        "frameIntervals": {
+          "median": 16.699999999999818,
+          "p95": 33.30000000000018,
+          "worst": 50,
+          "count": 157
+        },
+        "longTasks": {
+          "median": 62,
+          "p95": 62,
+          "worst": 62,
+          "count": 2
+        },
+        "intervalsOver20ms": 14
+      },
+      "diagnostic": {
+        "geometryReads": 277,
+        "functionCallDuration": {
+          "median": 0.022,
+          "p95": 2.936,
+          "worst": 6.546,
+          "count": 450
+        },
+        "eventDispatchDuration": {
+          "median": 0.012,
+          "p95": 0.137,
+          "worst": 1.224,
+          "count": 316
+        },
+        "layoutDuration": {
+          "median": 0.267,
+          "p95": 4.567,
+          "worst": 5.237,
+          "count": 66
+        },
+        "styleRecalculationDuration": {
+          "median": 0.23,
+          "p95": 19.593,
+          "worst": 21.646,
+          "count": 84
+        },
+        "animationFrameCallbackDuration": {
+          "median": 0.135,
+          "p95": 4.221,
+          "worst": 6.567,
+          "count": 162
+        }
+      },
+      "lifecycle": {
+        "replacements": 5,
+        "settleMs": 550,
+        "note": "Forced-GC Chromium JS heap and CDP DOM counters only; repeated document replacement, not native resident memory or a proof of no leaks. Replacement wall time includes harness roundtrips and settling.",
+        "samples": [
+          {
+            "cycle": 0,
+            "replaceWallMs": null,
+            "jsHeapUsedBytes": 5583448,
+            "documents": 1,
+            "nodes": 4579,
+            "jsEventListeners": 270,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 1,
+            "replaceWallMs": 607.2344759999978,
+            "jsHeapUsedBytes": 5620928,
+            "documents": 1,
+            "nodes": 4592,
+            "jsEventListeners": 272,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 2,
+            "replaceWallMs": 602.0886889999965,
+            "jsHeapUsedBytes": 5720952,
+            "documents": 1,
+            "nodes": 4605,
+            "jsEventListeners": 274,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 3,
+            "replaceWallMs": 602.4026900000026,
+            "jsHeapUsedBytes": 5761496,
+            "documents": 1,
+            "nodes": 4618,
+            "jsEventListeners": 276,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 4,
+            "replaceWallMs": 599.3372039999958,
+            "jsHeapUsedBytes": 5824428,
+            "documents": 1,
+            "nodes": 4620,
+            "jsEventListeners": 277,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 5,
+            "replaceWallMs": 601.0156980000029,
+            "jsHeapUsedBytes": 5838524,
+            "documents": 1,
+            "nodes": 4622,
+            "jsEventListeners": 278,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "tables500",
+      "bytes": 29010,
+      "timed": {
+        "frameIntervals": {
+          "median": 16.699999999999818,
+          "p95": 50,
+          "worst": 66.69999999999982,
+          "count": 149
+        },
+        "longTasks": {
+          "median": 58,
+          "p95": 73,
+          "worst": 73,
+          "count": 15
+        },
+        "intervalsOver20ms": 15
+      },
+      "diagnostic": {
+        "geometryReads": 274,
+        "functionCallDuration": {
+          "median": 0.02,
+          "p95": 6.308,
+          "worst": 11.692,
+          "count": 448
+        },
+        "eventDispatchDuration": {
+          "median": 0.011,
+          "p95": 0.111,
+          "worst": 1.254,
+          "count": 316
+        },
+        "layoutDuration": {
+          "median": 0.504,
+          "p95": 13.776,
+          "worst": 25.441,
+          "count": 66
+        },
+        "styleRecalculationDuration": {
+          "median": 0.184,
+          "p95": 35.926,
+          "worst": 43.274,
+          "count": 82
+        },
+        "animationFrameCallbackDuration": {
+          "median": 0.104,
+          "p95": 8.919,
+          "worst": 11.706,
+          "count": 159
+        }
+      }
+    },
+    {
+      "fixture": "media",
+      "bytes": 24999,
+      "timed": {
+        "frameIntervals": {
+          "median": 16.699999999999818,
+          "p95": 33.29999999999927,
+          "worst": 33.400000000001455,
+          "count": 150
+        },
+        "longTasks": {
+          "median": 51,
+          "p95": 51,
+          "worst": 51,
+          "count": 1
+        },
+        "intervalsOver20ms": 16
+      },
+      "diagnostic": {
+        "geometryReads": 51,
+        "functionCallDuration": {
+          "median": 0.022,
+          "p95": 1.303,
+          "worst": 2.659,
+          "count": 440
+        },
+        "eventDispatchDuration": {
+          "median": 0.011,
+          "p95": 0.125,
+          "worst": 1.174,
+          "count": 341
+        },
+        "layoutDuration": {
+          "median": 4.551,
+          "p95": 8.441,
+          "worst": 9.645,
+          "count": 27
+        },
+        "styleRecalculationDuration": {
+          "median": 2.439,
+          "p95": 30.73,
+          "worst": 31.859,
+          "count": 31
+        },
+        "animationFrameCallbackDuration": {
+          "median": 0.116,
+          "p95": 1.692,
+          "worst": 2.679,
+          "count": 151
+        }
+      }
+    }
+  ]
+}

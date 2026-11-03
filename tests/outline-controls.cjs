@@ -1,0 +1,53 @@
+const assert = require('node:assert/strict');
+const { openEditor } = require('./editor-browser.cjs');
+
+(async () => {
+  const source = '# Handbook\n\n## Planning\n\n### Research methods and detailed notes for the upcoming project\n\nText.\n\n### Budget\n\n## Delivery\n\n### Review\n';
+  const session = await openEditor(source);
+  const { page } = session;
+  try {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.waitForFunction(() => outlineEntries.length === 6);
+    assert.equal(await page.locator('#outline').evaluate(el => Math.round(el.getBoundingClientRect().width)), 280, 'new profiles start with the wider outline');
+    assert.equal(await page.locator('#outline-search').count(), 0, 'outline has no heading search');
+    assert.equal(await page.locator('#outline-count').textContent(), '6 sections', 'outline retains its section count');
+    assert.equal(await page.locator('#outline-wrap').count(), 0, 'outline has no title wrapping control');
+    const planning = page.locator('.outline-link').filter({ hasText: /^Planning$/ });
+    const research = page.locator('.outline-link').filter({ hasText: /^Research methods/ });
+    const toggle = page.getByRole('button', { name: 'Collapse Planning', exact: true });
+    await toggle.click();
+    assert.equal(await research.isVisible(), false, 'collapse hides descendants');
+    assert.equal(await planning.isVisible(), true);
+    await page.evaluate(() => refreshEditorOutline());
+    assert.equal(await research.isVisible(), false, 'collapse survives editor outline refresh');
+    await page.evaluate(() => setActiveOutline(2));
+    assert.equal(await planning.getAttribute('class').then(value => value.includes('active-ancestor')), true, 'collapsed parent indicates active descendants');
+    assert.equal(await research.isVisible(), false, 'following does not undo manual collapse');
+    assert.equal(await planning.evaluate(el => getComputedStyle(el.closest('.outline-row'), '::before').content), 'none', 'active row has no accent bar indicator');
+    await planning.focus();
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await research.isVisible(), true, 'keyboard expands a parent');
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await research.evaluate(el => document.activeElement === el), true, 'keyboard enters child');
+    await page.keyboard.press('ArrowLeft');
+    assert.equal(await planning.evaluate(el => document.activeElement === el), true, 'keyboard returns to parent');
+    const titleHeight = await research.evaluate(el => el.getBoundingClientRect().height);
+    assert.equal(titleHeight, 32, 'outline titles use a consistent single-line row');
+    assert.equal(await research.evaluate(el => getComputedStyle(el).textOverflow), 'ellipsis', 'long titles are clipped cleanly');
+    await page.evaluate(() => setActiveOutline(2));
+    assert.equal(await research.evaluate(el => el.getBoundingClientRect().height), titleHeight, 'active state does not change row height');
+    assert.equal(await page.evaluate(() => current.content), source, 'outline controls never edit document');
+    await page.locator('#outline-divider').focus();
+    await page.keyboard.press('ArrowRight');
+    const resized = await page.locator('#outline').evaluate(el => Math.round(el.getBoundingClientRect().width));
+    await page.reload();
+    await page.waitForFunction(() => editor && outlineEntries.length === 6 && !busy);
+    assert.equal(await page.locator('#outline').evaluate(el => Math.round(el.getBoundingClientRect().width)), resized, 'saved sidebar width survives reload');
+    await page.getByRole('button', { name: 'Collapse Handbook', exact: true }).click();
+    await page.evaluate(() => { window.documentSource = '# Replacement document\n\n## Fresh section\n'; return requestOpenLocation('/tmp/fresh.md'); });
+    await page.waitForFunction(() => outlineEntries.length === 2);
+    assert.equal(await page.locator('.outline-link').filter({ hasText: 'Fresh section' }).isVisible(), true, 'new document is not hidden by previous collapse state');
+    assert.deepEqual(session.errors, []);
+    console.log('PASS: outline collapse, hierarchy, keyboard, single-line titles and document safety');
+  } finally { await session.close(); }
+})().catch(error => { console.error(error); process.exitCode = 1; });

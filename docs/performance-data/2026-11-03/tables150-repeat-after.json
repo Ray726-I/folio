@@ -1,0 +1,164 @@
+{
+  "timestamp": "2026-11-02T21:22:38.509Z",
+  "mode": "interactions",
+  "environment": {
+    "uiRoot": "/home/ray/Projects/folio/ui",
+    "bundleSHA256": "bf5c2a0bb074578ee894e67d387998176b3a7e67fc6745bfa01cfed2f5694abe",
+    "cpu": "13th Gen Intel(R) Core(TM) i5-13500H",
+    "platform": "linux",
+    "release": "7.2.14-1-omarchy",
+    "build": "production editor bundle, mocked Tauri bridge",
+    "viewport": "1180x900",
+    "physicalRefresh": "unknown; headless virtual display",
+    "browser": "151.0.7922.34"
+  },
+  "warmupWorkloads": 1,
+  "timedWorkloads": 3,
+  "limitations": [
+    "Frame intervals measure the headless browser rAF clock, not native presentation or input latency.",
+    "Diagnostic trace function durations include nested calls and must not be summed as CPU utilization.",
+    "Geometry instrumentation and tracing occur only in a separate diagnostic pass.",
+    "For --repeat >1, reset/settle time between workloads is included in the measured frame segment.",
+    "No native WebKit, GPU/compositor trace, real window resize, or OS IME measured.",
+    "Bounded forced-GC replacement diagnostics run after tracing for prose (10 replacements) and tables150 (5); no browser-close retention claim."
+  ],
+  "results": [
+    {
+      "fixture": "tables150",
+      "bytes": 8710,
+      "timed": {
+        "frameIntervals": {
+          "median": 16.69999999999891,
+          "p95": 16.799999999999272,
+          "worst": 16.80000000000109,
+          "count": 453
+        },
+        "longTasks": {
+          "median": null,
+          "p95": null,
+          "worst": null,
+          "count": 0
+        },
+        "intervalsOver20ms": 0
+      },
+      "diagnostic": {
+        "geometryReads": 834,
+        "functionCallDuration": {
+          "median": 0.021,
+          "p95": 2.777,
+          "worst": 6.341,
+          "count": 1357
+        },
+        "eventDispatchDuration": {
+          "median": 0.012,
+          "p95": 0.131,
+          "worst": 1.162,
+          "count": 959
+        },
+        "layoutDuration": {
+          "median": 0.268,
+          "p95": 4.502,
+          "worst": 8.293,
+          "count": 202
+        },
+        "styleRecalculationDuration": {
+          "median": 0.225,
+          "p95": 18.056,
+          "worst": 24.755,
+          "count": 257
+        },
+        "animationFrameCallbackDuration": {
+          "median": 0.13,
+          "p95": 4.365,
+          "worst": 6.36,
+          "count": 485
+        }
+      },
+      "lifecycle": {
+        "replacements": 5,
+        "settleMs": 550,
+        "note": "Forced-GC Chromium JS heap and CDP DOM counters only; repeated document replacement, not native resident memory or a proof of no leaks. Replacement wall time includes harness roundtrips and settling.",
+        "samples": [
+          {
+            "cycle": 0,
+            "replaceWallMs": null,
+            "jsHeapUsedBytes": 5609600,
+            "documents": 1,
+            "nodes": 4579,
+            "jsEventListeners": 270,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 1,
+            "replaceWallMs": 606.1874529999986,
+            "jsHeapUsedBytes": 5636780,
+            "documents": 1,
+            "nodes": 4592,
+            "jsEventListeners": 272,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 2,
+            "replaceWallMs": 602.600148999998,
+            "jsHeapUsedBytes": 5740388,
+            "documents": 1,
+            "nodes": 4605,
+            "jsEventListeners": 274,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 3,
+            "replaceWallMs": 601.0803460000025,
+            "jsHeapUsedBytes": 5779260,
+            "documents": 1,
+            "nodes": 4618,
+            "jsEventListeners": 276,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 4,
+            "replaceWallMs": 600.6618479999997,
+            "jsHeapUsedBytes": 5843348,
+            "documents": 1,
+            "nodes": 4620,
+            "jsEventListeners": 277,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          },
+          {
+            "cycle": 5,
+            "replaceWallMs": 600.3647400000009,
+            "jsHeapUsedBytes": 5857928,
+            "documents": 1,
+            "nodes": 4622,
+            "jsEventListeners": 278,
+            "overlays": {
+              "tableHandles": 1,
+              "tableMenus": 0,
+              "slashMenus": 0
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

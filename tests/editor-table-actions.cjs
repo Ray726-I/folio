@@ -80,7 +80,7 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.equal(await page.locator('#preview tr').nth(1).locator('td').first().innerText(), 'Beta', 'dragging a row changes its order');
     await page.keyboard.press('Control+z');
     await page.waitForFunction(text => current.content === text, source);
-    await page.locator('#lock-document').click();
+    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
     await hoverEdge('bottom');
     assert.equal(await appendRow.isDisabled(), true, 'lock disables append');
     assert.equal(await page.evaluate(() => current.content), source);

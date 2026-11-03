@@ -48,7 +48,7 @@ const FIXTURE = `<!doctype html>
     </div>
   </div>
   <div class="window-title"><div class="window-title-line"><span>Folio</span></div></div>
-  <div class="header-end"><button id="palette-open" class="icon-button" aria-label="Open command window"><svg class="icon" aria-hidden="true"></svg></button></div>
+  <div class="header-end"><button id="home" class="icon-button" aria-label="Go to welcome screen"><svg class="icon" aria-hidden="true"></svg></button></div>
 </header>
 <div id="format-tools" class="editor-toolbar" role="toolbar" aria-label="Document formatting">
   <button class="button small ghost" data-editor-command="bold" aria-label="Bold"><strong>B</strong></button>
