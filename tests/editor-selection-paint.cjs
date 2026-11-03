@@ -19,12 +19,14 @@ const { openEditor } = require('./editor-browser.cjs');
    const ranges = [...CSS.highlights.get('folio-selection')];
    const code = document.querySelector('.code-surface code');
    return { text:selection.toString(), fragmentOnly:ranges.every(r => r.startContainer === r.endContainer && r.startContainer.nodeType === Node.TEXT_NODE),
+    lineOnly:ranges.every(r => !r.toString().includes('\n')),
     codeCovered:ranges.some(r => code.contains(r.startContainer)),
     nativeBackground:getComputedStyle(code, '::selection').backgroundColor,
     codeColor:getComputedStyle(code).color,
     overlayVisibility:getComputedStyle(document.querySelector('.code-highlight')).visibility };
   });
   assert.equal(state.fragmentOnly, true, 'mirror paints text fragments, never block rectangles');
+  assert.equal(state.lineOnly, true, 'each mirror range stays inside one code line');
   assert.equal(state.codeCovered, true, 'rendered code uses the same mirror');
   assert.equal(state.nativeBackground, 'rgba(0, 0, 0, 0)', 'native code highlight cannot overlap mirror');
   assert.notEqual(state.codeColor, 'rgba(0, 0, 0, 0)', 'selected source glyphs remain visible');

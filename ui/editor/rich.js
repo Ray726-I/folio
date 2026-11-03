@@ -749,6 +749,15 @@ export function createRichEditor(parent, options) {
       // the formula itself must reach the editor so a single click selects the
       // atom (and a double-click can then open the source editor).
       if (event.target?.closest?.('.math-local-editor')) return true;
+      if (event.type === 'keydown') {
+        // The formula is focusable so keyboard users can open it with Enter.
+        // That must not make document-wide selection and deletion only work
+        // after clicking elsewhere: Ctrl/Cmd+A reaches the editor always, and
+        // Delete/Backspace reach it once a selection exists.
+        const key = event.key.toLowerCase();
+        if ((event.ctrlKey || event.metaKey) && !event.altKey && key === 'a') return false;
+        if ((event.key === 'Backspace' || event.key === 'Delete') && !editor.state.selection.empty) return false;
+      }
       return !['mousedown', 'mouseup', 'click', 'dblclick'].includes(event.type);
     }, ignoreMutation: () => true, destroy() { generation++; refreshers.delete(refresh); } };
   }
@@ -1060,7 +1069,30 @@ export function createRichEditor(parent, options) {
   }
   function resyncGuardedSelection() {
     if (!selectionGuarded) return;
+    // Stopping the DOM observer is what lets a native drag cross a rendered
+    // atom without ProseMirror truncating it to that atom's boundary. But a
+    // stopped observer also means editor state never learned the new range.
+    // Before an edit or caret command runs, map the live range through the
+    // same source-aware endpoint logic used for copy, then adopt that exact
+    // source interval as the bookmark and the editor selection. A plain
+    // observer flush is not enough: it has no moved-selection records to read.
+    let range = null;
+    try {
+      const dom = window.getSelection();
+      if (dom && dom.rangeCount === 1 && !dom.isCollapsed) range = markdownClipboardRange();
+    } catch {}
     setSelectionGuarded(false);
+    if (range && range.from < range.to) {
+      try {
+        const limit = view.state.doc.content.size;
+        const anchor = Math.max(0, Math.min(limit, sourceToRich(model, range.from)));
+        const head = Math.max(0, Math.min(limit, sourceToRich(model, range.to)));
+        const next = TextSelection.between(view.state.doc.resolve(anchor), view.state.doc.resolve(head));
+        if (!view.state.selection.eq(next)) view.dispatch(view.state.tr.setSelection(next));
+        setBookmark(range.from, range.to, view.state);
+        return;
+      } catch {}
+    }
     try { view?.domObserver.flush(); } catch {}
   }
   function markdownClipboardRange() {
@@ -1139,6 +1171,32 @@ export function createRichEditor(parent, options) {
     } catch { return false; }
   })();
   let folioPaintActive = false;
+  // A text node may contain several explicit lines (every fenced code block
+  // does). Some engines fill the whole bounding box of a highlight range, so a
+  // range spanning those newlines paints a solid rectangle over the block
+  // instead of a per-line wash. Split a same-node fragment at line breaks so
+  // every registered range stays on one line.
+  function lineFragments(range) {
+    if (range.startContainer !== range.endContainer || range.startContainer.nodeType !== Node.TEXT_NODE) return [range];
+    const node = range.startContainer, value = node.nodeValue || '';
+    const parts = [];
+    let lineStart = range.startOffset;
+    for (let index = lineStart; index < range.endOffset; index++) {
+      if (value.charCodeAt(index) !== 10) continue;
+      if (index > lineStart) {
+        const part = document.createRange();
+        part.setStart(node, lineStart); part.setEnd(node, index);
+        parts.push(part);
+      }
+      lineStart = index + 1;
+    }
+    if (range.endOffset > lineStart) {
+      const part = document.createRange();
+      part.setStart(node, lineStart); part.setEnd(node, range.endOffset);
+      parts.push(part);
+    }
+    return parts;
+  }
   function folioHighlightRanges(range) {
     const result = [];
     const root = range.commonAncestorContainer;
@@ -1169,7 +1227,7 @@ export function createRichEditor(parent, options) {
       // accessibility. It is still the tree that selection must paint.
       if (text.parentElement?.closest('[aria-hidden="true"]') && !text.parentElement.closest('.katex-html')) continue;
       const part = intersects(text);
-      if (part) result.push(part);
+      if (part) result.push(...lineFragments(part));
     }
     return result;
   }
@@ -2419,6 +2477,13 @@ export function createRichEditor(parent, options) {
     },
     handleKeyDown(editor, event) {
       if (event.isComposing) return false;
+      // A guarded reading range is not in editor state. Adopt it before the
+      // keymap runs so Delete/Backspace/typing replace the visible interval.
+      // Modifier-only presses and copy/cut shortcuts keep the native range so
+      // clipboard behavior is unchanged.
+      const pressed = event.key.toLowerCase();
+      const clipboardShortcut = (event.ctrlKey || event.metaKey) && !event.altKey && (pressed === 'c' || pressed === 'x');
+      if (selectionGuarded && !MODIFIER_KEYS.has(event.key) && !clipboardShortcut) resyncGuardedSelection();
       // A click can update the browser caret before ProseMirror observes its
       // selectionchange. Adopt it before source-edit keyboard commands run.
       if (model.sourceEdit) captureDOMSelection();
@@ -2514,7 +2579,11 @@ export function createRichEditor(parent, options) {
     handlePaste(editor, event) {
       if (editor.composing) return false;
       const data = event.clipboardData;
-      if (!data || data.types?.includes('text/html')) return false;
+      if (!data) return false;
+      // Markdown is canonical, so the plain-text payload wins even when the
+      // clipboard also carries HTML. Round-tripping HTML through the rich
+      // schema dropped fenced-code info strings, rewrote list spacing and
+      // mangled TeX. HTML remains the fallback only when no text is offered.
       const text = data.getData('text/plain');
       if (!text) return false;
       const logical = logicalRange(editor.state);

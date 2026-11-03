@@ -64,13 +64,14 @@ const content = page => page.evaluate(() => current.content);
 const selection = page => page.evaluate(() => editor.getSelection());
 const expectedSplice = (source, from, to, insert) => source.slice(0, from) + insert + source.slice(to);
 
-function pastePlainText(page, text) {
-  return page.evaluate(value => {
+function pastePlainText(page, text, html = null) {
+  return page.evaluate(({ value, html }) => {
     const data = new DataTransfer();
     data.setData('text/plain', value);
+    if (html) data.setData('text/html', html);
     const event = new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true });
     document.querySelector('#preview .ProseMirror').dispatchEvent(event);
-  }, text);
+  }, { value: text, html });
 }
 
 (async () => {
@@ -327,6 +328,84 @@ function pastePlainText(page, text) {
       assert.match(await content(page), /\|\s*19\s*\|/, 'ordinary typing in a cell must still update the source');
       assert.deepEqual(errors, []);
       console.log('PASS: basic table Tab/Enter protection and typing remain intact.');
+    } finally { await session.close(); }
+  }
+
+  // 8. A clipboard that offers both HTML and plain text keeps the exact
+  // Markdown. HTML round-tripping used to drop fence info strings and rewrite
+  // list/TeX bytes, which silently corrupted every pasted code block.
+  {
+    const source = '# H\n\n- one\n- two\n\n```mermaid\nflowchart TD\n A-->B\n```\n\n\\[\nx^2 + y^2\n\\]\n';
+    const html = '<meta charset="utf-8"><ul><li>one</li><li>two</li></ul><pre><code class="language-mermaid">flowchart TD\n A--&gt;B</code></pre>';
+    const session = await openIsolated('', bundle.outfile);
+    try {
+      const { page, errors } = session;
+      await pastePlainText(page, source, html);
+      await page.waitForFunction(value => current.content === value, source);
+      assert.equal(await content(page), source,
+        'plain-text Markdown must win over an HTML clipboard representation');
+      assert.deepEqual(errors, []);
+      console.log('PASS: HTML-rich pastes preserve the exact plain-text Markdown payload.');
+    } finally { await session.close(); }
+  }
+
+  // 9. A native drag across a rendered atom stays a reading range while the
+  // pointer is down, but Delete must still replace the visible interval. The
+  // stopped selection observer used to leave editor state at the old caret, so
+  // Backspace deleted the wrong source bytes (or nothing).
+  {
+    const source = 'Before text\n\n```mermaid\nflowchart TD\n A-->B\n```\n\nAfter text\n';
+    const session = await openIsolated(source, bundle.outfile);
+    try {
+      const { page, errors } = session;
+      await page.locator('.mermaid-host svg').waitFor();
+      const points = await page.evaluate(() => {
+        const paragraphs = [...document.querySelectorAll('#preview .ProseMirror p')];
+        const point = (node, offset, end) => {
+          const range = document.createRange();
+          range.setStart(node, offset); range.setEnd(node, offset);
+          const rect = range.getBoundingClientRect();
+          return { x: end ? rect.right : rect.left, y: (rect.top + rect.bottom) / 2 };
+        };
+        const first = paragraphs[0].firstChild, last = paragraphs.at(-1).firstChild;
+        return { start: point(first, 0, false), end: point(last, last.length, true) };
+      });
+      await page.mouse.move(points.start.x, points.start.y);
+      await page.mouse.down();
+      await page.mouse.move(points.end.x, points.end.y, { steps: 12 });
+      await page.mouse.up();
+      await page.waitForTimeout(100);
+      const visible = await page.evaluate(() => window.getSelection().toString());
+      assert.ok(visible.startsWith('Before text') && visible.endsWith('After text'),
+        `the drag must select rendered text on both sides of the diagram, got ${JSON.stringify(visible)}`);
+      await page.keyboard.press('Backspace');
+      await page.waitForFunction(() => current.content === '');
+      assert.equal(await content(page), '', 'Delete over a rendered range must remove the whole selected interval');
+      assert.deepEqual(errors, []);
+      console.log('PASS: deleting a native selection across a rendered atom uses the visible interval.');
+    } finally { await session.close(); }
+  }
+
+  // 10. A click on a rendered formula focuses its edit control. Document-wide
+  // Ctrl+A/Delete must still reach the editor instead of selecting the page
+  // chrome and doing nothing.
+  {
+    const source = 'Alpha\n\n$$\nx^2\n$$\n\nOmega\n';
+    const session = await openIsolated(source, bundle.outfile);
+    try {
+      const { page, errors } = session;
+      await page.locator('.math-block .katex').waitFor();
+      await page.locator('.math-block .math-formula').click();
+      assert.equal(await page.evaluate(() => document.activeElement?.classList?.contains('math-formula')), true,
+        'the formula keeps its keyboard edit affordance');
+      await page.keyboard.press('Control+a');
+      assert.deepEqual(await selection(page), { anchor: 0, head: source.length },
+        'Select All must reach the editor while the formula is focused');
+      await page.keyboard.press('Delete');
+      await page.waitForFunction(() => current.content === '');
+      assert.equal(await content(page), '', 'Delete must remove the selected document, not the page selection');
+      assert.deepEqual(errors, []);
+      console.log('PASS: focused formulas do not swallow Select All or Delete.');
     } finally { await session.close(); }
   }
 })().catch(error => { console.error(error); process.exitCode = 1; });

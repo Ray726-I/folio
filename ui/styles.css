@@ -1363,9 +1363,13 @@ input,textarea,[contenteditable="true"],.ProseMirror {
 
 /* Mirror native ranges per text fragment; only one layer paints the wash.
    Selected code uses real surface glyphs so its wash cannot obscure the
-   separate syntax overlay below it. Collapse restores normal syntax colors. */
+   separate syntax overlay below it. The mirror also owns the selected text
+   colour: custom-highlight ranges do not inherit the native ::selection rule,
+   and a custom palette (Omarchy) can otherwise leave syntax colours on a dark
+   wash. Collapse restores normal syntax colors. */
 ::highlight(folio-selection) {
-  background-color:var(--selection-wash,color-mix(in srgb,var(--accent) 45%,var(--bg)))
+  background-color:var(--selection-wash,color-mix(in srgb,var(--accent) 45%,var(--bg)));
+  color:var(--selection-ink,var(--fg))
 }
 #preview .ProseMirror.folio-paint::selection,
 #preview .ProseMirror.folio-paint ::selection,

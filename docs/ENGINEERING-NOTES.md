@@ -26,6 +26,20 @@ should outlive any one feature pass. Current performance numbers live in
   itself is capped at 20 MiB.
 - Lock, undo/redo, selection and copy all operate on the canonical document,
   not on a second editor copy.
+- Paste prefers the clipboard's `text/plain` payload, even when `text/html` is
+  also offered. HTML round-tripping through the rich schema loses fenced-code
+  info strings and rewrites list/TeX bytes; HTML remains a fallback only when no
+  text is available.
+- A native drag that crosses a rendered atom stays out of editor state while the
+  pointer is down. Before a keyboard edit, map that guarded range back through
+  the source-aware clipboard endpoints; otherwise Delete/Backspace act on a
+  stale caret. Focusable rendered atoms (formulas) must let document-wide
+  `Ctrl/Cmd+A` and a standing selection's Delete/Backspace reach the editor.
+- The custom selection mirror registers one range per source line, not per text
+  node. WebKitGTK fills a range's bounding box, so a fenced code block (one text
+  node containing many newlines) otherwise paints as a solid rectangle. Code
+  selection also hides the syntax overlay and takes the selection ink so glyphs
+  stay readable on the wash.
 
 ## Native WebKit and Linux pitfalls
 
