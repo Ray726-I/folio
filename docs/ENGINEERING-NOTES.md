@@ -149,9 +149,12 @@ Every custom Tauri command must be registered in three places:
 
 A missing entry denies the command at runtime. In the past this made every
 document open in fallback (`preview_check`), delayed the window (`ready`) and
-silently removed code highlighting (`highlight_code`). Browser tests cannot
-catch this because they stub the IPC layer. **A guard test comparing the three
-lists is still missing and is the cheapest high-value test to add.**
+silently removed code highlighting (`highlight_code`). `set_touchpad_zoom`
+shipped in the handler and was missing from the other two lists, so the
+preference only produced a "Command not found" toast. Browser tests cannot
+catch this because they stub the IPC layer; `tests/acl.rs` now compares all
+three lists (and keeps renderer-only commands out of the main capability), so
+`cargo test` fails before the app can ship a half-registered command.
 
 ### Caches and budgets
 

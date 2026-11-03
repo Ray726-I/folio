@@ -25,6 +25,7 @@
       "allow-preview-check",
       "allow-ready",
       "allow-set-window-zoom",
+      "allow-set-touchpad-zoom",
       "allow-document-changed",
       "allow-set-title",
       "allow-close-window",

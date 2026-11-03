@@ -602,8 +602,14 @@ fn set_window_zoom(
 }
 
 #[tauri::command]
-fn set_touchpad_zoom(enabled: bool, state: tauri::State<'_, Arc<AppState>>) {
+fn set_touchpad_zoom(
+    enabled: bool,
+    webview: tauri::Webview,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    renderer::ensure_main(webview.label())?;
     state.touchpad_zoom.store(enabled, Ordering::SeqCst);
+    Ok(())
 }
 
 #[tauri::command(async)]

@@ -25,6 +25,7 @@ fn main() {
             "preview_check",
             "ready",
             "set_window_zoom",
+            "set_touchpad_zoom",
             "document_changed",
             "set_title",
             "close_window",
