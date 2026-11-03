@@ -19,6 +19,51 @@ const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
 const NAVIGATION_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']);
 const MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'AltGraph', 'Meta', 'CapsLock', 'OS', 'Super', 'Hyper']);
 
+// Slash-menu catalogue. Each leaf carries the exact Markdown a block needs and
+// the source offsets to select after insertion, so the picker never has to
+// guess at schema commands and the inserted bytes stay predictable.
+const SLASH_ICON_SVG = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"';
+const SLASH_ICON_BODY = {
+  paragraph: '<path d="M13 4v16M17 4v16M13 4H9.5a4.5 4.5 0 0 0 0 9H13"/>',
+  heading: '<path d="M6 5v14M18 5v14M6 12h12"/>',
+  list: '<path d="M9 7h11M9 12h11M9 17h11"/><circle cx="4.5" cy="7" r="1.1"/><circle cx="4.5" cy="12" r="1.1"/><circle cx="4.5" cy="17" r="1.1"/>',
+  bullet: '<path d="M9 7h11M9 12h11M9 17h11"/><circle cx="4.5" cy="7" r="1.1"/><circle cx="4.5" cy="12" r="1.1"/><circle cx="4.5" cy="17" r="1.1"/>',
+  task: '<rect x="3.2" y="5.2" width="6.4" height="6.4" rx="1.6"/><path d="m4.7 8.4 1.2 1.2 2.3-2.6M12.5 8h8.5M3.2 16h4.5M12.5 16h8.5"/>',
+  quote: '<path d="M5 6v12M9 8h10M9 12h7M9 16h10"/>',
+  code: '<path d="m9 8-4 4 4 4M15 8l4 4-4 4"/>',
+  table: '<rect x="3.5" y="5" width="17" height="14" rx="1.7"/><path d="M3.5 10h17M10 10v9M15 10v9"/>',
+  divider: '<path d="M4 12h16"/><path d="M7.5 7.5h9M7.5 16.5h9" opacity=".38"/>',
+  image: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="m4.8 17.2 4.5-4.5 3.3 3.3 2.3-2.3 4.3 4.3"/>',
+  math: '<path d="M17.5 5.5h-9l4.6 6.5-4.6 6.5h9"/>',
+  mermaid: '<circle cx="6.2" cy="6.8" r="2.5"/><circle cx="17.8" cy="17.2" r="2.5"/><path d="m8.4 8.2 7.2 7.2"/>',
+  more: '<circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/>'
+};
+const SLASH_MERMAID_BODY = 'graph TD\n  A[Start] --> B[End]';
+const SLASH_BLOCKS = [
+  { id: 'paragraph', label: 'Paragraph', icon: 'paragraph', keywords: 'text body plain normal', snippet: '' },
+  { id: 'heading', label: 'Heading', icon: 'heading', title: 'Heading', keywords: 'title head', children: Array.from({ length: 6 }, (_, index) => ({
+    id: `heading${index + 1}`, label: `Heading ${index + 1}`, badge: `H${index + 1}`, keywords: `h${index + 1} title head`,
+    meta: '#'.repeat(index + 1), snippet: `${'#'.repeat(index + 1)} `
+  })) },
+  { id: 'list', label: 'List', icon: 'list', title: 'List', keywords: 'bullets items', children: [
+    { id: 'bullet', label: 'Bullet list', icon: 'bullet', keywords: 'unordered ul dash', meta: '-', snippet: '- ' },
+    { id: 'numbered', label: 'Numbered list', badge: '1.', keywords: 'ordered ol numbered digits', snippet: '1. ' },
+    { id: 'task', label: 'Task list', icon: 'task', keywords: 'todo checklist checkbox tasks', meta: '[ ]', snippet: '- [ ] ' }
+  ] },
+  { id: 'quote', label: 'Quote', icon: 'quote', keywords: 'blockquote citation', meta: '>', snippet: '> ' },
+  { id: 'code', label: 'Code block', icon: 'code', keywords: 'fence snippet code', snippet: '```\n\n```', select: [4, 4] },
+  { id: 'table', label: 'Table', icon: 'table', keywords: 'grid rows columns cells', meta: '2×2', snippet: '| Column 1 | Column 2 |\n| --- | --- |\n|  |  |', select: [2, 10] },
+  { id: 'more', label: 'More', icon: 'more', title: 'More blocks', children: [
+    { id: 'divider', label: 'Divider', icon: 'divider', keywords: 'horizontal rule line hr separator', meta: '---', snippet: '---' },
+    { id: 'image', label: 'Image', icon: 'image', keywords: 'picture photo media', meta: '![]()', snippet: '![alt](image.png)', select: [2, 5] },
+    { id: 'math', label: 'Math block', icon: 'math', keywords: 'formula latex equation tex katex', meta: '$$', snippet: '$$\nx\n$$', select: [3, 4] },
+    { id: 'mermaid', label: 'Mermaid diagram', icon: 'mermaid', keywords: 'chart graph flow diagram mermaid', meta: 'mermaid', snippet: `\`\`\`mermaid\n${SLASH_MERMAID_BODY}\n\`\`\`` }
+  ] }
+];
+const SLASH_LEAVES = SLASH_BLOCKS.flatMap(item => item.children
+  ? item.children.map(child => ({ ...child, keywords: `${child.keywords || ''} ${item.label} ${item.keywords || ''}` }))
+  : [{ ...item }]);
+
 // Extension projections are sanitized HTML, not the document. To toggle a task
 // inside one we map the rendered checkbox back to the single marker character
 // in the exact raw source slice. This tokenizer deliberately does NOT use the
@@ -1852,10 +1897,12 @@ export function createRichEditor(parent, options) {
       // inserting an empty paragraph (and changing the file) on open or focus.
       new Plugin({ props: { decorations(state) {
         const widgets = [];
+        // The trailing strip is an invisible click target: the page ends
+        // calmly and no UI copy sits in the reading column. The hint below
+        // appears only while the caret is on the empty final line.
         widgets.push(Decoration.widget(state.doc.content.size, () => {
           const input = document.createElement('button');
           input.type = 'button'; input.className = 'editor-trailing-input';
-          input.textContent = 'Type / for blocks…';
           input.setAttribute('aria-label', 'Write a new paragraph at the end of the document');
           const refresh = () => { input.disabled = options.isLocked(); };
           input.folioRefresh = refresh; refreshers.add(refresh); refresh();
@@ -1872,6 +1919,21 @@ export function createRichEditor(parent, options) {
           });
           return input;
         }, { side: 1, stopEvent: () => true, destroy: node => refreshers.delete(node.folioRefresh) }));
+        const { selection } = state;
+        if (!options.isLocked() && selection.empty && selection.$from.depth === 1
+            && selection.$from.parent.type === schema.nodes.paragraph
+            && selection.$from.parent.content.size === 0
+            && selection.$from.index(0) === state.doc.childCount - 1) {
+          widgets.push(Decoration.widget(selection.$from.before(1) + 1, () => {
+            const hint = document.createElement('span');
+            hint.className = 'folio-empty-hint'; hint.contentEditable = 'false';
+            hint.setAttribute('aria-hidden', 'true');
+            const key = document.createElement('span'); key.className = 'folio-empty-hint-key'; key.textContent = '/';
+            const label = document.createElement('span'); label.textContent = 'Type for blocks…';
+            hint.append(key, label);
+            return hint;
+          }, { side: 1 }));
+        }
         return DecorationSet.create(state.doc, widgets);
       } } }),
       // A locked transition must also reject transactions that only set
@@ -1969,75 +2031,326 @@ export function createRichEditor(parent, options) {
     const menu = document.createElement('div'); menu.className = 'folio-slash-menu';
     menu.id = 'folio-block-suggestions';
     menu.setAttribute('role', 'listbox'); menu.setAttribute('aria-label', 'Insert block');
-    const heading = document.createElement('div'); heading.className = 'folio-slash-heading';
-    heading.textContent = 'Insert block'; heading.setAttribute('aria-hidden', 'true'); menu.append(heading);
-    const list = document.createElement('div'); menu.append(list);
-    const choices = [
-      ['Paragraph', 'paragraph', ''], ...Array.from({ length: 6 }, (_, i) => [`Heading ${i + 1}`, `heading${i + 1}`, `${'#'.repeat(i + 1)} Heading`]),
-      ['Bullet list', 'bullet', '- Item'], ['Numbered list', 'numbered', '1. Item'],
-      ['Quote', 'quote', '> Quote'], ['Table', 'table', '| Column 1 | Column 2 |\n| --- | --- |\n|  |  |'],
-      ['Horizontal line', 'rule', '---']
-    ];
-    let selected = 0;
-    let matches = choices;
-    const choose = ([, command]) => {
-      const end = sourceSelection(view.state).head;
-      closePopup();
-      const caret = view.state.selection.from;
-      const length = end - start;
-      if (!view.state.selection.empty || length < 1 || view.state.selection.$from.parentOffset < length) return;
-      view.dispatch(view.state.tr.delete(caret - length, caret));
-      view.focus();
-      const commands = {
-        paragraph: setBlockType(schema.nodes.paragraph), bullet: wrapInList(schema.nodes.bullet_list),
-        numbered: wrapInList(schema.nodes.ordered_list), quote: wrapIn(schema.nodes.blockquote),
-      };
-      if (/^heading[1-6]$/.test(command)) commands[command] = setBlockType(schema.nodes.heading, { level: Number(command.slice(-1)) });
-      if (command === 'rule') view.dispatch(view.state.tr.replaceSelectionWith(schema.nodes.horizontal_rule.create()));
-      else if (command === 'table') {
-        const cell = header => schema.nodes[header ? 'table_header' : 'table_cell'].createAndFill();
-        const table = schema.nodes.table.create(null, [schema.nodes.table_row.create(null, [cell(true), cell(true)]), schema.nodes.table_row.create(null, [cell(false), cell(false)])]);
-        view.dispatch(view.state.tr.replaceSelectionWith(table));
-      } else commands[command]?.(view.state, view.dispatch, view);
-    };
-    function render() {
+    const head = document.createElement('div'); head.className = 'folio-slash-head';
+    const title = document.createElement('span'); title.className = 'folio-slash-title'; title.textContent = 'Insert block';
+    const key = document.createElement('span'); key.className = 'folio-slash-key'; key.textContent = 'esc';
+    head.append(title, key); head.setAttribute('aria-hidden', 'true');
+    const list = document.createElement('div'); list.className = 'folio-slash-list';
+    const submenu = document.createElement('div'); submenu.className = 'folio-slash-submenu';
+    submenu.id = 'folio-block-submenu'; submenu.setAttribute('role', 'listbox'); submenu.hidden = true;
+    const subhead = document.createElement('div'); subhead.className = 'folio-slash-subhead';
+    const back = document.createElement('button');
+    back.type = 'button'; back.className = 'folio-slash-back'; back.hidden = true;
+    back.setAttribute('aria-label', 'Back to blocks');
+    back.innerHTML = `<svg ${SLASH_ICON_SVG}><path d="m15 6-6 6 6 6"/></svg>`;
+    const subtitle = document.createElement('span'); subtitle.className = 'folio-slash-subtitle';
+    subtitle.setAttribute('aria-hidden', 'true');
+    subhead.append(back, subtitle);
+    const sublist = document.createElement('div'); sublist.className = 'folio-slash-sublist';
+    submenu.append(subhead, sublist);
+    menu.append(head, list, submenu);
+    let active = 0, activeSub = 0, openIndex = -1, focusArea = 'root';
+    let displayed = SLASH_BLOCKS, filtered = false, lastQuery = '';
+    let hoverTimer = 0, closeTimer = 0;
+    const mode = { menu, trigger, update: renderRoot, keydown, cleanup };
+
+    function slashContext() {
       const selection = sourceSelection(view.state);
-      if (selection.anchor !== selection.head || selection.head < start + 1 || model.source[start] !== '/') { closePopup(); return; }
-      const query = model.source.slice(start + 1, selection.head).toLowerCase();
-      matches = choices.filter(item => item[0].toLowerCase().includes(query));
-      if (!matches.length) { closePopup(); return; }
-      selected = Math.min(selected, matches.length - 1);
-      list.replaceChildren();
-      for (const [index, choice] of matches.entries()) {
-        const item = document.createElement('button'); item.type = 'button';
-        const icon = document.createElement('span'); icon.className = 'folio-slash-icon'; icon.setAttribute('aria-hidden', 'true');
-        const command = choice[1];
-        icon.textContent = /^heading[1-6]$/.test(command) ? `H${command.slice(-1)}` :
-          ({ paragraph: '¶', bullet: '•', numbered: '1.', quote: '❞', table: '▦', rule: '—' }[command] || '');
-        const label = document.createElement('span'); label.textContent = choice[0];
-        item.append(icon, label);
-        item.id = `folio-block-option-${index}`;
-        item.setAttribute('role', 'option'); item.setAttribute('aria-selected', String(index === selected));
-        item.addEventListener('mousedown', event => event.preventDefault());
-        item.addEventListener('click', () => choose(choice)); list.append(item);
-      }
-      trigger.setAttribute('aria-activedescendant', `folio-block-option-${selected}`);
+      if (!selection || selection.anchor !== selection.head) return null;
+      const position = selection.head;
+      if (position < start + 1 || model.source[start] !== '/') return null;
+      if (model.source.lastIndexOf('\n', start - 1) + 1 !== start) return null;
+      const text = model.source.slice(start, position);
+      if (/[\r\n]/.test(text)) return null;
+      const { $from } = view.state.selection;
+      // The picker inserts top-level block Markdown, so it only belongs on a
+      // top-level empty paragraph; a list item or quote line has its own block
+      // context where the same snippet would be wrong.
+      if ($from.depth !== 1 || $from.parent.type !== schema.nodes.paragraph) return null;
+      return { head: position, query: text.slice(1) };
     }
+    function matchesQuery(item, query) {
+      return `${item.label} ${item.keywords || ''} ${item.meta || ''}`.toLowerCase().includes(query);
+    }
+    function iconFor(item) {
+      const icon = document.createElement('span'); icon.className = 'folio-slash-icon'; icon.setAttribute('aria-hidden', 'true');
+      if (item.badge) { icon.classList.add('folio-slash-badge'); icon.textContent = item.badge; }
+      else icon.innerHTML = `<svg ${SLASH_ICON_SVG}>${SLASH_ICON_BODY[item.icon] || SLASH_ICON_BODY.more}</svg>`;
+      return icon;
+    }
+    function chevron() {
+      const mark = document.createElement('span'); mark.className = 'folio-slash-chevron'; mark.setAttribute('aria-hidden', 'true');
+      mark.innerHTML = `<svg ${SLASH_ICON_SVG}><path d="m9 6 6 6-6 6"/></svg>`;
+      return mark;
+    }
+    function choose(item) {
+      const context = slashContext();
+      if (!context) { closePopup(); return; }
+      const snippet = item.snippet || '';
+      const next = item.select
+        ? { anchor: item.select[0], head: item.select[1] }
+        : { anchor: snippet.length, head: snippet.length };
+      closePopup();
+      const outcome = replaceLogicalSelection(snippet, 'command',
+        { from: start, to: context.head, all: false, collapsed: context.head === start + 1 }, next);
+      if (!outcome.committed) options.message?.('This block could not be inserted into the Markdown source.');
+      try { view.focus(); } catch {}
+    }
+    function rowFor(item, index, isSub) {
+      const row = document.createElement('button');
+      row.type = 'button'; row.className = 'folio-slash-row';
+      row.dataset.slashIndex = String(index);
+      row.id = isSub ? `folio-block-sub-option-${index}` : `folio-block-option-${index}`;
+      row.setAttribute('role', 'option');
+      row.setAttribute('aria-selected', 'false');
+      row.append(iconFor(item));
+      const label = document.createElement('span'); label.className = 'folio-slash-label'; label.textContent = item.label;
+      row.append(label);
+      if (item.meta) {
+        const meta = document.createElement('span'); meta.className = 'folio-slash-meta'; meta.textContent = item.meta;
+        meta.setAttribute('aria-hidden', 'true');
+        row.append(meta);
+      }
+      if (item.children) {
+        row.setAttribute('aria-haspopup', 'listbox');
+        row.setAttribute('aria-expanded', 'false');
+        row.append(chevron());
+      }
+      row.addEventListener('mousedown', event => event.preventDefault());
+      if (isSub) {
+        row.addEventListener('pointerenter', () => {
+          cancelClose(); focusArea = 'sub'; activeSub = index; paint();
+        });
+        row.addEventListener('click', () => choose(item));
+      } else {
+        row.addEventListener('pointerenter', () => {
+          cancelClose();
+          focusArea = 'root'; active = index;
+          if (openIndex >= 0 && openIndex !== index) closeSub();
+          if (item.children && openIndex !== index) scheduleOpen(index);
+          paint();
+        });
+        row.addEventListener('click', () => {
+          if (item.children) {
+            if (openIndex === index && focusArea === 'sub') closeSub();
+            else openSub(index, true);
+            paint();
+          } else choose(item);
+        });
+      }
+      return row;
+    }
+    function activeRow() {
+      return focusArea === 'sub' && openIndex >= 0 ? sublist.children[activeSub] : list.children[active];
+    }
+    function paint() {
+      for (const row of list.querySelectorAll(':scope > button')) {
+        const index = Number(row.dataset.slashIndex);
+        row.setAttribute('aria-selected', String(index === active));
+        if (row.hasAttribute('aria-haspopup')) row.setAttribute('aria-expanded', String(!filtered && index === openIndex));
+      }
+      for (const row of sublist.querySelectorAll(':scope > button')) {
+        const index = Number(row.dataset.slashIndex);
+        row.setAttribute('aria-selected', String(focusArea === 'sub' && index === activeSub));
+      }
+      const current = focusArea === 'sub' && openIndex >= 0
+        ? `folio-block-sub-option-${activeSub}` : `folio-block-option-${active}`;
+      trigger.setAttribute('aria-activedescendant', current);
+    }
+    function cancelClose() { clearTimeout(closeTimer); closeTimer = 0; }
+    function scheduleClose() {
+      cancelClose();
+      closeTimer = setTimeout(() => {
+        closeTimer = 0;
+        if (!activePopup) return;
+        exitSub();
+      }, 160);
+    }
+    function closeSub() {
+      clearTimeout(hoverTimer); hoverTimer = 0;
+      if (openIndex >= 0) {
+        const row = list.querySelector(`:scope > button[data-slash-index="${openIndex}"]`);
+        row?.setAttribute('aria-expanded', 'false');
+      }
+      openIndex = -1;
+      submenu.hidden = true;
+      sublist.replaceChildren();
+      submenu.classList.remove('open-left');
+      submenu.style.top = '';
+      menu.classList.remove('compact');
+      back.hidden = true;
+      focusArea = 'root';
+    }
+    function exitSub() {
+      const parent = openIndex;
+      closeSub(); active = Math.max(0, parent); paint();
+      if (activePopup) place();
+    }
+    function positionSubmenu() {
+      if (menu.classList.contains('compact')) return;
+      const parentRow = list.querySelector(`:scope > button[data-slash-index="${openIndex}"]`);
+      if (!parentRow) return;
+      submenu.classList.remove('open-left');
+      submenu.style.top = '0px';
+      const menuRect = menu.getBoundingClientRect(), rowRect = parentRow.getBoundingClientRect();
+      const subHeight = submenu.offsetHeight;
+      const top = Math.max(6 - menuRect.top,
+        Math.min(rowRect.top - menuRect.top - 5, window.innerHeight - 8 - menuRect.top - subHeight));
+      submenu.style.top = `${Math.round(top)}px`;
+      if (menuRect.left + menuRect.width - 4 + submenu.offsetWidth > window.innerWidth - 8) submenu.classList.add('open-left');
+    }
+    function renderSub() {
+      const parent = displayed[openIndex];
+      if (!parent?.children) { closeSub(); return; }
+      subtitle.textContent = parent.title || parent.label;
+      submenu.setAttribute('aria-label', `${parent.title || parent.label} blocks`);
+      sublist.replaceChildren();
+      parent.children.forEach((child, index) => sublist.append(rowFor(child, index, true)));
+      submenu.hidden = false;
+      positionSubmenu();
+      const parentRow = list.querySelector(`:scope > button[data-slash-index="${openIndex}"]`);
+      parentRow?.setAttribute('aria-expanded', 'true');
+    }
+    function openSub(index, focus) {
+      if (!displayed[index]?.children) return;
+      clearTimeout(hoverTimer); hoverTimer = 0;
+      cancelClose();
+      if (openIndex !== index) activeSub = 0;
+      openIndex = index; active = index;
+      if (focus) focusArea = 'sub';
+      // A flyout needs room to the right of the picker. When it does not fit
+      // (narrow windows, the app's 600px minimum), the submenu becomes an
+      // in-place drill-down with a back row instead of leaving the viewport.
+      const fits = menu.getBoundingClientRect().left + menu.offsetWidth + 236 <= window.innerWidth - 8;
+      menu.classList.toggle('compact', !fits);
+      back.hidden = fits;
+      renderSub();
+      if (!fits) place();
+      paint();
+      if (focus) activeRow()?.scrollIntoView({ block: 'nearest' });
+    }
+    function scheduleOpen(index) {
+      clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(() => {
+        hoverTimer = 0;
+        if (!activePopup) return;
+        if (!slashContext()) { closePopup(); return; }
+        if (active !== index || openIndex === index) return;
+        openSub(index, false);
+      }, 90);
+    }
+    function place() {
+      // Anchor to the slash itself, not the moving caret: filtering must not
+      // drag the picker sideways with every typed character.
+      let anchor;
+      try { anchor = view.coordsAtPos(sourceToRich(model, start)); } catch { anchor = null; }
+      if (!anchor) anchor = view.coordsAtPos(view.state.selection.from);
+      const gap = 9, margin = 10;
+      const width = menu.offsetWidth, height = menu.offsetHeight;
+      const below = anchor.bottom + gap, above = anchor.top - gap - height;
+      const useAbove = below + height > window.innerHeight - margin && above >= margin;
+      const top = Math.max(margin, Math.min(useAbove ? above : below, window.innerHeight - margin - height));
+      const left = Math.max(margin, Math.min(anchor.left, window.innerWidth - width - margin));
+      menu.style.left = `${Math.round(left)}px`;
+      menu.style.top = `${Math.round(top)}px`;
+      menu.dataset.side = useAbove ? 'above' : 'below';
+    }
+    function renderRoot() {
+      const context = slashContext();
+      if (!context) { closePopup(); return; }
+      const query = context.query.trim().toLowerCase();
+      filtered = Boolean(query);
+      displayed = filtered ? SLASH_LEAVES.filter(item => matchesQuery(item, query)) : SLASH_BLOCKS;
+      if (!displayed.length) { closePopup(); return; }
+      if (filtered) closeSub();
+      else if (openIndex >= 0 && !displayed[openIndex]?.children) closeSub();
+      if (filtered && query !== lastQuery) { active = 0; activeSub = 0; }
+      lastQuery = query;
+      active = Math.min(Math.max(0, active), displayed.length - 1);
+      list.replaceChildren();
+      displayed.forEach((item, index) => list.append(rowFor(item, index, false)));
+      title.textContent = filtered ? 'Blocks' : 'Insert block';
+      if (!filtered && openIndex >= 0) renderSub();
+      else { submenu.hidden = true; }
+      place();
+      paint();
+    }
+    function onViewportChange(event) {
+      if (event?.type === 'scroll' && menu.contains(event.target)) return;
+      closePopup();
+    }
+    function cleanup() {
+      clearTimeout(hoverTimer); clearTimeout(closeTimer); hoverTimer = 0; closeTimer = 0;
+      window.removeEventListener('resize', onViewportChange);
+      window.removeEventListener('blur', onViewportChange);
+      document.removeEventListener('scroll', onViewportChange, true);
+      trigger.removeAttribute('aria-controls');
+      trigger.removeAttribute('aria-activedescendant');
+    }
+    function keydown(event) {
+      if (event.isComposing) return false;
+      if (event.key === 'Escape') {
+        if (openIndex >= 0) exitSub();
+        else closePopup();
+        return true;
+      }
+      if (event.key === 'Tab' || event.key === 'Home' || event.key === 'End'
+          || event.key === 'PageUp' || event.key === 'PageDown') { closePopup(); return false; }
+      if ((event.shiftKey || event.ctrlKey || event.metaKey || event.altKey)
+          && ['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Enter'].includes(event.key)) {
+        // Modified chords belong to editing/navigation, not the picker.
+        closePopup(); return false;
+      }
+      if (event.key === 'ArrowRight') {
+        if (focusArea === 'root' && displayed[active]?.children) { openSub(active, true); return true; }
+        return false;
+      }
+      if (event.key === 'ArrowLeft') {
+        if (focusArea === 'sub') { exitSub(); return true; }
+        return false;
+      }
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        const delta = event.key === 'ArrowDown' ? 1 : -1;
+        if (focusArea === 'sub' && openIndex >= 0) {
+          const children = displayed[openIndex]?.children || [];
+          if (!children.length) return true;
+          activeSub = (activeSub + delta + children.length) % children.length;
+        } else {
+          if (!displayed.length) return true;
+          active = (active + delta + displayed.length) % displayed.length;
+          if (openIndex >= 0 && openIndex !== active) closeSub();
+        }
+        paint(); activeRow()?.scrollIntoView({ block: 'nearest' });
+        return true;
+      }
+      if (event.key === 'Enter') {
+        if (focusArea === 'sub' && openIndex >= 0) {
+          const child = displayed[openIndex]?.children?.[activeSub];
+          if (child) choose(child);
+          return true;
+        }
+        const item = displayed[active];
+        if (!item) return true;
+        if (item.children) openSub(active, true);
+        else choose(item);
+        return true;
+      }
+      return false;
+    }
+    back.addEventListener('mousedown', event => event.preventDefault());
+    back.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); exitSub(); });
+    submenu.addEventListener('pointerenter', cancelClose);
+    submenu.addEventListener('pointerleave', scheduleClose);
+    menu.addEventListener('pointerleave', scheduleClose);
+    list.addEventListener('scroll', () => { if (openIndex >= 0 && !submenu.hidden) positionSubmenu(); }, { passive: true });
+    window.addEventListener('resize', onViewportChange);
+    window.addEventListener('blur', onViewportChange);
+    document.addEventListener('scroll', onViewportChange, true);
     trigger.setAttribute('aria-controls', menu.id);
     trigger.setAttribute('aria-expanded', 'true');
-    activePopup = { menu, trigger, update: render, cleanup() {
-      trigger.removeAttribute('aria-controls'); trigger.removeAttribute('aria-activedescendant');
-    }, keydown(event) {
-      if (event.key === 'Escape') { closePopup(); return true; }
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-        selected = (selected + (event.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length;
-        render(); list.children[selected]?.scrollIntoView({ block: 'nearest' }); return true;
-      }
-      if (event.key === 'Enter') { choose(matches[selected]); return true; }
-      return false;
-    } };
-    render();
-    if (activePopup) positionPopup(menu, view.coordsAtPos(view.state.selection.from));
+    document.body.append(menu);
+    activePopup = mode;
+    renderRoot();
   }
   function clearFormulaNodeSelection() {
     const selection = view.state.selection;
@@ -2162,8 +2475,9 @@ export function createRichEditor(parent, options) {
       if (model.sourceEdit) {
         return replaceLogicalSelection(text, 'typing', { from: richToSource(model, from), to: richToSource(model, to), all: false }).handled;
       }
-      if (text === '/' && from === to && editor.state.selection.$from.parent.type === schema.nodes.paragraph &&
-          editor.state.selection.$from.parent.content.size === 0 && !options.isLocked()) {
+      if (text === '/' && from === to && editor.state.selection.$from.depth === 1
+          && editor.state.selection.$from.parent.type === schema.nodes.paragraph
+          && editor.state.selection.$from.parent.content.size === 0 && !options.isLocked()) {
         editor.dispatch(editor.state.tr.insertText(text, from, to));
         openSlashMenu(editor.dom);
         return true;

@@ -125,19 +125,18 @@
 @media(pointer:coarse) { .folio-table-add { width:44px; height:44px; font-size:20px; } .folio-table-handle { width:44px; height:44px; } .folio-table-menu button { min-height:44px; } }
 @media(prefers-reduced-motion:reduce) { .folio-table-add,.folio-table-handle { transition:none; } }
 @media(forced-colors:active) { .folio-table-add,.folio-table-handle,.folio-table-menu,.folio-table-drop-line { forced-color-adjust:auto; } .folio-table-add:focus-visible,.folio-table-handle:focus-visible { outline:2px solid CanvasText; } }
-/* Trailing writable area: a future textarea mounted by the parent past the
-   last block. Unfocused it stays invisible yet clickable — no placeholder,
-   no border, no hover wash — so the page ends calmly. On focus it shows only
-   a subtle paragraph cue (soft wash + inset accent tick) and the placeholder,
-   if the parent set one. The focus cue is a background wash rather than an
-   outline ring, so the reading surface never gains a box. */
-.editor-trailing-input { display:block; width:100%; box-sizing:border-box; min-height:3em; margin:0; padding:8px 4px; color:var(--fg); background:transparent; border:0; border-radius:0 5px 5px 0; font-family:var(--font-reading); font-size:var(--text-size); line-height:1.7; white-space:pre-wrap; overflow-wrap:break-word; resize:none; overflow:hidden; cursor:text; caret-color:var(--fg); }
+/* Trailing writable area: an invisible click strip past the last block, so
+   the page ends calmly instead of showing UI copy inside the reading column.
+   The only visible affordance is the empty-line hint that appears while the
+   caret sits on the final empty line. */
+.editor-trailing-input { display:block; width:100%; box-sizing:border-box; min-height:2.6em; margin:0; padding:8px 4px; color:var(--fg); background:transparent; border:0; border-radius:0 5px 5px 0; font-family:var(--font-reading); font-size:var(--text-size); line-height:1.7; white-space:pre-wrap; overflow-wrap:break-word; resize:none; overflow:hidden; cursor:text; caret-color:var(--fg); }
 .markdown .editor-trailing-input { margin-bottom:1.15em; }
-.editor-trailing-input::placeholder { color:transparent; opacity:0; }
 .editor-trailing-input:hover { background:transparent; }
 .editor-trailing-input:focus { outline:none; }
 .editor-trailing-input:focus-visible { outline:none; background:var(--hover); box-shadow:inset 2px 0 var(--accent); }
-.editor-trailing-input:focus::placeholder { color:var(--muted); opacity:.65; }
+.editor-trailing-input:disabled { cursor:default; }
+.folio-empty-hint { display:inline-flex; align-items:center; gap:7px; margin-left:1px; color:var(--muted); font:500 12.5px/1.4 var(--font-ui); letter-spacing:.005em; pointer-events:none; user-select:none; -webkit-user-select:none; }
+.folio-empty-hint-key { display:inline-grid; place-items:center; min-width:17px; height:17px; padding:0 4px; box-sizing:border-box; border:1px solid var(--line); border-radius:4px; background:color-mix(in srgb,var(--fg) 4%,transparent); color:var(--muted); font:600 10.5px/1 var(--font-mono); }
 @media(max-width:760px) { #context-table-tools { padding-left:0; margin-left:0; border-left:0; } }
 /* Inline heading marker (JS-generated): when the caret sits inside a heading,
    its exact Markdown marker (#/##/…) appears as a small editable input
@@ -153,18 +152,69 @@
    mirrors is hidden so the line reads exactly once, as pure Markdown.
    Class-only paint: the document, selection and copy output are untouched. */
 .folio-heading-source-dim { display:none; }
-.folio-slash-menu { position:fixed; inset:auto; z-index:30; width:min(220px,calc(100vw - 32px)); max-height:min(300px,calc(100vh - 16px)); overflow:auto; margin:0; padding:6px; border:1px solid var(--line); border-radius:7px; background:var(--panel); box-shadow:0 8px 24px #0003; }
-.folio-slash-heading { padding:6px 10px 8px; color:var(--muted); font:600 11px/1.3 var(--font-ui); }
-.folio-slash-menu button { display:flex; align-items:center; gap:10px; width:100%; box-sizing:border-box; min-height:32px; padding:6px 10px; border:0; border-radius:4px; background:transparent; color:var(--fg); font:500 12.5px/1.4 var(--font-ui); text-align:left; white-space:nowrap; cursor:pointer; }
-.folio-slash-icon { display:grid; place-items:center; width:22px; height:22px; flex:none; color:var(--muted); font:600 11px/1 var(--font-ui); }
-.folio-slash-menu button small { margin-left:auto; color:var(--muted); font-size:11px; }
-.folio-slash-menu button:hover { background:var(--hover); }
-.folio-slash-menu button:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; background:var(--hover); }
-.folio-slash-menu button[aria-selected="true"] { background:var(--selection); }
-@media(max-width:640px) { .folio-slash-menu { min-width:min(220px,calc(100vw - 32px)); } }
-@media(pointer:coarse) { .folio-heading-source { font-size:16px; } .folio-slash-menu button { min-height:44px; } }
-@media(prefers-reduced-motion:reduce) { .folio-heading-source { transition:none; } }
-@media(forced-colors:active) { .folio-heading-source,.folio-slash-menu,.editor-trailing-input { forced-color-adjust:auto; } .folio-heading-source:focus-visible { outline:2px solid CanvasText; } .editor-trailing-input:focus-visible { outline:2px solid CanvasText; box-shadow:none; } }
+/* Slash menu: a small block picker that reads as a floating surface, not as
+   another line of the document. Grouped root rows keep it short; flyout
+   submenus hold the long families (headings, lists, media). */
+.folio-slash-menu {
+  --slash-surface:var(--panel);
+  --slash-line:color-mix(in srgb,var(--fg) 17%,var(--panel));
+  --slash-wash:color-mix(in srgb,var(--accent) 15%,transparent);
+  position:fixed; inset:auto; z-index:40; width:252px; max-width:calc(100vw - 20px);
+  margin:0; padding:5px; border:1px solid var(--slash-line); border-radius:12px;
+  background:var(--slash-surface); color:var(--fg);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--fg) 6%,transparent),0 2px 6px #0000001f,0 16px 36px -14px #00000066,0 32px 72px -32px #00000073;
+  font-family:var(--font-ui);
+  overflow:visible;
+  animation:folio-slash-in .13s cubic-bezier(.2,.7,.3,1);
+}
+.folio-slash-menu[data-side="above"] { animation-name:folio-slash-in-above; }
+.folio-slash-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:0 0 4px; padding:7px 9px 6px; border-bottom:1px solid color-mix(in srgb,var(--fg) 8%,transparent); }
+.folio-slash-title { color:var(--muted); font:600 11px/1.2 var(--font-ui); letter-spacing:.015em; }
+.folio-slash-key { display:inline-grid; place-items:center; box-sizing:border-box; min-width:22px; height:17px; padding:0 5px; border:1px solid color-mix(in srgb,var(--fg) 13%,transparent); border-radius:4px; color:var(--muted); font:500 9.5px/1 var(--font-mono); opacity:.8; }
+.folio-slash-list,.folio-slash-sublist { margin:0; padding:0; }
+.folio-slash-list { max-height:min(420px,calc(100vh - 48px)); overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:var(--line) transparent; }
+.folio-slash-row { display:flex; align-items:center; gap:9px; width:100%; box-sizing:border-box; min-height:30px; margin:0; padding:4px 8px; border:0; border-radius:7px; background:transparent; color:var(--fg); font:500 12.5px/1.25 var(--font-ui); text-align:left; white-space:nowrap; cursor:pointer; transition:background-color .1s ease,color .1s ease; }
+.folio-slash-row:hover { background:color-mix(in srgb,var(--fg) 5%,transparent); }
+.folio-slash-row[aria-selected="true"],.folio-slash-row[aria-expanded="true"] { background:var(--slash-wash); }
+.folio-slash-row:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+.folio-slash-icon { display:grid; place-items:center; flex:none; width:22px; height:22px; color:var(--muted); }
+.folio-slash-icon svg { width:16px; height:16px; }
+.folio-slash-badge { width:22px; height:19px; border-radius:4px; background:color-mix(in srgb,var(--fg) 5%,transparent); color:var(--muted); font:600 10px/1 var(--font-mono); }
+.folio-slash-row[aria-selected="true"] .folio-slash-icon,.folio-slash-row[aria-expanded="true"] .folio-slash-icon { color:var(--accent); }
+.folio-slash-row[aria-selected="true"] .folio-slash-badge,.folio-slash-row[aria-expanded="true"] .folio-slash-badge { background:color-mix(in srgb,var(--accent) 13%,transparent); color:var(--accent); }
+.folio-slash-label { flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; }
+.folio-slash-meta { flex:none; margin-left:6px; color:var(--muted); font:500 10px/1 var(--font-mono); letter-spacing:0; opacity:.72; }
+.folio-slash-row[aria-selected="true"] .folio-slash-meta,.folio-slash-row[aria-expanded="true"] .folio-slash-meta { opacity:.92; }
+.folio-slash-chevron { display:grid; place-items:center; flex:none; width:14px; height:14px; color:var(--muted); opacity:.65; }
+.folio-slash-chevron svg { width:13px; height:13px; }
+.folio-slash-submenu {
+  position:absolute; top:0; left:calc(100% - 5px); z-index:1; width:232px; max-width:calc(100vw - 20px);
+  max-height:min(360px,calc(100vh - 16px)); overflow-y:auto; overscroll-behavior:contain;
+  margin:0; padding:5px; border:1px solid var(--slash-line); border-radius:12px;
+  background:var(--slash-surface); box-shadow:0 0 0 1px color-mix(in srgb,var(--fg) 6%,transparent),0 2px 6px #0000001f,0 16px 36px -14px #00000066;
+  scrollbar-width:thin; scrollbar-color:var(--line) transparent;
+  animation:folio-slash-sub-in .12s cubic-bezier(.2,.7,.3,1);
+}
+.folio-slash-submenu[hidden] { display:none; }
+.folio-slash-submenu.open-left { left:auto; right:calc(100% - 5px); }
+.folio-slash-subhead { display:flex; align-items:center; gap:5px; margin:0 0 4px; padding:4px 4px 5px 5px; border-bottom:1px solid color-mix(in srgb,var(--fg) 8%,transparent); }
+.folio-slash-subtitle { padding-left:4px; color:var(--muted); font:600 10.5px/1.2 var(--font-ui); letter-spacing:.01em; }
+.folio-slash-back { display:grid; place-items:center; flex:none; width:22px; height:22px; margin:0; padding:0; border:0; border-radius:6px; background:transparent; color:var(--muted); cursor:pointer; }
+.folio-slash-back:hover { background:color-mix(in srgb,var(--fg) 6%,transparent); color:var(--fg); }
+.folio-slash-back:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+.folio-slash-back svg { width:15px; height:15px; }
+.folio-slash-back[hidden] { display:none; }
+/* Narrow windows: a flyout would leave the viewport, so the submenu takes
+   over the picker body as a drill-down with the back row above it. */
+.folio-slash-menu.compact .folio-slash-list { display:none; }
+.folio-slash-menu.compact .folio-slash-submenu { position:static; inset:auto; width:auto; max-height:calc(100vh - 112px); margin:0; padding:0; border:0; border-radius:0; background:transparent; box-shadow:none; overflow-y:auto; animation:none; }
+.folio-slash-menu.compact .folio-slash-subhead { position:sticky; top:0; z-index:1; margin:0 0 3px; background:var(--slash-surface); }
+@keyframes folio-slash-in { from { opacity:0; transform:translateY(-3px) scale(.985); } to { opacity:1; transform:none; } }
+@keyframes folio-slash-in-above { from { opacity:0; transform:translateY(3px) scale(.985); } to { opacity:1; transform:none; } }
+@keyframes folio-slash-sub-in { from { opacity:0; transform:translateX(-4px); } to { opacity:1; transform:none; } }
+@media(pointer:coarse) { .folio-heading-source { font-size:16px; } .folio-slash-row { min-height:44px; } }
+@media(prefers-reduced-motion:reduce) { .folio-heading-source { transition:none; } .folio-slash-menu,.folio-slash-submenu { animation:none; } }
+@media(forced-colors:active) { .folio-heading-source,.folio-slash-menu,.folio-slash-submenu,.editor-trailing-input,.folio-empty-hint { forced-color-adjust:auto; } .folio-heading-source:focus-visible,.folio-slash-row:focus-visible { outline:2px solid CanvasText; } .editor-trailing-input:focus-visible { outline:2px solid CanvasText; box-shadow:none; } }
 /* The document surface uses its caret and selection for focus feedback. */
 .reader-scroll:focus,.reader-scroll:focus-visible { outline:none; }
 .ProseMirror { outline:none; white-space:pre-wrap; overflow-wrap:break-word; min-height:50vh; }
@@ -3486,7 +3536,7 @@ body.focus-mode .app-menubar { display:none; }
 .save-state[data-state="error"]::before { content:'!'; font-weight:700; }
 .headerbar .save-state[data-state="error"] { width:auto; min-width:90px; max-width:160px; font-size:11px; }
 /* Locked documents retain the rendered heading, without editing widgets. */
-.ProseMirror[contenteditable="false"] .folio-heading-source,.ProseMirror[contenteditable="false"] .editor-trailing-input { display:none; }
+.ProseMirror[contenteditable="false"] .folio-heading-source,.ProseMirror[contenteditable="false"] .editor-trailing-input,.ProseMirror[contenteditable="false"] .folio-empty-hint { display:none; }
 .ProseMirror[contenteditable="false"] .folio-heading-source-dim { display:inline; }
 
 
