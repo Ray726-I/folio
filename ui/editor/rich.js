@@ -2560,6 +2560,9 @@ export function createRichEditor(parent, options) {
       // A click can update the browser caret before ProseMirror observes its
       // selectionchange. Adopt it before source-edit keyboard commands run.
       if (model.sourceEdit) captureDOMSelection();
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && pressed === 'a') {
+        return selectAllLogical(editor.state, editor.dispatch, editor);
+      }
       if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey && document.activeElement === editor.dom) {
         captureDOMSelection();
         if (indentSelection(editor, event.shiftKey)) { event.preventDefault(); return true; }
