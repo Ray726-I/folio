@@ -9,12 +9,7 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.locator('.code-container').dblclick();
     const input = page.locator('.folio-source-edit');
     assert.equal(await input.textContent({ timeout: 3000 }), '```rust\nhello world\n```');
-    await input.press('Home');
-    await page.evaluate(() => {
-      const block = document.querySelector('.folio-source-edit');
-      const selection = window.getSelection();
-      selection.selectAllChildren(block);
-    });
+    await input.evaluate(block => window.getSelection().selectAllChildren(block));
     await page.keyboard.insertText('hello world');
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => current.content === 'Before\n\nhello world\n\nAfter\n', null, { timeout: 3000 });

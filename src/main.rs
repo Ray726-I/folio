@@ -820,7 +820,8 @@ struct SearchResults {
 
 fn search_folder_at(path: &Path, query: &str) -> Result<SearchResults, String> {
     use std::io::Read;
-    let (entries, truncated, skipped) = scan_folder(path)?;
+    let path = path.canonicalize().map_err(|e| e.to_string())?;
+    let (entries, truncated, skipped) = scan_folder(&path)?;
     let query = query.to_lowercase();
     let mut result = SearchResults {
         results: Vec::new(),
@@ -836,7 +837,7 @@ fn search_folder_at(path: &Path, query: &str) -> Result<SearchResults, String> {
             break;
         }
         let candidate = match Path::new(&entry.path).canonicalize() {
-            Ok(candidate) if candidate.starts_with(path) => candidate,
+            Ok(candidate) if candidate.starts_with(&path) => candidate,
             _ => {
                 result.truncated = true;
                 continue;
@@ -1916,6 +1917,21 @@ fn main() {
 #[cfg(test)]
 mod document_action_tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn folder_search_accepts_a_symlinked_root() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("folder");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("note.md"), "a needle here").unwrap();
+        let alias = directory.path().join("alias");
+        symlink(&root, &alias).unwrap();
+        let result = search_folder_at(&alias, "needle").unwrap();
+        assert_eq!(result.results.len(), 1);
+    }
+
     #[test]
     fn folder_search_offsets_match_normalized_utf16_and_limit_lines() {
         let directory = tempfile::tempdir().unwrap();
