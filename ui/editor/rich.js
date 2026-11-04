@@ -279,11 +279,18 @@ function selectionAt(doc, anchor, head = anchor) {
 
 export function createRichEditor(parent, options) {
   let model = parseSource(options.content), view;
+  let fullReplacementUndoModel = null;
   let revision = 0, bookmark = null, tabSelection = null, commitOutcome = null, pendingTail = false;
   let linkClickTimer = 0, inlineClickTimer = 0, formulaClickTimer = 0;
   const headingMetadata = createHeadingMetadata();
   headingMetadata.read(model);
   const refreshers = new Set();
+  const codeHighlights = new WeakMap();
+  const codeHighlightObserver = typeof IntersectionObserver === 'function'
+    ? new IntersectionObserver(entries => {
+      for (const entry of entries) codeHighlights.get(entry.target)?.(entry.isIntersecting);
+    }, { rootMargin: '200px' })
+    : null;
   // The observer narrows gutter discovery to mounted, visible tables. A point
   // probe below covers the first frame before observer delivery after layout.
   const nearbyTables = new Set();
@@ -922,6 +929,7 @@ export function createRichEditor(parent, options) {
     const code = document.createElement('code'); pre.append(code);
     let generation = 0, source = null, theme = null, abortController = null, renderTimer = 0;
     let highlightGeneration = 0, highlightTimer = 0, highlightedSource = null, highlightedLanguage = null;
+    let nearViewport = !codeHighlightObserver;
     dom.addEventListener('focusin', () => dom.classList.add('code-editing'));
     dom.addEventListener('focusout', () => requestAnimationFrame(() => { if (!dom.contains(document.activeElement)) dom.classList.remove('code-editing'); }));
     const clearHighlight = () => {
@@ -930,6 +938,10 @@ export function createRichEditor(parent, options) {
       highlightedSource = null; highlightedLanguage = null;
     };
     const scheduleHighlight = language => {
+      if (!nearViewport) {
+        if (highlightedSource !== null && (highlightedSource !== node.textContent || highlightedLanguage !== language)) clearHighlight();
+        return;
+      }
       const sourceText = node.textContent;
       if (sourceText === highlightedSource && language === highlightedLanguage) return;
       highlightedSource = sourceText; highlightedLanguage = language;
@@ -1033,8 +1045,15 @@ export function createRichEditor(parent, options) {
         }
       }, hadDiagram ? 120 : 0);
     };
+    if (codeHighlightObserver) {
+      codeHighlights.set(dom, visible => {
+        nearViewport = visible;
+        if (visible && !pre.hidden) scheduleHighlight(dom.dataset.language || '');
+      });
+      codeHighlightObserver.observe(dom);
+    }
     render(); refreshers.add(render);
-    return { dom, contentDOM: code, update(next) { if (next.type !== node.type) return false; if (next.sameMarkup(node) && next.textContent === node.textContent) { node = next; return true; } node = next; render(); return true; }, stopEvent: event => event.target === fenceInfo || event.target.classList?.contains('code-markdown-source'), ignoreMutation: mutation => mutation.type === 'attributes' || !pre.contains(mutation.target), destroy() { generation++; clearTimeout(renderTimer); clearTimeout(highlightTimer); highlightGeneration++; abortController?.abort(); refreshers.delete(render); } };
+    return { dom, contentDOM: code, update(next) { if (next.type !== node.type) return false; if (next.sameMarkup(node) && next.textContent === node.textContent) { node = next; return true; } node = next; render(); return true; }, stopEvent: event => event.target === fenceInfo || event.target.classList?.contains('code-markdown-source'), ignoreMutation: mutation => mutation.type === 'attributes' || !pre.contains(mutation.target), destroy() { generation++; clearTimeout(renderTimer); clearTimeout(highlightTimer); highlightGeneration++; abortController?.abort(); codeHighlightObserver?.unobserve(dom); codeHighlights.delete(dom); refreshers.delete(render); } };
   }
   // Reading selections may start, cross and end inside a rendered projection
   // or inline element. ProseMirror maps any DOM position inside an atom to
@@ -1080,7 +1099,13 @@ export function createRichEditor(parent, options) {
     }
     // A standing reading range keeps its guard; anything else hands selection
     // back to the editor so typing and caret movement stay predictable.
-    if (renderedRangeActive()) return;
+    if (renderedRangeActive()) {
+      // The native projection range cannot be represented in editor state.
+      // Cancel ProseMirror's deferred mouseup write of that truncated range.
+      const mouseDown = view.input.mouseDown;
+      if (mouseDown) mouseDown.delayedSelectionSync = false;
+      return;
+    }
     setSelectionGuarded(false);
     try { view?.domObserver.flush(); } catch {}
     try { syncFolioHighlight(); } catch {}
@@ -1364,12 +1389,16 @@ export function createRichEditor(parent, options) {
     view.dom.querySelectorAll('.mermaid-host, .math-block, .math-inline, .image-widget').forEach(node => {
       node.classList.toggle('folio-rendered-selected', Boolean(nativeRange && nativeRange.intersectsNode(node)));
     });
-    if (!customHighlightSupported) {
-      const selection = window.getSelection();
-      const range = selection && !selection.isCollapsed && selection.rangeCount ? selection.getRangeAt(0) : null;
+    const { from, to } = view.state.selection;
+    // Mirroring an entire large document creates thousands of DOM ranges.
+    // Keep native paint for those selections, including selection restored
+    // by undo. Ordinary ranges keep Folio's per-line painting.
+    const useNativePaint = nativeRange && to - from > 100000;
+    if (!customHighlightSupported || useNativePaint) {
+      if (useNativePaint && customHighlightSupported) applyFolioRanges([]);
       view.dom.querySelectorAll('.code-container').forEach(node => {
         const surface = node.querySelector('.code-surface code');
-        node.classList.toggle('code-selection-painted', Boolean(range && surface && range.intersectsNode(surface)));
+        node.classList.toggle('code-selection-painted', Boolean(nativeRange && surface && nativeRange.intersectsNode(surface)));
       });
       return;
     }
@@ -2585,6 +2614,10 @@ export function createRichEditor(parent, options) {
           return;
         }
         revision++;
+        if (!model.sourceEdit && commit.sourceEdit?.from === 0 && commit.sourceEdit.to === model.source.length) {
+          // Keep one parsed snapshot for undo of a whole-document replacement.
+          fullReplacementUndoModel = model;
+        }
         if (commit.sourceEdit) headingMetadata.splice(model, commit.model, commit.sourceEdit);
         else headingMetadata.reset();
         model = attachModel(commit.model, result.state.doc);
@@ -2658,14 +2691,14 @@ export function createRichEditor(parent, options) {
         }
       }
       if (activePopup?.keydown?.(event)) return true;
-      // A projection-only trailing input must not steal the browser's end of
-      // document navigation from a final editable code block.
-      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key === 'End') {
-        const $from = editor.state.selection.$from;
-        if ($from.parent.type === schema.nodes.code_block && $from.after() === editor.state.doc.content.size) {
-          editor.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, $from.end())));
-          return true;
-        }
+      // Navigate in the editable document, excluding the trailing click target.
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key === 'End') {
+        releaseBookmark();
+        tabSelection = null;
+        const end = editor.state.doc.resolve(editor.state.doc.content.size);
+        const selection = Selection.findFrom(end, -1, true) || Selection.atEnd(editor.state.doc);
+        editor.dispatch(editor.state.tr.setSelection(selection).scrollIntoView());
+        return true;
       }
       if (NAVIGATION_KEYS.has(event.key)) { releaseBookmark(); tabSelection = null; }
       if (event.key === 'Enter' || event.key === 'Tab') captureDOMSelection();
@@ -2688,6 +2721,30 @@ export function createRichEditor(parent, options) {
       }
       if (model.sourceEdit) {
         return replaceLogicalSelection(text, 'typing', { from: richToSource(model, from), to: richToSource(model, to), all: false }).handled;
+      }
+      if (text === ']' && from === to && !options.isLocked()) {
+        const caret = editor.state.doc.resolve(from);
+        const paragraph = caret.parent;
+        if (caret.depth === 1 && paragraph.type === schema.nodes.paragraph &&
+            paragraph.childCount === 1 && paragraph.firstChild.isText &&
+            !paragraph.firstChild.marks.length && !editor.state.storedMarks?.length) {
+          const before = paragraph.textContent.slice(0, caret.parentOffset);
+          const syntax = (before + text).match(/(?:\[\[[^\[\]\n]+\]\]|\[\^[^\[\]\n]+\])$/)?.[0];
+          if (syntax) {
+            const segment = model.segments[caret.index(0)];
+            const raw = segment?.raw.replace(/\r?\n$/, '');
+            // The incomplete spelling may contain escaped brackets. Require
+            // the entire plain paragraph to agree before splicing its suffix.
+            if (segment?.node === paragraph && caret.parentOffset === paragraph.content.size &&
+                raw?.replace(/\\([\[\]\^])/g, '$1') === before) {
+              const suffix = raw.match(/(?:\\?\[\\?\[[^\[\]\n]+\\?\]|\\?\[\\?\^[^\[\]\n]+)$/)?.[0];
+              if (suffix && suffix.replace(/\\([\[\]\^])/g, '$1') === syntax.slice(0, -1)) {
+                const end = segment.from + raw.length;
+                return replaceLogicalSelection(syntax, 'typing', { from: end - suffix.length, to: end, all: false }).handled;
+              }
+            }
+          }
+        }
       }
       if (text === '/' && from === to && editor.state.selection.$from.depth === 1
           && editor.state.selection.$from.parent.type === schema.nodes.paragraph
@@ -3821,10 +3878,10 @@ export function createRichEditor(parent, options) {
       if (!plainClick) return;
     }
     const control = target.closest('button,input,textarea,select');
-    if (control && !control.matches('.code-fence-info')) return;
+    if (control) return;
     const sourceTarget = event.type === 'dblclick'
       ? target.closest('h1,h2,h3,h4,h5,h6,a,.math-formula,.code-container,.image-widget,.html-inline,.extension-preview,blockquote,li,ul,ol,table,hr')
-      : target.closest('.code-fence-info');
+      : null;
     if (sourceTarget && revealSourceBlock(sourceTarget)) { event.preventDefault(); event.stopImmediatePropagation(); }
     else if (model.sourceEdit && event.type === 'click' && !target.closest('button,input,textarea')) {
       const selection = sourceSelection(view.state);
@@ -3844,9 +3901,6 @@ export function createRichEditor(parent, options) {
   view.dom.addEventListener('dblclick', sourceGesture, true);
   view.dom.addEventListener('keydown', event => {
     if (['Enter', ' '].includes(event.key) && event.target.closest?.('.math-formula')) sourceGesture(event);
-  }, true);
-  view.dom.addEventListener('focusin', event => {
-    if (event.target.matches?.('.code-fence-info')) sourceGesture(event);
   }, true);
   refreshers.add(refreshTableChrome);
   options.onContext?.(currentContext(view.state));
@@ -3884,7 +3938,12 @@ export function createRichEditor(parent, options) {
     setDocument(content, selection, meta = {}) {
       if (content !== model.source) {
         revision++; bookmark = null;
-        model = parseSource(content, model.sourceEdit ? { from: model.sourceEdit.from, to: model.sourceEdit.to + content.length - model.source.length } : null);
+        if (!model.sourceEdit && fullReplacementUndoModel?.source === content) {
+          model = fullReplacementUndoModel;
+          fullReplacementUndoModel = null;
+        } else {
+          model = parseSource(content, model.sourceEdit ? { from: model.sourceEdit.from, to: model.sourceEdit.to + content.length - model.source.length } : null);
+        }
         headingMetadata.reset();
         headingMetadata.read(model);
         const state = stateFor(model.doc, selection);
@@ -3986,6 +4045,7 @@ export function createRichEditor(parent, options) {
       if (tableChromeFrame) cancelAnimationFrame(tableChromeFrame);
       hoverPending = null;
       tableObserver?.disconnect();
+      codeHighlightObserver?.disconnect();
       nearbyTables.clear();
       closePopup();
       try { addRowBtn.remove(); } catch {}

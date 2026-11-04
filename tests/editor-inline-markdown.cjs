@@ -6,30 +6,27 @@ const { openEditor } = require('./editor-browser.cjs');
   const session = await openEditor(source);
   try {
     const { page } = session;
-    await page.locator('.image-widget').dblclick();
-    const image = page.getByRole('textbox', { name: 'Image Markdown' });
-    assert.equal(await image.inputValue({ timeout: 3000 }), '![old](photo.png "title")');
-    await image.fill('![new](photo.png "new title")');
-    await image.press('Control+Enter');
-    await page.waitForFunction(() => current.content.includes('![new](photo.png "new title")'));
-    await page.locator('.html-inline').dblclick();
-    const html = page.getByRole('textbox', { name: 'Inline HTML source' });
-    assert.equal(await html.inputValue({ timeout: 3000 }), '<span>hello</span>');
-    await html.fill('<em>changed</em>');
-    await html.press('Control+Enter');
-    await page.waitForFunction(() => current.content.includes('<em>changed</em>'));
-    await page.getByRole('link', { name: 'link', exact: true }).click({ modifiers: ['Alt'] });
-    const link = page.getByRole('textbox', { name: 'Link Markdown' });
-    assert.equal(await link.inputValue({ timeout: 3000 }), '[link](https://example.com "old")');
-    await link.fill('[link](https://example.com "new")');
-    await link.press('Enter');
-    await page.waitForFunction(() => current.content.includes('[link](https://example.com "new")'));
-    await page.getByRole('link', { name: 'reference' }).click({ modifiers: ['Alt'] });
-    const reference = page.getByRole('textbox', { name: 'Link Markdown' });
-    assert.equal(await reference.inputValue({ timeout: 3000 }), '[ref]: https://example.org "old"');
-    await reference.fill('[ref]: https://example.org "new"');
-    await reference.press('Enter');
-    await page.waitForFunction(() => current.content.includes('[ref]: https://example.org "new"'));
+    async function editBlock(target, original, replacement) {
+      await target.dblclick();
+      const block = page.locator('.folio-source-edit');
+      assert.equal(await block.textContent({ timeout: 3000 }), original);
+      await block.evaluate(element => window.getSelection().selectAllChildren(element));
+      await page.keyboard.insertText(replacement);
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(value => current.content.includes(value), replacement);
+    }
+
+    await editBlock(page.locator('.image-widget'), '![old](photo.png "title")', '![new](photo.png "new title")');
+    await editBlock(page.locator('.html-inline'), 'Text <span>hello</span> after.', 'Text <em>changed</em> after.');
+    await editBlock(page.getByRole('link', { name: 'link', exact: true }),
+      '[link](https://example.com "old")', '[link](https://example.com "new")');
+    await page.evaluate(() => setDocumentMode('source'));
+    const textarea = page.locator('#document-source');
+    const markdown = await textarea.inputValue();
+    await textarea.fill(markdown.replace('https://example.org', 'https://example.net'));
+    await page.evaluate(() => setDocumentMode('edit'));
+    assert.equal(await page.getByRole('link', { name: 'reference' }).getAttribute('href'), 'https://example.net');
+    assert.ok((await page.evaluate(() => current.content)).includes('[ref]: https://example.net "old"'));
     assert.deepEqual(session.errors, []);
   } finally { await session.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

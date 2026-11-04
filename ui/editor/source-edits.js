@@ -179,6 +179,11 @@ function shiftModel(previous, step, patch, insert, intendedDoc) {
   nodes.set(editedPmFrom, editedNode);
   const owners = [];
   for (const owner of ledger.owners) {
+    const inEdited = owner.pmFrom >= editedPmFrom && owner.pmFrom < editedOldEnd;
+    if (!inEdited && owner.pmTo < step.to) {
+      owners.push(owner);
+      continue;
+    }
     const shifted = { ...owner };
     if (owner.pmFrom >= step.to) {
       shifted.pmFrom = owner.pmFrom + pmDelta;
@@ -200,7 +205,6 @@ function shiftModel(previous, step, patch, insert, intendedDoc) {
         if (Number.isInteger(owner.contentTo) && owner.contentTo >= patch.to) shifted.contentTo = owner.contentTo + sourceDelta;
       }
     }
-    const inEdited = owner.pmFrom >= editedPmFrom && owner.pmFrom < editedOldEnd;
     shifted.node = inEdited ? nodes.get(shifted.pmFrom) : owner.node;
     if (!shifted.node || shifted.node.type.name !== owner.type) return fail(`owner-node:${owner.type}:${shifted.pmFrom}:${editedPmFrom}:${editedNode.nodeSize}`);
     owners.push(shifted);
@@ -221,9 +225,7 @@ function shiftModel(previous, step, patch, insert, intendedDoc) {
           pmFrom: range.pmFrom + pmDelta, pmTo: range.pmTo + pmDelta }
       : range),
     metadata: (() => {
-      const exactOwners = owners.filter(owner => owner.confidence === 'exact').length;
-      const partialOwners = owners.filter(owner => owner.confidence === 'partial').length;
-      const unmappedOwners = owners.filter(owner => owner.confidence === 'unmapped').length;
+      const { exactOwners, partialOwners, unmappedOwners } = ledger.metadata;
       let covered = 0;
       for (const run of runs) covered += Math.max(0, run.sourceTo - run.sourceFrom);
       const sourceLength = ledger.metadata.sourceLength + sourceDelta;

@@ -58,6 +58,7 @@ const FIXTURE = `<!doctype html>
 <main id="workspace">
   <div class="reader-scroll">
     <article class="markdown" id="preview">
+      <div class="ProseMirror">
       <h1>Targets</h1>
       <ul>
         <li class="task-item"><input type="checkbox" id="t1"> task one</li>
@@ -72,6 +73,7 @@ const FIXTURE = `<!doctype html>
       </ul>
       <p>Formula <span class="math-inline"><span class="math-formula">x^2</span><button class="math-edit" id="m1">Edit</button></span> tail.</p>
       <p>Second paragraph keeps its distance.</p>
+      </div>
     </article>
   </div>
 </main>

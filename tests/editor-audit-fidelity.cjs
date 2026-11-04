@@ -225,5 +225,15 @@ async function clickText(page, text) {
     } finally { await session.close(); }
   }
 
+  for (const syntax of ['[[Page]]', '[^1]', 'See [[Page]]']) {
+    const session = await openEditor('');
+    try {
+      await session.page.locator('.ProseMirror').click();
+      await session.page.keyboard.type(syntax);
+      assert.equal(await session.page.evaluate(() => current.content), syntax);
+      assert.deepEqual(session.errors, []);
+    } finally { await session.close(); }
+  }
+
   console.log('PASS: soft breaks, outline headings, block-command guards, table edits, task toggles and clipboard boundaries preserve exact Markdown.');
 })().catch(error => { console.error(error); process.exit(1); });

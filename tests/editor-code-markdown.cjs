@@ -7,10 +7,16 @@ const { openEditor } = require('./editor-browser.cjs');
   try {
     const { page } = session;
     await page.locator('.code-container').dblclick();
-    const input = page.getByRole('textbox', { name: 'Edit code block Markdown' });
-    assert.equal(await input.inputValue({ timeout: 3000 }), '```rust\nhello world\n```');
-    await input.fill('hello world');
-    await input.press('Control+Enter');
+    const input = page.locator('.folio-source-edit');
+    assert.equal(await input.textContent({ timeout: 3000 }), '```rust\nhello world\n```');
+    await input.press('Home');
+    await page.evaluate(() => {
+      const block = document.querySelector('.folio-source-edit');
+      const selection = window.getSelection();
+      selection.selectAllChildren(block);
+    });
+    await page.keyboard.insertText('hello world');
+    await page.keyboard.press('Escape');
     await page.waitForFunction(() => current.content === 'Before\n\nhello world\n\nAfter\n', null, { timeout: 3000 });
     assert.equal(await page.locator('#preview .code-container').count(), 0);
     assert.deepEqual(session.errors, []);

@@ -1,11 +1,8 @@
 const assert = require('node:assert/strict');
 const { openEditor } = require('./editor-browser.cjs');
 
-// A footnote turns the whole paragraph into a raw_block. The reading view
-// shows only its sanitized projection plus a deliberate "Edit source"
-// action: no "Markdown source" disclosure, no duplicate selectable source
-// text. Dragging the projection selects rendered text for reading and copy;
-// editing the literal source happens in the explicit source presentation.
+// Footnote markup uses a rendered projection. Dragging can span prose and
+// the projection. A deliberate double-click reveals the exact source.
 const source = `# Showcase
 
 Before word here.
@@ -86,31 +83,18 @@ Press <kbd>Use</kbd> to run and stop <samp>here.</samp>[^1]
     assert.ok((await page.evaluate(() => current.content)) === source, 'an outside drag leaves the Markdown untouched');
     await page.evaluate(() => window.getSelection().removeAllRanges());
 
-    // C: the deliberate edit action opens this block's exact Markdown in place.
-    await page.locator('#preview .extension-block').first().hover();
-    await page.waitForFunction(() => {
-      const button = document.querySelector('#preview .extension-block .extension-edit');
-      return button && getComputedStyle(button.parentElement).opacity === '1';
-    });
-    await page.locator('#preview .extension-edit').first().click();
-    const panelInput = page.locator('#preview .extension-block').first().locator('.extension-source-editor textarea');
-    await panelInput.waitFor({ state: 'visible' });
-    assert.equal(await page.evaluate(() => editor.isSource()), false, 'the edit action stays in the formatted editor');
-    const rawValue = await panelInput.inputValue();
-    assert.ok(rawValue.startsWith('Press <kbd>Use</kbd>') && rawValue.includes('[^1]'),
-      `the in-place editor holds the exact block source, got ${JSON.stringify(rawValue.slice(0, 80))}`);
-    await page.keyboard.press('Control+a');
-    await page.keyboard.press('Backspace');
-    assert.equal(await page.evaluate(() => current.content), source, 'editing the textarea must not delete the document');
-    await page.keyboard.type('first');
-    await page.keyboard.press('Enter');
-    await page.keyboard.type('second');
-    assert.equal(await panelInput.inputValue(), 'first\nsecond', 'Enter inserts a newline in the source textarea');
-    assert.equal(await page.evaluate(() => current.content), source, 'textarea edits do not change the document before Apply');
-    await panelInput.fill('In-place block edit.');
-    await page.locator('#preview .extension-block').first().getByRole('button', { name: 'Apply' }).click();
+    // C: double-click reveals exact source in the shared editor.
+    await page.locator('.extension-preview samp').first().dblclick();
+    const sourceBlock = page.locator('.folio-source-edit');
+    await sourceBlock.waitFor({ state: 'visible' });
+    assert.equal(await page.evaluate(() => editor.isSource()), false);
+    assert.match(await sourceBlock.textContent(), /Press <kbd>Use<\/kbd>/);
+    assert.equal(await page.evaluate(() => current.content), source);
+    await sourceBlock.evaluate(element => window.getSelection().selectAllChildren(element));
+    await page.keyboard.insertText('In-place block edit.');
+    await page.keyboard.press('Escape');
     await page.waitForFunction(() => current.content.includes('In-place block edit.'));
-    assert.ok(!(await page.evaluate(() => current.content)).includes('Press <kbd>Use</kbd>'), 'the apply replaces exactly that block');
+    assert.ok(!(await page.evaluate(() => current.content)).includes('Press <kbd>Use</kbd>'));
     await page.keyboard.press('Control+z');
     await page.waitForFunction(text => current.content === text, source);
     assert.deepEqual(session.errors, []);

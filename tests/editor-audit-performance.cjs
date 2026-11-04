@@ -82,6 +82,14 @@ async function typeIn(page, selector) {
     await page.evaluate(() => setDocumentMode('edit'));
     await page.waitForTimeout(400);
     assert.equal(await page.evaluate(() => current.content), before, 'switching back to Edit does not rewrite the buffer');
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Backspace');
+    await page.waitForFunction(() => current.content === '');
+    await reset(page);
+    await page.keyboard.press('Control+z');
+    await page.waitForFunction(value => current.content === value, before);
+    assert.equal(await page.evaluate(() => editor.stats().sourceParses), 0,
+      'undo after replacing the entire document reuses its previous parsed model');
     assert.deepEqual(errors, []);
     console.log('PASS: nested blocks and source mode avoid document-wide parsing, preserve source, and undo in typing groups.');
   } finally { await session.close(); }
