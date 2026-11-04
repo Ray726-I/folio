@@ -85,8 +85,7 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.equal(await expand.evaluate(node => node === document.activeElement), true, 'backdrop dismissal restores opener focus');
     assert.equal(await page.evaluate(() => current.content), before, 'backdrop dismissal preserves the document');
 
-    await page.evaluate(() => { editor.selectRange(0); editor.focus(); });
-    await page.keyboard.press('Control+z');
+    await page.evaluate(() => runAppAction('undo'));
     await page.waitForFunction(expected => current.content === expected, source);
     assert.equal(await page.evaluate(() => current.content), source, 'viewer interactions preserve the prior undo entry');
 

@@ -49,10 +49,11 @@ jobs:
       - name: Run path helper checks
         run: npm run test:paths
       - name: Run UI checks
-        run: |
-          npm run test:ui
-          npm run check:editor-bundle
-          npm run test:editor
+        run: npm run test:ui
+      - name: Verify editor bundle
+        run: npm run check:editor-bundle
+      - name: Run editor checks
+        run: npm run test:editor
 
   native-build:
     name: Native build (${{ matrix.os }})

@@ -201,7 +201,15 @@ let errors = [];
   assert.equal(await page.locator('#line-ending').textContent(), ' · LF', 'the status bar should show the detected line ending');
   await page.evaluate(() => setDocumentMode('edit'));
   await page.locator('#preview p').click();
-  await page.keyboard.press('Home'); await page.keyboard.press('Shift+End'); await page.keyboard.type('Edited text');
+  await page.evaluate(() => {
+    const text = document.querySelector('#preview p').firstChild;
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+  await page.keyboard.type('Edited text');
   await page.waitForFunction(() => !busy);
   assert.equal(await page.evaluate(() => current.content), '# Opened\n\nEdited text');
 
