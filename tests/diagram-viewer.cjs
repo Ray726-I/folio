@@ -87,6 +87,7 @@ const { openEditor } = require('./editor-browser.cjs');
 
     await page.evaluate(() => { editor.selectRange(0); editor.focus(); });
     await page.keyboard.press('Control+z');
+    await page.waitForFunction(expected => current.content === expected, source);
     assert.equal(await page.evaluate(() => current.content), source, 'viewer interactions preserve the prior undo entry');
 
     // Native dialog focus containment, narrow themes, and file replacement.

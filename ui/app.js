@@ -1152,6 +1152,18 @@ function followPreviewLink(anchor) {
   else if (/^(https?:|mailto:)/i.test(href)) invoke('open_link', { url: href }).catch(toast);
   else enqueue(async () => { const path = await invoke('resolve_document_link', { link: href }); await openPath(path); });
 }
+// ProseMirror's macOS keymap handles Ctrl+H as deletion before the
+// document-level Replace shortcut can run. Keep Folio's shortcut consistent
+// while the formatted editor has focus.
+document.addEventListener('keydown', event => {
+  if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey &&
+      event.key.toLowerCase() === 'h' && event.target.closest?.('#preview .ProseMirror') &&
+      !event.target.closest('input,textarea') && !$('editor-action-dialog').open) {
+    event.preventDefault();
+    event.stopPropagation();
+    openReplace();
+  }
+}, true);
 document.addEventListener('keydown', event => {
   const control = event.ctrlKey || event.metaKey;
   if (control && event.shiftKey && event.key.toLowerCase() === 'p') { event.preventDefault(); $('command-dialog').open ? $('command-dialog').close() : openCommands(); return; }
