@@ -1169,6 +1169,13 @@ document.addEventListener('keydown', event => {
   if (event.key === 'F11') { event.preventDefault(); invoke('toggle_fullscreen').catch(toast); return; }
   if (!control) return;
   const key = event.key.toLowerCase();
+  if (key === 'a' && !event.altKey && !event.shiftKey && !event.isComposing &&
+      current.active && (editor || documentMode === 'source') &&
+      !event.target.matches('input,textarea,select') && !event.target.isContentEditable) {
+    event.preventDefault();
+    void editClipboard('select-all');
+    return;
+  }
   if (key === 'z' || key === 'y') {
     if (event.target.matches('input,textarea')) return;
     event.preventDefault(); enqueue(() => undoRedo(key === 'y' || event.shiftKey));

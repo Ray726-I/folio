@@ -74,37 +74,6 @@ const rawTaskTokenizer = new MarkdownIt({ html: true, linkify: false, typographe
 const RAW_TASK_LINE = /^(?:[ \t]*>[ \t]?)*[ \t]*(?:[-+*]|\d{1,9}[.)])[ \t]+\[([ xX])\](?=[ \t]|$)/;
 const RAW_TASK_MARKER = /^[ xX]$/;
 
-// A wheel gesture belongs to wherever it started. Track that for the whole
-// gesture so a pointer that drifts over the formula source mid-scroll does not
-// suddenly hand the page over to the textarea (and vice versa).
-const WHEEL_GESTURE_GAP = 200;
-let wheelGestureTarget = null, wheelGestureScroller = null, wheelGestureTime = -Infinity;
-if (typeof document !== 'undefined') document.addEventListener('wheel', event => {
-  const now = performance.now();
-  if (now - wheelGestureTime > WHEEL_GESTURE_GAP) {
-    wheelGestureTarget = event.target;
-    wheelGestureScroller = scrollableAncestor(event.target);
-  }
-  wheelGestureTime = now;
-}, { capture: true, passive: true });
-
-// Engines treat a textarea as a scroll container even when it has no range, so
-// a wheel over it is swallowed instead of reaching the reader. Find the reader
-// the way the engine would and move it ourselves in that case.
-function scrollableAncestor(element) {
-  for (let node = element.parentElement; node; node = node.parentElement) {
-    const overflow = getComputedStyle(node).overflowY;
-    if ((overflow === 'auto' || overflow === 'scroll') && node.scrollHeight > node.clientHeight) return node;
-  }
-  return null;
-}
-function scrollElementBy(node, top, left) {
-  const nextTop = Math.max(0, Math.min(node.scrollHeight - node.clientHeight, node.scrollTop + top));
-  const nextLeft = Math.max(0, Math.min(node.scrollWidth - node.clientWidth, node.scrollLeft + left));
-  try { node.scrollTo({ top: nextTop, left: nextLeft, behavior: 'instant' }); }
-  catch { node.scrollTop = nextTop; node.scrollLeft = nextLeft; }
-}
-
 // Return the source offset of each GFM task marker in `source`, in document
 // order. A null result means the source could not be inspected safely; callers
 // must then leave every checkbox disabled rather than guessing a position.
@@ -281,7 +250,7 @@ export function createRichEditor(parent, options) {
   let model = parseSource(options.content), view;
   let fullReplacementUndoModel = null;
   let revision = 0, bookmark = null, tabSelection = null, commitOutcome = null, pendingTail = false;
-  let linkClickTimer = 0, inlineClickTimer = 0, formulaClickTimer = 0;
+  let linkClickTimer = 0, inlineClickTimer = 0;
   const headingMetadata = createHeadingMetadata();
   headingMetadata.read(model);
   const refreshers = new Set();
@@ -660,75 +629,6 @@ export function createRichEditor(parent, options) {
     const dom = document.createElement(node.isInline ? 'span' : 'div'); dom.className = node.isInline ? 'math-inline' : 'math-block'; dom.contentEditable = 'false';
     const formula = document.createElement('span'); formula.className = 'math-formula'; formula.title = 'Double-click to edit formula';
     formula.setAttribute('role', 'button'); formula.setAttribute('aria-label', 'Edit formula'); formula.tabIndex = 0;
-    const panel = document.createElement('span'); panel.className = 'math-local-editor'; panel.hidden = true;
-    const input = document.createElement('textarea'); input.setAttribute('aria-label', 'Formula source'); input.rows = node.isInline ? 2 : 4;
-    const cancel = button('Cancel', () => { panel.hidden = true; formula.focus(); });
-    const apply = button('Apply', () => {
-      if (options.isLocked()) return;
-      let pos; try { pos = getPos(); } catch { return; }
-      let segment = null;
-      editor.state.doc.forEach((child, offset, index) => { if (pos >= offset && pos < offset + child.nodeSize) segment = model.segments[index]; });
-      if (!segment) { options.message('Could not safely locate this formula in the source.'); return; }
-      const source = model.source.slice(segment.from, segment.to), tex = node.attrs.tex;
-      const open = node.attrs.delimiter === '\\(' ? '\\(' : node.attrs.delimiter === '\\[' ? '\\[' : node.isInline ? '$' : '$$';
-      const close = open === '\\(' ? '\\)' : open === '\\[' ? '\\]' : open;
-      const start = source.indexOf(open), end = source.lastIndexOf(close);
-      const exactInline = open + tex + close;
-      const inlineStart = node.isInline ? source.indexOf(exactInline) : -1;
-      const inner = node.isInline ? (inlineStart < 0 ? -1 : inlineStart + open.length) : source.indexOf(tex, Math.max(0, start + open.length));
-      if (start < 0 || end < start || inner < 0 || inner + tex.length > end ||
-          (node.isInline ? source.indexOf(exactInline, inlineStart + 1) >= 0 : source.indexOf(tex, inner + 1) >= 0)) {
-        options.message('Could not safely locate this formula in the source.'); return;
-      }
-      const from = segment.from + inner, to = from + tex.length;
-      const result = replaceLogicalSelection(input.value, 'command', { from, to, all: false, collapsed: false });
-      if (result.committed) { panel.hidden = true; editor.focus(); }
-    });
-    // Wheel gestures over the formula source belong to that textarea only while
-    // it can actually move. At either edge, or when the gesture began
-    // elsewhere, the delta continues on the page's own scroller instead.
-    input.addEventListener('wheel', event => {
-      if (event.ctrlKey || event.metaKey || event.altKey) return;
-      if (input.disabled) return;
-      // Wheel deltas arrive in pixels, lines or pages depending on the device.
-      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? input.clientHeight : 1;
-      const deltaX = (event.shiftKey ? event.deltaY : event.deltaX) * unit, deltaY = event.shiftKey ? 0 : event.deltaY * unit;
-      if (wheelGestureTarget && wheelGestureTarget !== input && !input.contains(wheelGestureTarget)) {
-        // The gesture is not ours. Continue it on whatever it started on so the
-        // page does not jump back to the formula just because the pointer
-        // drifted across it.
-        if (!wheelGestureScroller) return;
-        event.preventDefault(); event.stopPropagation();
-        scrollElementBy(wheelGestureScroller, deltaY, deltaX);
-        return;
-      }
-      const maximumTop = Math.max(0, input.scrollHeight - input.clientHeight), maximumLeft = Math.max(0, input.scrollWidth - input.clientWidth);
-      const canScrollX = deltaX !== 0 && maximumLeft > 0 && (deltaX < 0 ? input.scrollLeft > 0 : input.scrollLeft < maximumLeft - 0.5);
-      const canScrollY = deltaY !== 0 && maximumTop > 0 && (deltaY < 0 ? input.scrollTop > 0 : input.scrollTop < maximumTop - 0.5);
-      if (!canScrollX && !canScrollY) {
-        const reader = scrollableAncestor(input);
-        if (!reader) return;
-        event.preventDefault(); event.stopPropagation();
-        scrollElementBy(reader, deltaY, deltaX);
-        return;
-      }
-      event.preventDefault(); event.stopPropagation();
-      if (canScrollY) input.scrollTop = Math.max(0, Math.min(maximumTop, input.scrollTop + deltaY));
-      if (canScrollX) input.scrollLeft = Math.max(0, Math.min(maximumLeft, input.scrollLeft + deltaX));
-    }, { passive: false });
-    panel.append(input, apply, cancel);
-    const openEditor = () => {
-      if (options.isLocked()) return;
-      if (!panel.hidden) return;
-      input.value = node.attrs.tex; panel.hidden = false; input.focus();
-    };
-    formula.addEventListener('click', event => {
-      if (event.button !== 0 || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
-      event.preventDefault(); event.stopPropagation();
-      if (event.detail > 1) { clearTimeout(formulaClickTimer); return; }
-      clearTimeout(formulaClickTimer);
-      formulaClickTimer = setTimeout(() => { formulaClickTimer = 0; openEditor(); }, 240);
-    });
     // Shift-click on a formula extends the selection *through* it. Letting the
     // editor resolve the click on its own lands the head on the atom boundary,
     // which excludes the formula the pointer is actually over.
@@ -741,23 +641,17 @@ export function createRichEditor(parent, options) {
       const from = Math.min(state.selection.from, pos), to = Math.max(state.selection.to, pos + node.nodeSize);
       editor.dispatch(state.tr.setSelection(TextSelection.create(state.doc, from, to)));
     });
-    formula.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openEditor(); } });
-    dom.append(formula, panel); let generation = 0;
+    dom.append(formula); let generation = 0;
     const render = async () => {
-      const tex = panel.hidden ? node.attrs.tex : input.value;
+      const tex = node.attrs.tex;
       const current = ++generation; formula.textContent = tex; formula.classList.remove('math-error');
       try { const katex = await options.loadKatex(); if (current !== generation) return; katex.render(tex, formula, { displayMode: !node.isInline, throwOnError: true, trust: false, strict: 'warn' }); }
       catch { if (current === generation) { formula.textContent = tex; formula.classList.add('math-error'); formula.title = 'Formula could not be rendered. Its source is preserved.'; } }
       formula.setAttribute('aria-disabled', String(options.isLocked()));
     };
-    input.addEventListener('input', render);
-    cancel.addEventListener('click', render);
-    render(); const refresh = () => { formula.setAttribute('aria-disabled', String(options.isLocked())); input.disabled = options.isLocked(); apply.disabled = options.isLocked(); }; refreshers.add(refresh);
+    const refresh = () => formula.setAttribute('aria-disabled', String(options.isLocked()));
+    render(); refreshers.add(refresh);
     return { dom, update(next) { if (next.type !== node.type) return false; if (next.sameMarkup(node) && next.textContent === node.textContent) { node = next; return true; } node = next; render(); return true; }, stopEvent: event => {
-      // The local editor's own controls keep their events; pointer events on
-      // the formula itself must reach the editor so a single click selects the
-      // atom (and a double-click can then open the source editor).
-      if (event.target?.closest?.('.math-local-editor')) return true;
       if (event.type === 'keydown') {
         // The formula is focusable so keyboard users can open it with Enter.
         // That must not make document-wide selection and deletion only work
@@ -2061,6 +1955,7 @@ export function createRichEditor(parent, options) {
   }
   function selectAllLogical(state, dispatch, view) {
     if (!dispatch) return true;
+    setSelectionGuarded(false);
     const tr = state.tr.setSelection(new AllSelection(state.doc)).setMeta('folio-projection', true);
     dispatch(tr);
     setBookmark(0, model.source.length, view?.state || state, true);
@@ -3881,7 +3776,7 @@ export function createRichEditor(parent, options) {
     if (control) return;
     const sourceTarget = event.type === 'dblclick'
       ? target.closest('h1,h2,h3,h4,h5,h6,a,.math-formula,.code-container,.image-widget,.html-inline,.extension-preview,blockquote,li,ul,ol,table,hr')
-      : null;
+      : event.type === 'keydown' ? target.closest('.math-formula') : null;
     if (sourceTarget && revealSourceBlock(sourceTarget)) { event.preventDefault(); event.stopImmediatePropagation(); }
     else if (model.sourceEdit && event.type === 'click' && !target.closest('button,input,textarea')) {
       const selection = sourceSelection(view.state);
@@ -3928,6 +3823,7 @@ export function createRichEditor(parent, options) {
       captureDOMSelection();
     },
     selection: () => sourceSelection(view.state),
+    selectAll: () => selectAllLogical(view.state, view.dispatch, view),
     sourceAtCoords(coords) {
       const hit = view.posAtCoords(coords);
       return hit ? richToSource(model, hit.pos) : null;

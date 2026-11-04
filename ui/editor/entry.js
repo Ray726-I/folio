@@ -225,6 +225,7 @@ export function create(options) {
       if (sourceOnly) { this.replaceSource(next, sourceSelection, false); return; }
       record(next, sourceSelection, selection(), false); sync(content);
     },
+    selectAll() { groupTime = 0; richEditor?.selectAll(); },
     selectRange(anchor, head = anchor, focus = true) {
       groupTime = 0;
       // Selection requests carry exact source offsets; keep them as the rich

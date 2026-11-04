@@ -3587,26 +3587,6 @@ dialog {
   line-height:1.55;
   color:var(--fg);
 }
-.math-local-editor:not([hidden]) {
-  display:flex;
-  flex-wrap:wrap;
-  gap:6px;
-  margin-top:8px;
-  align-items:center;
-}
-.math-local-editor textarea {
-  flex:1 0 100%;
-  box-sizing:border-box;
-  width:100%;
-  min-width:12rem;
-  padding:8px;
-  color:var(--fg);
-  background:var(--surface);
-  border:1px solid var(--line);
-  border-radius:5px;
-  font:inherit;
-  resize:vertical;
-}
 #save.is-dirty {
   opacity:1;
   color:var(--accent);

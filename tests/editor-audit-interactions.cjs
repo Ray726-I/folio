@@ -2,6 +2,20 @@ const assert = require('node:assert/strict');
 const { openEditor } = require('./editor-browser.cjs');
 
 (async () => {
+  for (const key of ['Delete', 'Backspace']) {
+    const session = await openEditor('# Heading\n\nText with a table below.\n\n| A |\n| --- |\n| B |\n');
+    try {
+      const { page } = session;
+      await page.locator('#view-menu-button').focus();
+      await page.evaluate(() => requestOpen('/tmp/another.md'));
+      await page.waitForFunction(() => current.path === '/tmp/another.md' && !busy);
+      await page.keyboard.press('Control+a');
+      assert.equal(await page.evaluate(() => document.activeElement.classList.contains('ProseMirror')), true);
+      await page.keyboard.press(key);
+      assert.equal(await page.evaluate(() => current.content), '');
+    } finally { await session.close(); }
+  }
+
   // Find refresh preserves a live counter and highlight while the document changes.
   {
     const session = await openEditor('Alpha beta. Gamma beta.\n', { width: 1000, height: 700 });

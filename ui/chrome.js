@@ -337,7 +337,7 @@ async function editClipboard(action) {
     return;
   }
   editor?.focus();
-  if (action === 'select-all') { editor?.selectRange(0, current.content.length); return; }
+  if (action === 'select-all') { editor?.selectAll(); return; }
   if (action === 'paste') {
     const owner = current, text = await navigator.clipboard.readText();
     if (owner !== current || !documentWritable() || documentMode !== 'edit') return;
