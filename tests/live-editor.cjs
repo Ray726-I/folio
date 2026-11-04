@@ -52,19 +52,18 @@ const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n
     assert.equal(await page.evaluate(() => editor.isSource()), false, 'link URL edit stays in the formatted editor');
     assert.equal(await page.locator('#preview a').first().textContent(), 'route');
     assert.ok((await page.locator('#preview a').first().getAttribute('href')).includes('https://example.com/changed'));
-    // Math edits locally without switching the document to Markdown.
+    // Double-click exposes the formula's exact Markdown in the editor.
     const beforeMath = await text();
-    await page.locator('#preview .math-block .math-formula').click();
-    const mathInput = page.locator('#preview .math-block textarea');
-    await mathInput.waitFor({ state: 'visible' });
+    await page.locator('#preview .math-block .math-formula').dblclick();
+    const mathSource = page.locator('.folio-source-edit');
+    await mathSource.waitFor({ state: 'visible' });
     assert.equal(await page.evaluate(() => editor.isSource()), false, 'math edit stays in formatted mode');
-    assert.equal(await page.locator('#editor-action-dialog').evaluate(node => node.open), false, 'math editing uses in-buffer source, not a modal');
-    assert.ok((await mathInput.inputValue()).includes('x^2'));
-    await mathInput.fill('\\frac{1}{');
-    await page.locator('#preview .math-block button', { hasText: 'Apply' }).click();
+    assert.ok((await mathSource.textContent()).includes('x^2'));
+    await mathSource.evaluate(element => window.getSelection().selectAllChildren(element));
+    await page.keyboard.insertText('$$\n\\frac{1}{\n$$');
+    await page.keyboard.press('Escape');
     assert.ok((await text()).includes('\\frac{1}{'));
     await page.locator('#preview .math-error').waitFor();
-    assert.ok((await text()).includes('\\frac{1}{'));
     await page.keyboard.press('Control+z'); assert.equal(await text(), beforeMath);
     // Image source stays editable through the explicit double-click gesture.
     await page.locator('.image-widget').dblclick();
