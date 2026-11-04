@@ -12,7 +12,7 @@ const {openEditor}=require('./editor-browser.cjs');
  assert.equal(await page.locator('.math-block.ProseMirror-selectednode').count(),0,'plain formula click must not select its atom');
  await page.locator('#reader-scroll').click({position:{x:5,y:5}});
  assert.equal(await page.locator('.math-block.folio-rendered-selected').count(),0,'outside click clears formula paint');
- await page.locator('.math-block').click({modifiers:['Control']});
+ await page.locator('.math-block').click({modifiers:[process.platform === 'darwin' ? 'Meta' : 'Control']});
  assert.equal(await page.locator('.math-block.ProseMirror-selectednode').count(),1,'explicit modified click can still select a formula node');
  await page.locator('#view-menu-button').click();
  assert.equal(await page.locator('.math-block.ProseMirror-selectednode').count(),0,'outside control clears a stored formula node selection');
