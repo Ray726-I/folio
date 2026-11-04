@@ -1806,7 +1806,7 @@ fn main() {
                     recycle_renderer(&cleanup, state.inner());
                 }
             });
-            let main_window = tauri::WebviewWindowBuilder::new(
+            let _main_window = tauri::WebviewWindowBuilder::new(
                 app,
                 renderer::MAIN_LABEL,
                 tauri::WebviewUrl::App("index.html".into()),
@@ -1821,7 +1821,7 @@ fn main() {
             #[cfg(target_os = "linux")]
             {
                 let state = app.state::<Arc<AppState>>().inner().clone();
-                main_window.with_webview(move |webview| {
+                _main_window.with_webview(move |webview| {
                     webview.inner().connect_event(move |_, event| {
                         if event.event_type() == EventType::TouchpadPinch
                             && !state.touchpad_zoom.load(Ordering::SeqCst)
