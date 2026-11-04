@@ -41,14 +41,15 @@ const source = [
     await page.waitForTimeout(120);
     assert.equal(await inEditor(), true, 'focus returns to the editor after cancelling');
 
-    // 3. The formula editor is reachable from the keyboard and Escape/Cancel
-    //    returns focus to the formula itself.
+    // 3. Keyboard activation reveals the formula's Markdown and Escape
+    //    returns focus to the formatted editor.
     const formulaButton = page.locator('.math-inline .math-formula');
     assert.equal(await formulaButton.count(), 1, 'each formula exposes a labelled edit button');
-    await formulaButton.click();
-    await page.locator('.math-inline textarea').waitFor({ state: 'visible' });
-    await page.locator('.math-inline').getByRole('button', { name: 'Cancel' }).click();
-    assert.equal(await page.evaluate(() => document.activeElement?.classList?.contains('math-formula')), true, 'cancelling the formula editor returns focus to the formula');
+    await formulaButton.focus();
+    await page.keyboard.press('Enter');
+    await page.locator('.folio-source-edit').waitFor({ state: 'visible' });
+    await page.keyboard.press('Escape');
+    assert.equal(await inEditor(), true, 'closing formula source returns focus to the editor');
 
     // 4. Block-level source editing is keyboard reachable and the action is
     //    visible (not merely focusable) when it holds focus.

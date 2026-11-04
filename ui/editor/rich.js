@@ -2595,7 +2595,7 @@ export function createRichEditor(parent, options) {
         editor.dispatch(editor.state.tr.setSelection(selection).scrollIntoView());
         return true;
       }
-      if (NAVIGATION_KEYS.has(event.key)) { releaseBookmark(); tabSelection = null; }
+      if (NAVIGATION_KEYS.has(event.key)) { options.checkpoint(); releaseBookmark(); tabSelection = null; }
       if (event.key === 'Enter' || event.key === 'Tab') captureDOMSelection();
       const key = event.key.toLowerCase();
       if ((event.ctrlKey || event.metaKey) && !event.altKey && (key === 'z' || key === 'y')) { options.undo(key === 'y' || event.shiftKey); return true; }
@@ -2711,7 +2711,7 @@ export function createRichEditor(parent, options) {
         // the native range is left alone so reading selections can cross
         // rendered projections, and the guard settles on pointer-up. A plain
         // new caret still syncs on release via the pointer-up flush below.
-        if (event.button === 0) { setSelectionGuarded(true); releaseBookmark(); tabSelection = null; }
+        if (event.button === 0) { options.checkpoint(); setSelectionGuarded(true); releaseBookmark(); tabSelection = null; }
         // A press inside a table hands anchoring back to the selection: the
         // click lands the caret, the selection-anchored controls appear, and
         // later pointer movement re-evaluates the hover zone from there.

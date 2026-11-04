@@ -104,7 +104,7 @@ export function create(options) {
       release() { if (!released) { imageCount--; imageBytes -= bytes; released = true; } }
     };
   }
-  const shared = { ...options, reserveImage, isLocked, isUserLocked, undo: redo => undo(redo) };
+  const shared = { ...options, reserveImage, isLocked, isUserLocked, checkpoint: () => { groupTime = 0; }, undo: redo => undo(redo) };
   // Match the native renderer's authority normalization: browsers ignore
   // embedded tabs/newlines, trim control/space edges, and treat backslashes in
   // special-scheme URLs as slashes. Missing one of these forms would let the

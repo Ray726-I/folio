@@ -53,7 +53,7 @@ const listings = {
 
     // Enter on a file closes the picker and opens the selected document.
     await page.keyboard.press('Enter');
-    await page.waitForFunction(() => !busy && current.path === '/tmp/folio-picker-keyboard/notes/note.md');
+    await page.waitForFunction(expected => !busy && current.path === expected, note);
     assert.equal(await page.evaluate(() => document.getElementById('open-dialog').open), false);
 
     assert.deepEqual(errors, []);
