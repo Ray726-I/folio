@@ -6,6 +6,8 @@ mod renderer;
 mod theme;
 
 use document::{Document, OpenDocument};
+#[cfg(target_os = "linux")]
+use gtk::{gdk::EventType, prelude::*};
 use renderer::{AcceptOutcome, CancelRequest, PickerKind, RenderRequest, RenderResult, Transport};
 use serde::Serialize;
 use std::{
@@ -20,8 +22,6 @@ use std::{
 use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
-#[cfg(target_os = "linux")]
-use gtk::{gdk::EventType, prelude::*};
 
 const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mdtxt"];
 const DEFAULT_INSPECTED_LIMIT: usize = 10_000;

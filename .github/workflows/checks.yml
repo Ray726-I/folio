@@ -91,3 +91,19 @@ jobs:
         run: npx tauri build --ci --no-sign
       - name: Verify native bundle outputs
         run: npm run check:bundles
+      - name: Upload Windows installers
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: folio-windows-x64
+          path: |
+            target/release/bundle/msi/*.msi
+            target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+      - name: Upload macOS installer
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: folio-macos-arm64
+          path: target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
