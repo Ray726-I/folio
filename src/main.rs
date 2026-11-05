@@ -2,10 +2,12 @@
 
 mod document;
 mod markdown;
+mod recovery;
 mod renderer;
 mod theme;
+mod workspace;
 
-use document::{Document, OpenDocument};
+use document::Document;
 #[cfg(target_os = "linux")]
 use gtk::{gdk::EventType, prelude::*};
 use renderer::{AcceptOutcome, CancelRequest, PickerKind, RenderRequest, RenderResult, Transport};
@@ -30,7 +32,8 @@ const DEFAULT_DEPTH_LIMIT: usize = 12;
 
 #[derive(Default)]
 struct AppState {
-    document: Mutex<Option<OpenDocument>>,
+    documents: Mutex<workspace::Registry>,
+    recovery: Mutex<Option<recovery::Store>>,
     folder: Mutex<Option<PathBuf>>,
     pending: Mutex<Vec<String>>,
     picker_active: Mutex<bool>,
@@ -303,16 +306,7 @@ fn open_document(
     if *state.picker_active.lock().unwrap() {
         return Err("Finish choosing a file or folder first.".into());
     }
-    let (document, data) = document::load(Path::new(&path))?;
-    let mut folder = state.folder.lock().unwrap();
-    if folder
-        .as_ref()
-        .is_some_and(|root| !document.path.starts_with(root))
-    {
-        *folder = None;
-    }
-    drop(folder);
-    *state.document.lock().unwrap() = Some(document);
+    let (_, data) = state.documents.lock().unwrap().open(Path::new(&path))?;
     Ok(data)
 }
 
@@ -391,14 +385,235 @@ mod source_edit_tests {
 fn new_document(
     webview: tauri::Webview,
     state: tauri::State<'_, Arc<AppState>>,
+) -> Result<NewDocument, String> {
+    renderer::ensure_main(webview.label())?;
+    Ok(NewDocument {
+        document_id: state.documents.lock().unwrap().new_document(),
+        revision: 0,
+    })
+}
+
+fn recovery_store<'a>(
+    state: &'a AppState,
+    app: &tauri::AppHandle,
+) -> Result<std::sync::MutexGuard<'a, Option<recovery::Store>>, String> {
+    let mut store = state.recovery.lock().unwrap();
+    if store.is_none() {
+        *store = Some(recovery::Store::new(
+            app.path()
+                .app_data_dir()
+                .map_err(|e| e.to_string())?
+                .join("recovery-v1"),
+        ));
+    }
+    Ok(store)
+}
+
+#[tauri::command(async)]
+fn activate_document(
+    document_id: String,
+    webview: tauri::Webview,
+    state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     renderer::ensure_main(webview.label())?;
-    *state.document.lock().unwrap() = None;
+    let mut registry = state.documents.lock().unwrap();
+    registry.id(Some(&document_id))?;
+    registry.active = Some(document_id);
     Ok(())
+}
+#[tauri::command(async)]
+fn close_document(
+    document_id: String,
+    webview: tauri::Webview,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    renderer::ensure_main(webview.label())?;
+    state.documents.lock().unwrap().close(&document_id)
+}
+#[tauri::command(async)]
+fn recovery_write(
+    document_id: String,
+    revision: u64,
+    content: String,
+    name: String,
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<u64, String> {
+    renderer::ensure_main(webview.label())?;
+    // Keep the registry locked through durability: close/save cannot invalidate
+    // the native baseline while a snapshot is being captured.
+    let registry = state.documents.lock().unwrap();
+    let baseline = registry.recovery_metadata(&document_id)?;
+    let record = recovery::Record {
+        document_id,
+        revision,
+        content,
+        name,
+        original_path: baseline.original_path,
+        baseline_fingerprint: baseline.fingerprint,
+        bom: baseline.bom,
+        crlf: baseline.crlf,
+        snapshot_time: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64,
+    };
+    recovery_store(&state, &app)?
+        .as_mut()
+        .unwrap()
+        .write(record)?;
+    Ok(revision)
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecoverySummary {
+    document_id: String,
+    revision: u64,
+    name: String,
+    original_path: Option<String>,
+    snapshot_time: u64,
+}
+#[tauri::command(async)]
+fn recovery_list(
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<Vec<RecoverySummary>, String> {
+    renderer::ensure_main(webview.label())?;
+    Ok(recovery_store(&state, &app)?
+        .as_mut()
+        .unwrap()
+        .list()?
+        .into_iter()
+        .map(|r| RecoverySummary {
+            document_id: r.document_id,
+            revision: r.revision,
+            name: r.name,
+            original_path: r.original_path,
+            snapshot_time: r.snapshot_time,
+        })
+        .collect())
+}
+#[tauri::command(async)]
+fn recovery_warnings(
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<Vec<recovery::Warning>, String> {
+    renderer::ensure_main(webview.label())?;
+    recovery_store(&state, &app)?.as_ref().unwrap().warnings()
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Recovered {
+    document_id: String,
+    revision: u64,
+    path: Option<String>,
+    original_path: Option<String>,
+    name: String,
+    content: String,
+    saved: String,
+    line_ending: &'static str,
+    writable: bool,
+    dirty: bool,
+}
+#[tauri::command(async)]
+fn recovery_restore(
+    document_id: String,
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<Recovered, String> {
+    renderer::ensure_main(webview.label())?;
+    let record = recovery_store(&state, &app)?
+        .as_ref()
+        .unwrap()
+        .restore(&document_id)?;
+    let mut registry = state.documents.lock().unwrap();
+    if registry.sessions.contains_key(&document_id) {
+        return Err("This recovery document is already open.".into());
+    }
+    let matched = record
+        .original_path
+        .as_ref()
+        .and_then(|path| document::load(Path::new(path)).ok())
+        .filter(|(d, _)| Some(&d.fingerprint) == record.baseline_fingerprint.as_ref())
+        .filter(|(d, _)| registry.check_destination(&document_id, &d.path).is_ok());
+    let (original, path, saved, writable) = match matched {
+        Some((mut original, data)) => {
+            original.bom = record.bom;
+            original.crlf = record.crlf;
+            (Some(original), Some(data.path), data.content, data.writable)
+        }
+        None => (None, None, String::new(), true),
+    };
+    registry
+        .encoding
+        .insert(document_id.clone(), (record.bom, record.crlf));
+    registry.recovery_origins.insert(
+        document_id.clone(),
+        (
+            record.original_path.clone(),
+            record.baseline_fingerprint.clone(),
+        ),
+    );
+    registry.sessions.insert(document_id.clone(), original);
+    registry.active = Some(document_id.clone());
+    Ok(Recovered {
+        document_id,
+        revision: record.revision,
+        path,
+        original_path: record.original_path,
+        name: record.name,
+        content: record.content,
+        saved,
+        line_ending: if record.crlf { "CRLF" } else { "LF" },
+        writable,
+        dirty: true,
+    })
+}
+#[tauri::command(async)]
+fn recovery_discard(
+    document_id: String,
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    renderer::ensure_main(webview.label())?;
+    recovery_store(&state, &app)?
+        .as_mut()
+        .unwrap()
+        .discard(&document_id)
+}
+#[tauri::command(async)]
+fn recovery_saved(
+    document_id: String,
+    revision: u64,
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    renderer::ensure_main(webview.label())?;
+    state.documents.lock().unwrap().id(Some(&document_id))?;
+    recovery_store(&state, &app)?
+        .as_mut()
+        .unwrap()
+        .saved(&document_id, revision)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NewDocument {
+    document_id: String,
+    revision: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Saved {
+    document_id: String,
     path: String,
     name: String,
 }
@@ -438,6 +653,7 @@ impl From<document::SaveError> for CommandError {
 
 #[tauri::command(async)]
 fn save_document(
+    document_id: Option<String>,
     content: String,
     save_as: bool,
     force: bool,
@@ -446,7 +662,8 @@ fn save_document(
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<Option<Saved>, CommandError> {
     renderer::ensure_main(webview.label()).map_err(CommandError::from)?;
-    let original = state.document.lock().unwrap().clone();
+    let id = state.documents.lock().unwrap().id(document_id.as_deref())?;
+    let original = state.documents.lock().unwrap().get(Some(&id))?;
     let current_path = original.as_ref().map(|document| document.path.clone());
     let path = match (save_as, current_path.as_ref()) {
         (false, Some(path)) => path.clone(),
@@ -468,19 +685,20 @@ fn save_document(
             }
         }
     };
-    let mut current = state.document.lock().unwrap();
-    if current
-        .as_ref()
-        .map(|document| (&document.path, &document.fingerprint))
-        != original
-            .as_ref()
-            .map(|document| (&document.path, &document.fingerprint))
+    let mut registry = state.documents.lock().unwrap();
+    registry.id(Some(&id))?;
+    registry.check_destination(&id, &path)?;
+    let current = registry.sessions.get(&id).unwrap();
+    if current.as_ref().map(|d| (&d.path, &d.fingerprint))
+        != original.as_ref().map(|d| (&d.path, &d.fingerprint))
     {
-        return Err("The open document changed while saving. Try again.".into());
+        return Err("The document changed while saving. Try again.".into());
     }
-    let saved =
-        document::save(&path, &content, current.as_ref(), force).map_err(CommandError::from)?;
+    let saved = registry
+        .save(&id, &path, &content, force)
+        .map_err(CommandError::from)?;
     let payload = Saved {
+        document_id: id.clone(),
         path: saved.path.to_string_lossy().into(),
         name: saved
             .path
@@ -489,7 +707,7 @@ fn save_document(
             .to_string_lossy()
             .into(),
     };
-    *current = Some(saved);
+    registry.sessions.insert(id, Some(saved));
     Ok(Some(payload))
 }
 
@@ -500,6 +718,7 @@ struct RenderedMarkdown {
 
 #[tauri::command]
 async fn render_markdown(
+    document_id: Option<String>,
     content: String,
     remote_images: bool,
     webview: tauri::Webview,
@@ -508,11 +727,11 @@ async fn render_markdown(
     renderer::ensure_main(webview.label())?;
     let state = Arc::clone(&state);
     let path = state
-        .document
+        .documents
         .lock()
         .unwrap()
-        .as_ref()
-        .map(|document| document.path.clone());
+        .get(document_id.as_deref())?
+        .map(|d| d.path);
     // Comrak, syntect, ammonia, and base64 encoding are all synchronous; keep
     // them off the async runtime so the renderer stays responsive.
     tauri::async_runtime::spawn_blocking(move || {
@@ -614,14 +833,16 @@ fn set_touchpad_zoom(
 
 #[tauri::command(async)]
 fn document_changed(
+    document_id: Option<String>,
     webview: tauri::Webview,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<bool, String> {
     renderer::ensure_main(webview.label())?;
     Ok(state
-        .document
+        .documents
         .lock()
         .unwrap()
+        .get(document_id.as_deref())?
         .as_ref()
         .is_some_and(document::changed))
 }
@@ -670,19 +891,19 @@ fn toggle_fullscreen(webview: tauri::Webview, window: tauri::Window) -> Result<(
 
 #[tauri::command(async)]
 fn reveal_document(
+    document_id: Option<String>,
     webview: tauri::Webview,
     app: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     renderer::ensure_main(webview.label())?;
     let path = state
-        .document
+        .documents
         .lock()
         .unwrap()
-        .as_ref()
+        .get(document_id.as_deref())?
         .ok_or("Save the document first.")?
-        .path
-        .clone();
+        .path;
     app.opener()
         .reveal_item_in_dir(path)
         .map_err(|error| error.to_string())
@@ -690,6 +911,7 @@ fn reveal_document(
 
 #[tauri::command(async)]
 fn rename_document(
+    document_id: Option<String>,
     name: String,
     webview: tauri::Webview,
     state: tauri::State<'_, Arc<AppState>>,
@@ -698,30 +920,36 @@ fn rename_document(
     if !is_markdown(Path::new(&name)) {
         return Err("Use a Markdown filename (.md, .markdown, .mdown or .mdtxt).".into());
     }
-    let mut current = state.document.lock().unwrap();
-    let renamed = document::rename(
-        current
-            .as_ref()
-            .ok_or("Save the document before renaming it.")?,
-        &name,
-    )?;
+    let mut registry = state.documents.lock().unwrap();
+    let id = registry.id(document_id.as_deref())?;
+    let original = registry
+        .get(Some(&id))?
+        .ok_or("Save the document before renaming it.")?;
+    registry.check_destination(&id, &original.path.with_file_name(&name))?;
+    let renamed = document::rename(&original, &name)?;
     let result = Saved {
+        document_id: id.clone(),
         path: renamed.path.to_string_lossy().into(),
         name,
     };
-    *current = Some(renamed);
+    registry.sessions.insert(id, Some(renamed));
     Ok(result)
 }
 
 #[tauri::command(async)]
 fn duplicate_document(
+    document_id: Option<String>,
     content: String,
     webview: tauri::Webview,
     app: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<Option<String>, String> {
     renderer::ensure_main(webview.label())?;
-    let original = state.document.lock().unwrap().clone();
+    let original = state
+        .documents
+        .lock()
+        .unwrap()
+        .get(document_id.as_deref())?;
     let mut dialog = app
         .dialog()
         .file()
@@ -742,6 +970,11 @@ fn duplicate_document(
         return Ok(None);
     };
     let path = file.into_path().map_err(|error| error.to_string())?;
+    state
+        .documents
+        .lock()
+        .unwrap()
+        .check_destination("", &path)?;
     if original
         .as_ref()
         .is_some_and(|document| path.canonicalize().ok().as_ref() == Some(&document.path))
@@ -757,13 +990,18 @@ fn duplicate_document(
 
 #[tauri::command(async)]
 fn export_html(
+    document_id: Option<String>,
     content: String,
     webview: tauri::Webview,
     app: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<Option<String>, String> {
     renderer::ensure_main(webview.label())?;
-    let original = state.document.lock().unwrap().clone();
+    let original = state
+        .documents
+        .lock()
+        .unwrap()
+        .get(document_id.as_deref())?;
     let Some(file) = app
         .dialog()
         .file()
@@ -774,6 +1012,11 @@ fn export_html(
         return Ok(None);
     };
     let path = file.into_path().map_err(|error| error.to_string())?;
+    state
+        .documents
+        .lock()
+        .unwrap()
+        .check_destination("", &path)?;
     if original
         .as_ref()
         .is_some_and(|document| path.canonicalize().ok().as_ref() == Some(&document.path))
@@ -938,12 +1181,17 @@ fn open_link(url: String, webview: tauri::Webview, app: tauri::AppHandle) -> Res
 
 #[tauri::command(async)]
 fn resolve_document_link(
+    document_id: Option<String>,
     link: String,
     webview: tauri::Webview,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<String, String> {
     renderer::ensure_main(webview.label())?;
-    let current = state.document.lock().unwrap();
+    let current = state
+        .documents
+        .lock()
+        .unwrap()
+        .get(document_id.as_deref())?;
     let base = current
         .as_ref()
         .and_then(|document| document.path.parent())
@@ -1878,6 +2126,14 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            activate_document,
+            close_document,
+            recovery_write,
+            recovery_list,
+            recovery_warnings,
+            recovery_restore,
+            recovery_discard,
+            recovery_saved,
             toggle_fullscreen,
             reveal_document,
             rename_document,

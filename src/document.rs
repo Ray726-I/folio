@@ -55,6 +55,8 @@ impl From<&str> for SaveError {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Document {
+    pub document_id: String,
+    pub revision: u64,
     pub path: String,
     pub name: String,
     pub content: String,
@@ -135,6 +137,8 @@ pub fn load(path: &Path) -> Result<(OpenDocument, Document), String> {
     let text = text.trim_start_matches('\u{feff}');
     let crlf = text.contains("\r\n") && !text.replace("\r\n", "").contains('\n');
     let document = Document {
+        document_id: String::new(),
+        revision: 0,
         name: path
             .file_name()
             .unwrap_or_default()
@@ -192,6 +196,16 @@ pub fn save(
     previous: Option<&OpenDocument>,
     force: bool,
 ) -> Result<OpenDocument, SaveError> {
+    save_with_encoding(path, text, previous, force, None)
+}
+
+pub fn save_with_encoding(
+    path: &Path,
+    text: &str,
+    previous: Option<&OpenDocument>,
+    force: bool,
+    encoding: Option<(bool, bool)>,
+) -> Result<OpenDocument, SaveError> {
     if text.len() as u64 > MAX_DOCUMENT_BYTES {
         return Err("This document exceeds Folio's current 20 MB limit.".into());
     }
@@ -209,8 +223,10 @@ pub fn save(
             "This file changed on disk. Reload it or explicitly overwrite it.".into(),
         ));
     }
-    let crlf = previous.is_some_and(|document| document.crlf);
-    let bom = previous.is_some_and(|document| document.bom);
+    let (bom, crlf) = previous
+        .map(|document| (document.bom, document.crlf))
+        .or(encoding)
+        .unwrap_or_default();
     let normalized = text.replace("\r\n", "\n");
     let mut content = if crlf {
         normalized.replace('\n', "\r\n")

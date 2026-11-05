@@ -7,6 +7,14 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "toggle_fullscreen",
+            "activate_document",
+            "close_document",
+            "recovery_write",
+            "recovery_list",
+            "recovery_warnings",
+            "recovery_restore",
+            "recovery_discard",
+            "recovery_saved",
             "reveal_document",
             "rename_document",
             "duplicate_document",

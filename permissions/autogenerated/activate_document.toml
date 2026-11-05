@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-activate-document"
+description = "Enables the activate_document command without any pre-configured scope."
+commands.allow = ["activate_document"]
+
+[[permission]]
+identifier = "deny-activate-document"
+description = "Denies the activate_document command without any pre-configured scope."
+commands.deny = ["activate_document"]

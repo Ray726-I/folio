@@ -7,6 +7,15 @@
     "permissions": [
       "core:default",
       "allow-toggle-fullscreen",
+      "allow-activate-document",
+      "allow-close-document",
+      "allow-recovery-write",
+      "allow-recovery-list",
+      "allow-recovery-warnings",
+      "allow-recovery-restore",
+      "allow-recovery-discard",
+      "allow-recovery-saved",
+
       "allow-reveal-document",
       "allow-rename-document",
       "allow-duplicate-document",
