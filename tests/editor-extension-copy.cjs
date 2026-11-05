@@ -29,7 +29,7 @@ function probe(page) {
   });
 }
 async function copied(page) {
-  await page.keyboard.press('Control+c');
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+c' : 'Control+c');
   await page.waitForTimeout(150);
   return page.evaluate(() => window.copyProbe.at(-1));
 }

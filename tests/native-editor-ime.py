@@ -94,6 +94,15 @@ def main() -> int:
         x11.focus(window)
         time.sleep(1.0)
 
+        # Documents open without a caret. Focus Edit mode and move into the
+        # document before activating the input method, as in the keyboard smoke.
+        keyboard.chord("p", ctrl=True, shift=True)
+        keyboard.type_text("Edit mode")
+        keyboard.chord("Return")
+        time.sleep(0.4)
+        keyboard.chord("End", ctrl=True)
+        time.sleep(0.3)
+
         # Activate the input method, then compose romaji. mozc converts
         # "nihon" -> 日本 on the first space and commits with Return.
         subprocess.run(["fcitx5-remote", "-o"], env=env, check=False)

@@ -86,7 +86,7 @@ async function highlightState(page) {
         window.copyProbe.push({ text: event.clipboardData ? event.clipboardData.getData('text/plain') : null });
       });
     });
-    await page.keyboard.press('Control+c');
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+c' : 'Control+c');
     const copied = await page.evaluate(() => window.copyProbe.at(-1));
     assert.ok(copied && copied.text.includes('<kbd>Ctrl</kbd>'), `Control+C serves the exact rendered range, got ${JSON.stringify(copied && copied.text && copied.text.slice(0, 60))}`);
     assert.equal(await page.evaluate(() => current.content), source, 'copy never mutates the document');

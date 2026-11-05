@@ -157,7 +157,7 @@ async function clickText(page, text) {
       await clickText(page, 'Alpha');
       await page.keyboard.press('Control+a');
       await page.waitForTimeout(180);
-      await page.keyboard.press('Control+x');
+      await page.keyboard.press(process.platform === 'darwin' ? 'Meta+x' : 'Control+x');
       await page.waitForTimeout(300);
       assert.equal(await page.evaluate(() => current.content), '', 'Cut All across a rendered image deletes the document');
       await page.keyboard.press('Control+z');

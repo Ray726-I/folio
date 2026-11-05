@@ -199,7 +199,7 @@ function pastePlainText(page, text, html = null) {
         const { page, errors } = session;
         const from = source.indexOf('Prose A');
         await selectSource(page, from, from + 'Prose A'.length);
-        await page.keyboard.press('Control+x');
+        await page.keyboard.press(process.platform === 'darwin' ? 'Meta+x' : 'Control+x');
         await page.waitForFunction(value => current.content === value, expectedSplice(source, from, from + 'Prose A'.length, ''));
         assert.equal(await content(page), expectedSplice(source, from, from + 'Prose A'.length, ''),
           'cut must remove exactly the logical source interval');
@@ -295,7 +295,7 @@ function pastePlainText(page, text, html = null) {
       assert.equal(await content(page), source, 'a divergent appendTransaction must not rewrite canonical source');
       assert.deepEqual(await selection(page), beforeSelection, 'a rejected splice must keep the logical selection bookmarked');
       assert.match(await page.locator('#toast').textContent(), /preserved/, 'a rejected splice must report why nothing changed');
-      await page.keyboard.press('Control+x');
+      await page.keyboard.press(process.platform === 'darwin' ? 'Meta+x' : 'Control+x');
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
       assert.equal(await content(page), source, 'a rejected cut must not fall through to schema deletion');
       assert.deepEqual(await selection(page), beforeSelection, 'a rejected cut must keep the logical selection bookmarked');
