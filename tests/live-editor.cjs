@@ -21,7 +21,14 @@ const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n
       assert.ok(Math.max(...positions) - Math.min(...positions) <= 2, `rich-table ${column}/${edge} misaligned`);
     }
     const emptyCell = page.locator('#preview td').first();
-    await emptyCell.click(); await page.keyboard.press('Home'); await page.keyboard.press('Shift+End'); await page.keyboard.press('Delete');
+    await emptyCell.click();
+    await emptyCell.locator('strong').evaluate(element => {
+      const range = document.createRange(); range.selectNodeContents(element);
+      const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+    });
+    await page.waitForFunction(() => { const selection = editor.getSelection(); return selection.anchor !== selection.head; });
+    await page.keyboard.press('Delete');
     await page.keyboard.type('new');
     assert.ok((await emptyCell.innerText()).includes('new'));
     await page.keyboard.press('Tab'); await page.keyboard.type('Next');
