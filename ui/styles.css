@@ -339,6 +339,78 @@
   opacity:.5
 }
 
+/* A checked task reads brighter than an open one, so how far through a list
+   you are is legible at a glance. The checkbox itself keeps its own states. */
+.markdown .task-item:has(>input:not(:checked)) {
+  color:color-mix(in srgb,var(--fg) 58%,transparent)
+}
+
+.markdown .task-item:has(>input:checked) {
+  color:var(--fg)
+}
+
+/* Reading mode renders task rows without the editor's node-view class; the
+   task marker on the checkbox identifies them there. */
+.markdown li:has(>input[data-task-index]:not(:checked)) {
+  color:color-mix(in srgb,var(--fg) 58%,transparent)
+}
+
+/* Author <progress>/<meter> bars: a slim themed track with an accent fill,
+   sitting on the text line instead of showing their markup as code. */
+.markdown progress,.markdown meter {
+  appearance:none;
+  -webkit-appearance:none;
+  width:160px;
+  max-width:100%;
+  height:8px;
+  border:0;
+  border-radius:999px;
+  background:color-mix(in srgb,var(--fg) 14%,transparent);
+  overflow:hidden;
+  vertical-align:middle
+}
+
+.markdown progress::-webkit-progress-bar {
+  background:color-mix(in srgb,var(--fg) 14%,transparent);
+  border-radius:999px
+}
+
+.markdown progress::-webkit-progress-value {
+  background:var(--accent);
+  border-radius:999px
+}
+
+.markdown progress::-moz-progress-bar {
+  background:var(--accent);
+  border-radius:999px
+}
+
+.markdown meter::-webkit-meter-bar {
+  background:color-mix(in srgb,var(--fg) 14%,transparent);
+  border:0;
+  border-radius:999px
+}
+
+.markdown meter::-webkit-meter-optimum-value {
+  background:var(--accent);
+  border-radius:999px
+}
+
+.markdown meter::-webkit-meter-suboptimum-value {
+  background:color-mix(in srgb,var(--accent) 62%,#f0b429);
+  border-radius:999px
+}
+
+.markdown meter::-webkit-meter-even-less-good-value {
+  background:color-mix(in srgb,var(--accent) 40%,#e5484d);
+  border-radius:999px
+}
+
+.markdown meter::-moz-meter-bar {
+  background:var(--accent);
+  border-radius:999px
+}
+
 .image-widget { display:block; margin:1em 0; padding:14px; border:1px dashed var(--line); border-radius:8px; font:13px/1.6 var(--font-ui); color:var(--muted); }
 .image-widget>span { display:block; }
 .image-widget .button { margin-top:10px; }

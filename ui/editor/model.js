@@ -98,7 +98,7 @@ tokenizer.inline.ruler.after('escape', 'folio_math', (state, silent) => {
 // source, so the document keeps a single raw_inline atom with a verbatim
 // round-trip. Anything else falls through to the default single-tag
 // tokenization below, which keeps the previous code-chip rendering.
-export const INLINE_HTML_SPAN_TAGS = ['a', 'abbr', 'b', 'bdi', 'bdo', 'cite', 'code', 'del', 'dfn', 'em', 'i', 'ins', 'kbd', 'mark', 'q', 'ruby', 'rp', 'rt', 's', 'samp', 'small', 'span', 'strong', 'sub', 'sup', 'u', 'var', 'wbr'];
+export const INLINE_HTML_SPAN_TAGS = ['a', 'abbr', 'b', 'bdi', 'bdo', 'cite', 'code', 'del', 'dfn', 'em', 'i', 'ins', 'kbd', 'mark', 'meter', 'progress', 'q', 'ruby', 'rp', 'rt', 's', 'samp', 'small', 'span', 'strong', 'sub', 'sup', 'u', 'var', 'wbr'];
 tokenizer.inline.ruler.before('html_inline', 'folio_html_span', (state, silent) => {
   if (state.src.charCodeAt(state.pos) !== 0x3C /* < */) return false;
   const rest = state.src.slice(state.pos, state.posMax);

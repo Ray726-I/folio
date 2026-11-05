@@ -615,6 +615,10 @@ fn harden_images(html: &str) -> String {
     html.replace("<img ", "<img referrerpolicy=\"no-referrer\" ")
 }
 
+fn is_finite_number(value: &str) -> bool {
+    matches!(value.trim().parse::<f64>(), Ok(number) if number.is_finite())
+}
+
 fn sanitize(html: &str, allow_remote_images: bool) -> String {
     sanitizer_builder(allow_remote_images)
         .clean(html)
@@ -634,14 +638,24 @@ fn sanitizer_builder(allow_remote_images: bool) -> ammonia::Builder<'static> {
             "data-heading-content",
             "data-wikilink",
         ])
-        .add_tags(["section", "input"])
+        .add_tags(["section", "input", "progress", "meter"])
         .add_tag_attributes("input", ["type", "checked", "disabled"])
+        .add_tag_attributes("progress", ["value", "max"])
+        .add_tag_attributes("meter", ["value", "min", "max", "low", "high", "optimum"])
         .add_tag_attributes("section", ["data-footnotes"])
         .add_tag_attributes("th", ["style"])
         .add_tag_attributes("td", ["style"])
         .url_schemes(HashSet::from(["https", "http", "mailto", "data"]))
-        .attribute_filter(move |_, attribute, value| {
+        .attribute_filter(move |element, attribute, value| {
             match attribute {
+                // A progress/meter value must be a finite number; anything else
+                // is dropped rather than guessed, in both reading and editing.
+                "value" | "max" | "min" | "low" | "high" | "optimum"
+                    if (element == "progress" || element == "meter")
+                        && !is_finite_number(value) =>
+                {
+                    None
+                }
                 // Raw HTML can bypass the Markdown image rewriter; apply the same
                 // remote-image preference to author-supplied `<img src>` values.
                 "src" if remote_image_url(value) => {
@@ -1271,6 +1285,33 @@ mod tests {
         assert_eq!(
             set_task_checked_with_limits("- [ ] task", 0, true, &node_limits),
             "- [ ] task"
+        );
+    }
+
+    #[test]
+    fn progress_and_meter_render_with_numeric_attributes_only() {
+        let rendered = render(
+            "Progress: <progress value=\"72\" max=\"100\"> 72% </progress>\n\nMeter: <meter min=\"0\" max=\"100\" value=\"64\"> 64% </meter>",
+            None,
+        );
+        assert!(rendered.contains("<progress"), "{rendered}");
+        assert!(rendered.contains("value=\"72\""), "{rendered}");
+        assert!(rendered.contains("max=\"100\""), "{rendered}");
+        assert!(rendered.contains("<meter"), "{rendered}");
+        assert!(rendered.contains("value=\"64\""), "{rendered}");
+        assert!(
+            !rendered.contains("onclick"),
+            "event handlers must stay dropped: {rendered}"
+        );
+
+        let rejected = render("Bad: <progress value=\"oops\" max=\"100\">x</progress>", None);
+        assert!(
+            !rejected.contains("value=\"oops\""),
+            "a non-numeric value must be dropped: {rejected}"
+        );
+        assert!(
+            rejected.contains("<progress"),
+            "the element itself must survive: {rejected}"
         );
     }
 

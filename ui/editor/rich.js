@@ -904,6 +904,30 @@ export function createRichEditor(parent, options) {
     } catch {}
     return false;
   }
+  // ProseMirror escalates rapid presses by elapsed time and pointer distance,
+  // not by the browser's own click count. Mirror that rule so a rendered block
+  // opts out of the triple-click default in exactly the presses ProseMirror
+  // would escalate, while an ordinary third click still reaches it.
+  function tripleClickPress(editor, event) {
+    if (event.detail >= 3) return true;
+    const last = editor.input?.lastClick;
+    if (!last || last.button !== event.button || last.type !== 'doubleClick') return false;
+    if (Date.now() - last.time >= 500) return false;
+    const dx = last.x - event.clientX, dy = last.y - event.clientY;
+    return dx * dx + dy * dy < 100;
+  }
+  // The paragraph unit of a rendered projection: the nearest block element
+  // around the pressed text. Returns null outside a projection so every other
+  // triple click keeps ProseMirror's own paragraph selection.
+  function renderedParagraphAt(target) {
+    if (!(target instanceof Element)) return null;
+    const projection = target.closest('.extension-preview');
+    if (!projection) return null;
+    for (let node = target; node && node !== projection; node = node.parentElement) {
+      if (node.matches?.('p,li,dt,dd,h1,h2,h3,h4,h5,h6,pre,blockquote,figcaption,td,th')) return node;
+    }
+    return null;
+  }
   function setSelectionGuarded(on) {
     if (Boolean(on) === selectionGuarded) return;
     selectionGuarded = Boolean(on);
@@ -1258,6 +1282,13 @@ export function createRichEditor(parent, options) {
   // render; anything else (or a malformed fragment) falls back to the
   // previous code-chip rendering, which is always safe to display.
   const INLINE_HTML_ELEMENTS = new Set(INLINE_HTML_SPAN_TAGS);
+  const PROGRESS_BAR_ATTRIBUTES = new Set(['value', 'max']);
+  const METER_BAR_ATTRIBUTES = new Set(['value', 'min', 'max', 'low', 'high', 'optimum']);
+  function barNumber(value) {
+    if (typeof value !== 'string' || value.trim() === '') return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
   function renderInlineHtml(source) {
     // Build directly from the token stream, never from a parsed document. Only
     // allowlisted elements get created, so an inner <img>/<iframe>/<style> is
@@ -1286,6 +1317,19 @@ export function createRichEditor(parent, options) {
           // Same destination policy as Markdown links: relative document links
           // keep working, script/data/file targets never do.
           if (href && safeDestination(href)) element.setAttribute('href', href);
+        }
+        // A progress/meter bar keeps only its own numeric attributes. Every
+        // other attribute (handlers, style, class, arbitrary names) is dropped,
+        // and a value that is not a finite number is dropped rather than
+        // guessed, so the bar can never describe something the source does not.
+        const numeric = token.name === 'progress' ? PROGRESS_BAR_ATTRIBUTES : token.name === 'meter' ? METER_BAR_ATTRIBUTES : null;
+        if (numeric) {
+          for (const [name, value] of token.attrs) {
+            if (!numeric.has(name)) continue;
+            const number = barNumber(value);
+            if (number === null) continue;
+            element.setAttribute(name, String(number));
+          }
         }
         // Every other attribute is dropped: no handlers, no styles, and no
         // forged editor markers can ride along.
@@ -1474,8 +1518,17 @@ export function createRichEditor(parent, options) {
   function rawView(node, editor, getPos) {
     if (node.attrs.kind === 'source-edit') {
       const dom = document.createElement('pre'); dom.className = 'folio-source-edit';
+      // The card stands in for the block it replaced, so it inherits that
+      // block's vertical margins. Re-applied on every mount/update because
+      // ProseMirror may rebuild the node view.
+      const applyMargins = () => {
+        if (!sourceCardMargins) return;
+        dom.style.marginTop = sourceCardMargins.top;
+        dom.style.marginBottom = sourceCardMargins.bottom;
+      };
+      applyMargins();
       const contentDOM = document.createElement('code'); dom.append(contentDOM);
-      return { dom, contentDOM, update(next) { return next.type === node.type && next.attrs.kind === 'source-edit'; } };
+      return { dom, contentDOM, update(next) { if (next.type !== node.type || next.attrs.kind !== 'source-edit') return false; applyMargins(); return true; } };
     }
     const dom = document.createElement('section'); dom.className = 'extension-block';
     // Assert editability up front: ProseMirror marks atom DOM non-editable when
@@ -2633,6 +2686,25 @@ export function createRichEditor(parent, options) {
         // rendered projections, and the guard settles on pointer-up. A plain
         // new caret still syncs on release via the pointer-up flush below.
         if (event.button === 0) { options.checkpoint(); setSelectionGuarded(true); releaseBookmark(); tabSelection = null; }
+        // A rendered block is one atom in the document, so ProseMirror's
+        // triple-click default selects the whole block (alert title included,
+        // or a footnote, Mermaid diagram or raw HTML island) instead of the
+        // paragraph under the pointer. Select the rendered paragraph directly
+        // and skip ProseMirror's handler; the guard armed above keeps the
+        // range as a reading selection, exactly like a drag inside the
+        // projection.
+        if (event.button === 0 && !event.ctrlKey && !event.metaKey && tripleClickPress(editor, event)) {
+          const paragraph = renderedParagraphAt(event.target);
+          if (paragraph) {
+            event.preventDefault();
+            const range = document.createRange();
+            range.selectNodeContents(paragraph);
+            const dom = window.getSelection();
+            dom.removeAllRanges();
+            dom.addRange(range);
+            return true;
+          }
+        }
         // A press inside a table hands anchoring back to the selection: the
         // click lands the caret, the selection-anchored controls appear, and
         // later pointer movement re-evaluates the hover zone from there.
@@ -3811,6 +3883,19 @@ export function createRichEditor(parent, options) {
     }
     const segment = model.segments[index];
     if (!segment) return false;
+    // The source presentation is shorter than the rendered block it replaces
+    // and sits on its own margins, so the swap would shift the block and can
+    // scroll the reader out from under the user. Pin the block to the viewport
+    // position it already had; a reveal must never move the text being read.
+    const scroller = options.scroller || null;
+    const anchored = scroller && target instanceof Element ? target.getBoundingClientRect() : null;
+    // A rendered projection sits on the block rhythm (no top margin), while
+    // the source card is a UA <pre> with its own larger margins. Carry the
+    // projection's vertical margins onto the card so the swap is
+    // position-neutral instead of nudging the block and the reader.
+    const projection = target instanceof Element ? target.closest('.extension-block') : null;
+    const projectionStyle = projection ? getComputedStyle(projection) : null;
+    sourceCardMargins = projectionStyle ? { top: projectionStyle.marginTop, bottom: projectionStyle.marginBottom } : null;
     const oldCaret = richToSource(model, view.state.selection.head);
     const caret = oldCaret >= segment.from && oldCaret < segment.to ? Math.min(oldCaret, segment.to - (segment.raw.endsWith('\n') ? 1 : 0)) : segment.from;
     const candidate = parseSource(model.source, { from: segment.from, to: segment.to });
@@ -3818,8 +3903,24 @@ export function createRichEditor(parent, options) {
     model = candidate; bookmark = null;
     view.updateState(stateFor(candidate.doc, { anchor: caret, head: caret }));
     view.focus();
+    if (anchored) {
+      let start = 0;
+      for (let i = 0; i < index && i < model.segments.length; i++) start += model.segments[i].node.nodeSize;
+      const revealed = view.nodeDOM(start);
+      const rect = revealed instanceof Element ? revealed.getBoundingClientRect() : null;
+      const delta = rect ? rect.top - anchored.top : 0;
+      if (delta) {
+        const behavior = scroller.style.scrollBehavior;
+        scroller.style.scrollBehavior = 'auto';
+        scroller.scrollTop += delta;
+        scroller.style.scrollBehavior = behavior;
+      }
+    }
     return true;
   }
+  // Vertical margins for the in-place source card, taken from the block it
+  // replaced (see revealSourceBlock).
+  let sourceCardMargins = null;
   let sourcePress = null;
   view.dom.addEventListener('mousedown', event => {
     // Rendered projections must not arm a secondary-button selection: its
