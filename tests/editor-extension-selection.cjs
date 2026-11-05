@@ -92,6 +92,7 @@ Press <kbd>Use</kbd> to run and stop <samp>here.</samp>[^1]
     assert.match(await sourceBlock.textContent(), /Press <kbd>Use<\/kbd>/);
     assert.equal(await page.evaluate(() => current.content), source);
     await sourceBlock.evaluate(element => window.getSelection().selectAllChildren(element));
+    await page.waitForFunction(() => { const selection = editor.getSelection(); return selection.anchor !== selection.head; });
     await page.keyboard.insertText('In-place block edit.');
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => current.content.includes('In-place block edit.'));

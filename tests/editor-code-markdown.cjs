@@ -11,6 +11,7 @@ const { openEditor } = require('./editor-browser.cjs');
     const input = page.locator('.folio-source-edit');
     assert.equal(await input.textContent({ timeout: 3000 }), '```rust\nhello world\n```');
     await input.evaluate(block => window.getSelection().selectAllChildren(block));
+    await page.waitForFunction(() => { const selection = editor.getSelection(); return selection.anchor !== selection.head; });
     await page.keyboard.insertText('hello world');
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => current.content === 'Before\n\nhello world\n\nAfter\n', null, { timeout: 3000 });

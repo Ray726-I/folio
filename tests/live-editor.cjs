@@ -68,6 +68,7 @@ const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n
     assert.equal(await page.evaluate(() => editor.isSource()), false, 'math edit stays in formatted mode');
     assert.ok((await mathSource.textContent()).includes('x^2'));
     await mathSource.evaluate(element => window.getSelection().selectAllChildren(element));
+    await page.waitForFunction(() => { const selection = editor.getSelection(); return selection.anchor !== selection.head; });
     await page.keyboard.insertText('$$\n\\frac{1}{\n$$');
     await page.keyboard.press('Escape');
     assert.ok((await text()).includes('\\frac{1}{'));

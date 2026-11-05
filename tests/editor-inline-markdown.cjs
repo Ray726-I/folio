@@ -12,6 +12,7 @@ const { openEditor } = require('./editor-browser.cjs');
       const block = page.locator('.folio-source-edit');
       assert.equal(await block.textContent({ timeout: 3000 }), original);
       await block.evaluate(element => window.getSelection().selectAllChildren(element));
+      await page.waitForFunction(() => { const selection = editor.getSelection(); return selection.anchor !== selection.head; });
       await page.keyboard.insertText(replacement);
       await page.keyboard.press('Escape');
       await page.waitForFunction(value => current.content.includes(value), replacement);
