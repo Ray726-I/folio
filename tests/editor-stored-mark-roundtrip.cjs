@@ -41,15 +41,15 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
     await page.waitForFunction(value => current.content === value, source);
     assert.equal(await page.evaluate(() => current.content), source, 'undo must restore the exact source bytes');
 
-    // Ctrl+I must follow the same path.
+    // The platform formatting shortcut must follow the same path.
     await page.evaluate(() => editor.selectRange(10, 10, true));
-    await page.keyboard.press('Control+i');
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+i' : 'Control+i');
     await page.keyboard.type('Y');
     await page.waitForFunction(() => current.content.includes('*Y*'));
     assert.equal(await page.evaluate(() => current.content), '# H\n\nHello*Y* world\n',
       'typing after Ctrl+I must serialize the stored italic mark');
     await page.evaluate(() => { current.content = '**Hello**'; editor.replaceContent(current.content); editor.selectRange(3, 3, true); });
-    await page.keyboard.press('Control+b');
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+b' : 'Control+b');
     await page.keyboard.type('X');
     assert.equal(await page.evaluate(() => current.content), '**H**X**ello**', 'explicit empty stored marks turn bold off');
     assert.deepEqual(errors, []);
