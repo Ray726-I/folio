@@ -3406,6 +3406,14 @@ export function createRichEditor(parent, options) {
     if (activePopup && activePopup.menu.classList.contains('folio-table-menu') && !activePopup.menu.classList.contains('folio-document-menu')) closePopup();
   }
   function markdownMenuItem(target) {
+    // Rendered projection descendants can be replaced while the menu is
+    // open. Keep the owning editor node as the stable source target.
+    let offset = 0;
+    for (const segment of model.segments) {
+      const owner = view.nodeDOM(offset);
+      if (owner === target || owner?.contains?.(target)) { target = owner; break; }
+      offset += segment.node.nodeSize;
+    }
     const item = document.createElement('button');
     item.type = 'button'; item.textContent = 'Edit Markdown';
     item.setAttribute('role', 'menuitem');

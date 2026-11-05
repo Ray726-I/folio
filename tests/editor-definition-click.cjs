@@ -8,7 +8,11 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
   const { page } = session;
   try {
     await page.locator('.extension-preview dl').first().waitFor();
-    await openMarkdown(page.locator('.extension-preview dt').first());
+    await page.locator('.extension-preview dt').first().click({ button: 'right' });
+    const menu = page.getByRole('menu', { name: 'Document menu' });
+    await menu.waitFor();
+    await page.locator('.extension-preview').first().evaluate(element => { element.innerHTML = element.innerHTML; });
+    await menu.getByRole('menuitem', { name: 'Edit Markdown' }).click();
     await page.locator('.folio-source-edit').waitFor({ timeout: 3000 });
     assert.equal(await page.evaluate(() => current.content), source, 'revealing source preserves bytes');
     assert.match(await page.locator('.folio-source-edit').textContent(), /Markdown\n: A lightweight markup language\./);

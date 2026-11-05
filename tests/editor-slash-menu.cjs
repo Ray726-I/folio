@@ -3,6 +3,7 @@ const { openEditor } = require('./editor-browser.cjs');
 
 async function openSlash(page) {
   await page.locator('.editor-trailing-input').click({ timeout: 5000 });
+  await page.waitForFunction(() => document.activeElement?.classList.contains('ProseMirror'));
   await page.keyboard.type('/');
   await page.locator('.folio-slash-menu').waitFor({ state: 'visible', timeout: 5000 });
 }
