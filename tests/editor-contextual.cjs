@@ -1,3 +1,4 @@
+const { openMarkdown } = require('./editor-test-actions.cjs');
 const assert = require('node:assert/strict');
 const { openEditor } = require('./editor-browser.cjs');
 
@@ -27,7 +28,7 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.keyboard.press('Control+z');
     await page.waitForFunction(text => current.content === text, source);
     assert.equal(await page.locator('#context-heading-tools').count(), 0, 'no heading marker toolbar');
-    await page.locator('#preview h2').dblclick();
+    await openMarkdown(page.locator('#preview h2'));
     const marker = page.locator('.folio-source-edit');
     await marker.waitFor({ state: 'visible', timeout: 5000 });
     assert.equal(await marker.textContent(), '## World', 'heading Markdown is part of the document');

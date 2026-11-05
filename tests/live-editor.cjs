@@ -1,3 +1,4 @@
+const { openMarkdown } = require('./editor-test-actions.cjs');
 const assert = require('node:assert/strict');
 const { openEditor } = require('./editor-browser.cjs');
 
@@ -52,9 +53,9 @@ const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n
     assert.equal(await page.evaluate(() => editor.isSource()), false, 'link URL edit stays in the formatted editor');
     assert.equal(await page.locator('#preview a').first().textContent(), 'route');
     assert.ok((await page.locator('#preview a').first().getAttribute('href')).includes('https://example.com/changed'));
-    // Double-click exposes the formula's exact Markdown in the editor.
+    // The context menu exposes the formula's exact Markdown in the editor.
     const beforeMath = await text();
-    await page.locator('#preview .math-block .math-formula').dblclick();
+    await openMarkdown(page.locator('#preview .math-block .math-formula'));
     const mathSource = page.locator('.folio-source-edit');
     await mathSource.waitFor({ state: 'visible' });
     assert.equal(await page.evaluate(() => editor.isSource()), false, 'math edit stays in formatted mode');
@@ -65,8 +66,8 @@ const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n
     assert.ok((await text()).includes('\\frac{1}{'));
     await page.locator('#preview .math-error').waitFor();
     await page.keyboard.press('Control+z'); assert.equal(await text(), beforeMath);
-    // Image source stays editable through the explicit double-click gesture.
-    await page.locator('.image-widget').dblclick();
+    // Image source stays editable through the context menu.
+    await openMarkdown(page.locator('.image-widget'));
     await page.locator('.folio-source-edit').waitFor();
     assert.ok((await page.locator('.folio-source-edit').textContent()).includes('tracker.png'), 'the source editor holds the image Markdown');
     await page.keyboard.press('Escape');

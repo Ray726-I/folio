@@ -1,3 +1,4 @@
+const { openMarkdown } = require('./editor-test-actions.cjs');
 const assert = require('node:assert/strict');
 const { openEditor } = require('./editor-browser.cjs');
 
@@ -6,7 +7,7 @@ const { openEditor } = require('./editor-browser.cjs');
   try {
     const { page } = session;
     const block = page.locator('.extension-block').nth(1);
-    await block.locator('.extension-preview').dblclick();
+    await openMarkdown(block.locator('.extension-preview'));
     await page.locator('.folio-source-edit').waitFor();
     assert.match(await page.locator('.folio-source-edit').textContent(), /<div>same<\/div>/,
       'the second repeated raw block reveals its own source');
@@ -17,7 +18,7 @@ const { openEditor } = require('./editor-browser.cjs');
   session = await openEditor('![image.png](image.png)\n\nA [link](https://example.com/a\\(b\\)).\n');
   try {
     const { page } = session;
-    await page.locator('.image-widget').dblclick();
+    await openMarkdown(page.locator('.image-widget'));
     await page.locator('.folio-source-edit').waitFor();
     assert.match(await page.locator('.folio-source-edit').textContent(), /!\[image\.png\]\(image\.png\)/);
     await page.keyboard.press('Escape');

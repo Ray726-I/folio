@@ -1,3 +1,4 @@
+const { openMarkdown } = require('./editor-test-actions.cjs');
 const assert=require('node:assert/strict');
 const {openEditor}=require('./editor-browser.cjs');
 (async()=>{
@@ -12,7 +13,7 @@ const {openEditor}=require('./editor-browser.cjs');
   assert.equal(await page.evaluate(()=>document.activeElement.classList.contains('ProseMirror')),true);
   await page.keyboard.press('Shift+Tab');
   assert.equal(await page.evaluate(()=>current.content),source,'Shift-Tab removes indentation');
-  await page.locator('.code-container').dblclick();
+  await openMarkdown(page.locator('.code-container'));
   await page.evaluate(at=>{editor.selectRange(at,at,true);editor.focus();},at);
   await page.keyboard.press('Tab');
   assert.equal(await page.evaluate(()=>current.content),source.replace('return','    return'),'Tab works inside shared Markdown source too');

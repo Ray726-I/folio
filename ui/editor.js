@@ -247,7 +247,7 @@ async function mountUnifiedEditor() {
     content: current.content, transitionLocked, richParent: $('preview'), scroller: $('reader-scroll'),
     onChange(content) { if (current !== documentAtOpen) return; outlineRevision++; current.content = content; previewSnapshot = null; updateTitle(); scheduleStats(); scheduleEditorOutline(); if (!$('find-bar').hidden) scheduleFindRefresh(); },
     onPresentation: editorPresentation, onContext: updateFormatToolbar, message: toast, loadKatex, remoteImages: () => remoteImages, themeRevision: () => diagramThemeRevision,
-    revealSource: (from, to) => revealSourceForEdit(from, to), editValue,
+    revealSource: (from, to) => revealSourceForEdit(from, to), editValue, editClipboard,
     openLink(href) { const anchor = document.createElement('a'); anchor.setAttribute('href', href); followPreviewLink(anchor); },
     async renderExtension(source) {
       const snapshot = current.content;

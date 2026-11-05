@@ -4,8 +4,8 @@ import { EditorView, Decoration, DecorationSet } from 'prosemirror-view';
 import { keymap } from 'prosemirror-keymap';
 import { baseKeymap, toggleMark, setBlockType, wrapIn, chainCommands, exitCode } from 'prosemirror-commands';
 import { splitListItem, sinkListItem, liftListItem, wrapInList } from 'prosemirror-schema-list';
-import { fixTables, goToNextCell, addRowAfter, addRowBefore, addColumnAfter, addColumnBefore, deleteRow, deleteColumn, deleteTable, TableView, TableMap, findCell, CellSelection, selectedRect, moveTableRow, moveTableColumn, isInTable, cellAround, nextCell } from 'prosemirror-tables';
-import { tableOperation } from './table-operations.js';
+import { fixTables, goToNextCell, addRowAfter, addRowBefore, addColumnAfter, addColumnBefore, deleteRow, deleteColumn, deleteTable, TableView, TableMap, findCell, CellSelection, selectedRect, moveTableColumn, isInTable, cellAround, nextCell } from 'prosemirror-tables';
+import { tableOperation, moveTableRowTo } from './table-operations.js';
 import { inputRules, wrappingInputRule, textblockTypeInputRule, InputRule } from 'prosemirror-inputrules';
 import MarkdownIt from 'markdown-it';
 import { decodeHTML, decodeHTMLAttribute } from 'entities';
@@ -627,7 +627,7 @@ export function createRichEditor(parent, options) {
   }
   function mathView(node, editor, getPos) {
     const dom = document.createElement(node.isInline ? 'span' : 'div'); dom.className = node.isInline ? 'math-inline' : 'math-block'; dom.contentEditable = 'false';
-    const formula = document.createElement('span'); formula.className = 'math-formula'; formula.title = 'Double-click to edit formula';
+    const formula = document.createElement('span'); formula.className = 'math-formula'; formula.title = 'Right-click to edit Markdown';
     formula.setAttribute('role', 'button'); formula.setAttribute('aria-label', 'Edit formula'); formula.tabIndex = 0;
     // Shift-click on a formula extends the selection *through* it. Letting the
     // editor resolve the click on its own lands the head on the atom boundary,
@@ -675,35 +675,6 @@ export function createRichEditor(parent, options) {
       editorView.dispatch(editorView.state.tr.setSelection(selection).scrollIntoView());
       editorView.focus();
     });
-    dom.addEventListener('dblclick', event => {
-      if (options.isLocked() || event.target.closest('button,textarea')) return;
-      let pos;
-      try { pos = getPos(); } catch { return; }
-      const owner = richMapping(model, pos, { bias: 'right' })?.owner;
-      if (!owner || owner.confidence !== 'exact' || owner.supported === false || !Number.isInteger(owner.sourceFrom) || !Number.isInteger(owner.sourceTo)) return;
-      const from = owner.sourceFrom, to = owner.sourceTo, original = model.source.slice(from, to), openedRevision = revision;
-      if (!original.startsWith('![')) return;
-      event.preventDefault(); event.stopPropagation();
-      const previous = [...dom.childNodes]; previous.forEach(child => { if (child instanceof HTMLElement) child.hidden = true; });
-      const input = document.createElement('textarea'); input.className = 'inline-markdown-source'; input.setAttribute('aria-label', 'Image Markdown');
-      input.rows = 1; input.value = original; input.spellcheck = false; dom.append(input); input.focus();
-      let finished = false;
-      const finish = apply => {
-        if (finished) return; finished = true;
-        if (apply && input.value !== original && !options.isLocked()) {
-          if (revision !== openedRevision || model.source.slice(from, to) !== original) options.message('The image changed while editing; the draft was not applied.');
-          else if (replaceLogicalSelection(input.value, 'command', { from, to, all: false, collapsed: false }).committed) { view.focus(); return; }
-        }
-        input.remove(); previous.forEach(child => { if (child instanceof HTMLElement) child.hidden = false; });
-      };
-      input.addEventListener('keydown', e => {
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { finish(true); return; }
-        e.stopPropagation();
-        if (e.key === 'Escape') { e.preventDefault(); finish(false); view.focus(); }
-        else if (e.key === 'Enter') { e.preventDefault(); finish(true); view.focus(); }
-      });
-      input.addEventListener('blur', () => finish(true));
-    });
     const lease = options.reserveImage();
     const render = async (consent = false) => {
       const current = ++generation; dom.replaceChildren();
@@ -727,44 +698,6 @@ export function createRichEditor(parent, options) {
   }
   function codeView(node, editor, getPos) {
     const dom = document.createElement('div'); dom.className = 'code-container';
-    let codeSourceEditing = false;
-    dom.addEventListener('dblclick', event => {
-      if (revealSourceBlock(dom)) { event.preventDefault(); return; }
-      if (options.isLocked() || codeSourceEditing || event.target.closest('input,textarea,button')) return;
-      let pos;
-      try { pos = getPos(); } catch { return; }
-      let ledger = model.ledger;
-      if (!ledger) { try { ledger = model.ledger = buildLedger(model.source, model.doc, { segments: model.segments }); } catch { return; } }
-      const owner = ledger?.owners?.find(entry => entry.pmFrom === pos && entry.type === 'code_block');
-      if (!owner || owner.confidence !== 'exact' || owner.supported === false) return;
-      const from = owner.sourceFrom;
-      let to = owner.sourceTo;
-      while (to > from && /[\r\n]/.test(model.source[to - 1])) to--;
-      const original = model.source.slice(from, to);
-      if (!/^( {0,3})(`{3,}|~{3,})/.test(original)) return;
-      event.preventDefault(); event.stopPropagation();
-      codeSourceEditing = true;
-      const draft = document.createElement('textarea');
-      draft.className = 'code-markdown-source'; draft.setAttribute('aria-label', 'Edit code block Markdown');
-      draft.value = original; draft.rows = Math.max(3, original.split('\n').length); draft.spellcheck = false;
-      dom.replaceChildren(draft); draft.focus();
-      let finished = false;
-      const finish = apply => {
-        if (finished) return;
-        finished = true; codeSourceEditing = false;
-        if (apply && !options.isLocked() && model.source.slice(from, to) === original && draft.value !== original) {
-          if (replaceLogicalSelection(draft.value, 'command', { from, to, all: false, collapsed: false }).committed) { view.focus(); return; }
-        }
-        render(); view.focus();
-      };
-      draft.addEventListener('keydown', e => {
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { finish(true); return; }
-        e.stopPropagation();
-        if (e.key === 'Escape') { e.preventDefault(); finish(false); }
-        else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); finish(true); }
-      });
-      draft.addEventListener('blur', () => finish(true));
-    });
     const fenceInfo = document.createElement('input');
     fenceInfo.className = 'code-fence-info'; fenceInfo.type = 'text';
     fenceInfo.setAttribute('aria-label', 'Code fence info');
@@ -1388,37 +1321,7 @@ export function createRichEditor(parent, options) {
     dom.addEventListener('beforeinput', guardMutation);
     dom.addEventListener('drop', guardMutation);
     dom.addEventListener('dragstart', guardMutation);
-    dom.addEventListener('dblclick', event => {
-      if (options.isLocked() || event.target.closest('textarea')) return;
-      let pos;
-      try { pos = getPos(); } catch { return; }
-      const owner = richMapping(model, pos, { bias: 'right' })?.owner;
-      if (!owner || owner.confidence !== 'exact' || owner.supported === false) return;
-      const from = owner.sourceFrom, to = owner.sourceTo, original = model.source.slice(from, to), openedRevision = revision;
-      if (original !== node.attrs.source) return;
-      event.preventDefault(); event.stopPropagation();
-      const prior = document.createDocumentFragment(); while (dom.firstChild) prior.append(dom.firstChild);
-      const input = document.createElement('textarea'); input.className = 'inline-markdown-source'; input.setAttribute('aria-label', 'Inline HTML source');
-      input.rows = 1; input.value = original; input.spellcheck = false; dom.append(input); input.focus();
-      let finished = false;
-      const finish = apply => {
-        if (finished) return; finished = true;
-        if (apply && input.value !== original && !options.isLocked()) {
-          if (revision !== openedRevision || model.source.slice(from, to) !== original) options.message('The HTML changed while editing; the draft was not applied.');
-          else if (replaceLogicalSelection(input.value, 'command', { from, to, all: false, collapsed: false }).committed) { view.focus(); return; }
-        }
-        input.remove(); dom.append(prior);
-      };
-      input.addEventListener('keydown', e => {
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { finish(true); return; }
-        e.stopPropagation();
-        if (e.key === 'Escape') { e.preventDefault(); finish(false); view.focus(); }
-        else if (e.key === 'Enter') { e.preventDefault(); finish(true); view.focus(); }
-      });
-      input.addEventListener('blur', () => finish(true));
-    });
-    // Source editing uses the shared double-click gesture. Ordinary clicks
-    // keep the link rendered; modifier clicks still open its destination.
+    // Modifier clicks open the link destination.
     dom.addEventListener('click', event => {
       const anchor = event.target.closest('a');
       if (!anchor || event.button !== 0) return;
@@ -1600,7 +1503,7 @@ export function createRichEditor(parent, options) {
     // the guard here as a backstop; in-editor drags are guarded centrally.
     projection.addEventListener('mousemove', event => { if (event.buttons & 1) setSelectionGuarded(true); });
     projection.tabIndex = options.isLocked() ? -1 : 0;
-    projection.title = 'Double-click to edit Markdown';
+    projection.title = 'Right-click to edit Markdown';
     projection.addEventListener('keydown', event => {
       if (event.target !== projection || !['Enter', 'F2'].includes(event.key) || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
       if (revealSourceBlock(dom)) { event.preventDefault(); event.stopPropagation(); }
@@ -1702,6 +1605,7 @@ export function createRichEditor(parent, options) {
     const render = async () => {
       const current = ++generation;
       const source = node.textContent;
+      projection.title = 'Right-click to edit Markdown';
       invalidateTasks();
       try {
         const html = await options.renderExtension(source);
@@ -1712,7 +1616,7 @@ export function createRichEditor(parent, options) {
           void mountAuthorImages(source, projection, () => generation !== current || !dom.isConnected);
         }
       }
-      catch { if (current === generation) projection.textContent = 'Rendered view unavailable. Double-click to inspect the Markdown.'; }
+      catch { if (current === generation) projection.textContent = 'Rendered view unavailable. Right-click to edit Markdown.'; }
     };
     let lastRemote = options.remoteImages();
     const refresh = () => {
@@ -1726,7 +1630,7 @@ export function createRichEditor(parent, options) {
     };
     refreshers.add(refresh); refresh();
     const removeListeners = () => { refreshers.delete(refresh); };
-    // Double-click reveals literal Markdown in the shared editor. Task
+    // The context menu reveals literal Markdown in the shared editor. Task
     // checkboxes commit only their verified source marker.
     return { dom, update(next) { if (next.type !== node.type || next.attrs.kind === 'source-edit') return false; const same = next.sameMarkup(node) && next.textContent === node.textContent; if (!same) { generation++; invalidateTasks(); } node = next; if (!same) Promise.resolve().then(render); return true; }, ignoreMutation: () => true, stopEvent: event => event.target.closest?.('button, input[type="checkbox"]') != null, destroy() { generation++; removeListeners(); } };
   }
@@ -2560,6 +2464,20 @@ export function createRichEditor(parent, options) {
       // A click can update the browser caret before ProseMirror observes its
       // selectionchange. Adopt it before source-edit keyboard commands run.
       if (model.sourceEdit) captureDOMSelection();
+      if (event.key === 'Escape' && !model.sourceEdit && !activePopup && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+        captureDOMSelection();
+        const selection = editor.state.selection;
+        if (!selection.empty || selection instanceof NodeSelection) {
+          const head = editor.state.doc.resolve(selection.head);
+          const caret = Selection.findFrom(head, 1, true) || Selection.findFrom(head, -1, true);
+          if (caret) {
+            releaseBookmark(); tabSelection = null;
+            editor.dispatch(editor.state.tr.setSelection(caret));
+            syncFolioHighlight();
+            event.preventDefault(); return true;
+          }
+        }
+      }
       if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && pressed === 'a') {
         return selectAllLogical(editor.state, editor.dispatch, editor);
       }
@@ -2825,9 +2743,8 @@ export function createRichEditor(parent, options) {
         let from = ranges[index].from, to = ranges[index].to;
         for (let i = index - 1; i >= 0 && ranges[i].to === from; i--) from = ranges[i].from;
         for (let i = index + 1; i < ranges.length && ranges[i].from === to; i++) to = ranges[i].to;
-        // A primary click opens the destination editor, but wait long enough
-        // for a double-click to reveal the block's source instead. Ctrl/Cmd
-        // click (or any click while locked/reading) opens the link.
+        // A primary click opens the destination editor after the selection
+        // gesture settles. Ctrl/Cmd click (or a click under Lock) opens it.
         if (event.detail > 1) { clearTimeout(linkClickTimer); return true; }
         clearTimeout(linkClickTimer);
         linkClickTimer = setTimeout(() => { linkClickTimer = 0; revealLinkSource(from, to, href); }, 240);
@@ -2851,7 +2768,7 @@ export function createRichEditor(parent, options) {
     'align-left', 'align-center', 'align-right'];
   // The shared table-operations module is the only authority for structural
   // rewrites (move/duplicate/sort/align). It refuses merged cells and keeps
-  // the header row fixed. There is deliberately no local fallback: running a
+  // valid header cell roles when rows cross the first position. There is deliberately no local fallback: running a
   // weaker local rewrite after it returns false (or throws) would bypass the
   // header and unsafe-table safeguards. Unknown names fail closed.
   function resolveTableOp(name) {
@@ -2865,11 +2782,7 @@ export function createRichEditor(parent, options) {
       } catch { return false; }
     };
   }
-  // Same safeguards as the table-operations module, enforced for pointer
-  // drags (which move directly via moveTableRow/moveTableColumn): the table
-  // must be rectangular (no merged/rowspan/colspan cells) and neither the
-  // dragged row nor its destination may be the header row. Columns travel
-  // whole, so they need only the rectangularity check.
+  // Pointer drags share the structural commands' rectangular-table safeguards.
   function rectangularTableGuard(info) {
     try {
       const { table, map } = info;
@@ -2886,14 +2799,7 @@ export function createRichEditor(parent, options) {
           if ((cell.attrs.colspan ?? 1) !== 1 || (cell.attrs.rowspan ?? 1) !== 1) return null;
         }
       }
-      let headerRows = 0;
-      const first = table.firstChild;
-      if (first && first.childCount > 0) {
-        let allHeader = true;
-        first.forEach(cell => { if (cell.type.spec.tableRole !== 'header_cell') allHeader = false; });
-        if (allHeader) headerRows = 1;
-      }
-      return { headerRows };
+      return true;
     } catch { return null; }
   }
   function runTableCommand(command) {
@@ -3250,6 +3156,55 @@ export function createRichEditor(parent, options) {
     }
   }
   let handleDrag = null;
+  function createDragPreview(drag) {
+    const { info, kind, from } = drag;
+    const cells = [];
+    for (let r = 0; r < info.height; r++) {
+      if (kind === 'row' && r !== from) continue;
+      for (let c = 0; c < info.width; c++) {
+        if (kind === 'col' && c !== from) continue;
+        const cell = cellDomAt(info, r, c);
+        if (cell) cells.push(cell);
+      }
+    }
+    if (!cells.length) return;
+    const first = cells[0].getBoundingClientRect(), last = cells.at(-1).getBoundingClientRect();
+    const rect = { left: first.left, top: first.top, width: last.right - first.left, height: last.bottom - first.top };
+    const preview = document.createElement('div');
+    preview.className = 'markdown folio-table-drag-preview'; preview.setAttribute('aria-hidden', 'true');
+    const table = document.createElement('table');
+    let row;
+    cells.forEach((cell, index) => {
+      if (kind === 'col' || index === 0) { row = document.createElement('tr'); table.append(row); }
+      const clone = cell.cloneNode(true), box = cell.getBoundingClientRect();
+      clone.style.width = `${box.width}px`; clone.style.minWidth = `${box.width}px`;
+      clone.style.height = `${box.height}px`; clone.classList.remove('selectedCell');
+      clone.removeAttribute('id'); clone.querySelectorAll('[id]').forEach(node => node.removeAttribute('id'));
+      row.append(clone);
+    });
+    preview.append(table);
+    const style = getComputedStyle(cells[0]);
+    Object.assign(preview.style, { left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`,
+      height: `${rect.height}px`, fontSize: style.fontSize, fontFamily: style.fontFamily, lineHeight: style.lineHeight });
+    const outline = document.createElement('div'); outline.className = 'folio-table-drag-source';
+    outline.setAttribute('aria-hidden', 'true');
+    Object.assign(outline.style, { left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px` });
+    document.body.append(outline, preview);
+    drag.preview = preview; drag.outline = outline; drag.origin = rect;
+  }
+  function finishDragPreview(drag, destination) {
+    drag?.outline?.remove();
+    if (!drag?.preview) return;
+    const preview = drag.preview;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { preview.remove(); return; }
+    const rect = destination || drag.origin;
+    const from = getComputedStyle(preview).transform;
+    const animation = preview.animate([
+      { transform: from, opacity: .95 },
+      { transform: `translate(${rect.left - drag.origin.left}px, ${rect.top - drag.origin.top}px)`, opacity: .2 }
+    ], { duration: 180, easing: 'ease-out', fill: 'forwards' });
+    animation.finished.then(() => preview.remove(), () => preview.remove());
+  }
   function rowColEdges(info) {
     const wrapRect = info.wrapper.getBoundingClientRect();
     const rows = [], cols = [];
@@ -3278,8 +3233,10 @@ export function createRichEditor(parent, options) {
     if (!info || !info.wrapper) return;
     if ((kind === 'row' ? info.height : info.width) < 2) return;
     event.preventDefault();
+    if (!rectangularTableGuard(info)) return;
     try { event.currentTarget?.setPointerCapture?.(event.pointerId); } catch {}
-    handleDrag = { kind, from: index, slot: index, live: false, edges: rowColEdges(info), info };
+    handleDrag = { kind, from: index, slot: index, live: false, edges: rowColEdges(info), info,
+      startX: event.clientX, startY: event.clientY };
   }
   function moveTargetFor(drag) {
     const count = drag.kind === 'row' ? drag.edges.rows.length : drag.edges.cols.length;
@@ -3287,10 +3244,7 @@ export function createRichEditor(parent, options) {
     if (slot === drag.from || slot === drag.from + 1) return -1;
     return slot > drag.from ? slot - 1 : slot;
   }
-  // Drag destinations pass through the same safeguards as the operations
-  // module: rectangular tables only, and row drags may neither start from
-  // nor land on the header row. Anything else hides the indicator and drops
-  // as a no-op (the document is never touched).
+  // Invalid destinations and merged tables drop as a no-op.
   function guardedDropTarget(drag) {
     const target = moveTargetFor(drag);
     if (target < 0) return -1;
@@ -3298,7 +3252,6 @@ export function createRichEditor(parent, options) {
     if (!info) return -1;
     const guard = rectangularTableGuard(info);
     if (!guard) return -1;
-    if (drag.kind === 'row' && (drag.from < guard.headerRows || target < guard.headerRows)) return -1;
     return target;
   }
   function paintDropHandle(target) {
@@ -3314,21 +3267,36 @@ export function createRichEditor(parent, options) {
   }
   function onHandlePointerMove(event) {
     if (!handleDrag) return;
+    handleDrag.pending = { clientX: event.clientX, clientY: event.clientY };
+    if (handleDrag.frame) return;
     const drag = handleDrag;
+    drag.frame = requestAnimationFrame(() => {
+      drag.frame = 0;
+      if (handleDrag === drag && drag.pending) {
+        const point = drag.pending; drag.pending = null;
+        paintHandleDrag(point);
+      }
+    });
+  }
+  function paintHandleDrag(event) {
+    if (!handleDrag) return;
+    const drag = handleDrag;
+    if (!drag.live && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 4) return;
+    if (!drag.live) createDragPreview(drag);
     drag.live = true;
+    if (drag.preview) drag.preview.style.transform = `translate(${drag.kind === 'col' ? event.clientX - drag.startX : 0}px, ${drag.kind === 'row' ? event.clientY - drag.startY : 0}px)`;
     const coord = drag.kind === 'row' ? event.clientY : event.clientX;
     const boundaries = drag.kind === 'row' ? drag.edges.rows : drag.edges.cols;
     const edge = drag.kind === 'row' ? drag.edges.top : drag.edges.left;
     drag.slot = slotFromCoord(boundaries, edge, coord);
-    const target = guardedDropTarget(drag);
-    const info = (drag.info && drag.info.wrapper && drag.info.wrapper.isConnected) ? drag.info : tableInfo();
-    if (target < 0 || !info || !info.wrapper) { dropLine.hidden = true; paintDropHandle(-1); return; }
-    const wrapRect = info.wrapper.getBoundingClientRect();
+    const target = moveTargetFor(drag);
+    if (target < 0 || !drag.info.wrapper.isConnected) { dropLine.hidden = true; paintDropHandle(-1); return; }
+    const wrapRect = drag.edges;
     if (drag.kind === 'row') {
       const stops = [drag.edges.top].concat(drag.edges.rows);
       const y = stops[Math.max(0, Math.min(stops.length - 1, drag.slot))];
       dropLine.style.left = `${Math.round(wrapRect.left)}px`;
-      dropLine.style.width = `${Math.round(Math.max(0, wrapRect.width))}px`;
+      dropLine.style.width = `${Math.round(Math.max(0, wrapRect.right - wrapRect.left))}px`;
       dropLine.style.top = `${Math.round(y - 1)}px`;
       dropLine.style.height = '2px';
       dropLine.style.bottom = '';
@@ -3336,7 +3304,7 @@ export function createRichEditor(parent, options) {
       const stops = [drag.edges.left].concat(drag.edges.cols);
       const x = stops[Math.max(0, Math.min(stops.length - 1, drag.slot))];
       dropLine.style.top = `${Math.round(wrapRect.top)}px`;
-      dropLine.style.height = `${Math.round(Math.max(0, wrapRect.height))}px`;
+      dropLine.style.height = `${Math.round(Math.max(0, wrapRect.bottom - wrapRect.top))}px`;
       dropLine.style.left = `${Math.round(x - 1)}px`;
       dropLine.style.width = '2px';
       dropLine.style.bottom = '';
@@ -3346,25 +3314,39 @@ export function createRichEditor(parent, options) {
   }
   function endHandleDrag(commit) {
     const drag = handleDrag;
+    if (drag?.frame) cancelAnimationFrame(drag.frame);
+    if (commit && drag?.pending) paintHandleDrag(drag.pending);
     handleDrag = null;
     dropLine.hidden = true;
     paintDropHandle(-1);
-    if (!drag || !commit || !drag.live) return;
+    if (drag?.live) {
+      try {
+        suppressHandleClick = { el: document.querySelector(`[data-handle-${drag.kind}="${drag.from}"]`), t: performance.now() };
+      } catch { suppressHandleClick = null; }
+    }
+    if (!drag || !commit || !drag.live) { finishDragPreview(drag); return; }
     const target = guardedDropTarget(drag);
-    if (target < 0 || !view || options.isLocked()) return;
+    if (target < 0 || !view || options.isLocked()) { finishDragPreview(drag); return; }
     hoverAnchor = null;
-    try {
-      suppressHandleClick = { el: document.querySelector(`[data-handle-${drag.kind}="${drag.from}"]`), t: performance.now() };
-    } catch { suppressHandleClick = null; }
     const info = (drag.info && drag.info.wrapper && drag.info.wrapper.isConnected) ? drag.info : tableInfo();
     if (info) {
       if (drag.kind === 'row') selectTableCell(drag.from, info.col, info);
       else selectTableCell(info.row, drag.from, info);
     }
     const moved = drag.kind === 'row'
-      ? runTableCommand(moveTableRow({ from: drag.from, to: target }))
+      ? runTableCommand(moveTableRowTo(drag.from, target))
       : runTableCommand(moveTableColumn({ from: drag.from, to: target }));
-    if (moved) refocusHandle(drag.kind, target);
+    let destination = null;
+    if (moved) {
+      const next = tableInfo();
+      if (next) destination = cellDomAt(next, drag.kind === 'row' ? target : 0, drag.kind === 'col' ? target : 0)?.getBoundingClientRect();
+      if (next) selectTableCell(drag.kind === 'row' ? target : next.row, drag.kind === 'col' ? target : next.col, next);
+      releaseBookmark(); tabSelection = null;
+      window.getSelection()?.removeAllRanges();
+      syncFolioHighlight();
+      refocusHandle(drag.kind, target);
+    }
+    finishDragPreview(drag, destination);
   }
   function onHandlePointerUp(event) {
     if (!handleDrag) return;
@@ -3374,9 +3356,15 @@ export function createRichEditor(parent, options) {
   function onHandlePointerCancel() {
     endHandleDrag(false);
   }
+  function onHandleDragKey(event) {
+    if (handleDrag && event.key === 'Escape') {
+      event.preventDefault(); event.stopPropagation(); endHandleDrag(false);
+    }
+  }
   document.addEventListener('pointermove', onHandlePointerMove);
   document.addEventListener('pointerup', onHandlePointerUp);
   document.addEventListener('pointercancel', onHandlePointerCancel);
+  document.addEventListener('keydown', onHandleDragKey, true);
   // Compact contextual menu: Row and Column fly out as submenus (insertion,
   // move, duplicate, deletion, plus alignment for columns); sort and table
   // deletion stay top-level. Leaf items keep the same
@@ -3415,7 +3403,61 @@ export function createRichEditor(parent, options) {
     }
   }
   function closeTableMenu() {
-    if (activePopup && activePopup.menu.classList.contains('folio-table-menu')) closePopup();
+    if (activePopup && activePopup.menu.classList.contains('folio-table-menu') && !activePopup.menu.classList.contains('folio-document-menu')) closePopup();
+  }
+  function markdownMenuItem(target) {
+    const item = document.createElement('button');
+    item.type = 'button'; item.textContent = 'Edit Markdown';
+    item.setAttribute('role', 'menuitem');
+    item.disabled = options.isLocked() || !target || !!target.closest('.folio-source-edit');
+    item.addEventListener('click', () => {
+      closePopup();
+      if (target?.isConnected) revealSourceBlock(target);
+    });
+    return item;
+  }
+  function openDocumentMenu(target, event) {
+    closePopup();
+    captureDOMSelection();
+    if (target === view.dom) {
+      const dom = view.domAtPos(view.state.selection.head).node;
+      target = dom instanceof Element ? dom : dom.parentElement;
+    }
+    const menu = document.createElement('div');
+    menu.className = 'folio-table-menu folio-document-menu';
+    menu.setAttribute('role', 'menu'); menu.setAttribute('aria-label', 'Document menu');
+    menu.tabIndex = -1;
+    menu.append(markdownMenuItem(target));
+    const separator = document.createElement('hr'); separator.setAttribute('role', 'separator');
+    menu.append(separator);
+    for (const [label, action] of [['Undo', 'undo'], ['Redo', 'redo'], ['Cut', 'cut'], ['Copy', 'copy'], ['Paste', 'paste'], ['Select all', 'select-all']]) {
+      const item = document.createElement('button'); item.type = 'button'; item.textContent = label;
+      item.setAttribute('role', 'menuitem');
+      const historyAction = action === 'undo' || action === 'redo';
+      item.disabled = !(historyAction ? options.undo : options.editClipboard) || (options.isLocked() && ['undo', 'redo', 'cut', 'paste'].includes(action));
+      item.addEventListener('click', () => {
+        closePopup();
+        if (historyAction) { options.undo?.(action === 'redo'); view.focus(); return; }
+        Promise.resolve(options.editClipboard?.(action)).catch(error => options.message?.(String(error)));
+      });
+      menu.append(item);
+    }
+    menu.addEventListener('keydown', event => {
+      const items = [...menu.querySelectorAll('button:not(:disabled)')];
+      const index = items.indexOf(document.activeElement);
+      if (event.key === 'Escape') { event.preventDefault(); closePopup(); view.focus(); }
+      else if (event.key === 'ArrowDown') { event.preventDefault(); (items[index + 1] || items[0])?.focus(); }
+      else if (event.key === 'ArrowUp') { event.preventDefault(); (items[index - 1] || items.at(-1))?.focus(); }
+      else if (event.key === 'Home') { event.preventDefault(); items[0]?.focus(); }
+      else if (event.key === 'End') { event.preventDefault(); items.at(-1)?.focus(); }
+    });
+    menu.addEventListener('focusout', event => { if (!menu.contains(event.relatedTarget)) closePopup(); });
+    activePopup = { menu, trigger: null };
+    const hasPoint = !!(event.clientX || event.clientY);
+    const point = hasPoint ? { left: event.clientX, bottom: event.clientY } : view.coordsAtPos(view.state.selection.head);
+    positionPopup(menu, point);
+    if (hasPoint) menu.focus();
+    else menu.querySelector('button:not(:disabled)')?.focus();
   }
   function menuLeafButton(action, label, locked, danger) {
     const item = document.createElement('button');
@@ -3434,7 +3476,7 @@ export function createRichEditor(parent, options) {
     });
     return item;
   }
-  function openTableMenu(trigger, anchor) {
+  function openTableMenu(trigger, anchor, focusContainer = false) {
     if (!view) return;
     closePopup();
     if (!actionInfo()) return;
@@ -3443,8 +3485,14 @@ export function createRichEditor(parent, options) {
     menu.className = 'folio-table-menu';
     menu.setAttribute('role', 'menu');
     menu.setAttribute('aria-label', 'Table menu');
+    menu.tabIndex = -1;
     let openSub = null;
     const topButtons = [];
+    const sourceItem = markdownMenuItem(tableInfo()?.wrapper);
+    sourceItem.addEventListener('pointerenter', () => closeSubmenu(false));
+    sourceItem.addEventListener('focus', () => closeSubmenu(false));
+    menu.append(sourceItem);
+    topButtons.push(sourceItem);
     function closeSubmenu(restoreFocus) {
       if (!openSub) return;
       const { wrap, btn, sub } = openSub;
@@ -3574,7 +3622,8 @@ export function createRichEditor(parent, options) {
     try { trigger?.setAttribute?.('aria-expanded', 'true'); } catch {}
     positionPopup(menu, anchor || { left: window.innerWidth / 2, bottom: 88 });
     const first = menu.querySelector(':scope > button:not(:disabled), :scope > .folio-table-subwrap > button:not(:disabled)');
-    if (first) first.focus();
+    if (focusContainer) menu.focus();
+    else if (first) first.focus();
   }
   function openTableMenuFor(kind, index, trigger, coords) {
     const info = actionInfo();
@@ -3600,9 +3649,13 @@ export function createRichEditor(parent, options) {
   }
   view.dom.addEventListener('contextmenu', event => {
     const target = event.target instanceof Element ? event.target : null;
-    if (!target || !view.dom.contains(target)) return;
+    if (!target || !view.dom.contains(target) || target.closest('input,textarea,button,select')) return;
     const cellEl = target.closest ? target.closest('td, th') : null;
-    if (!cellEl || !view.dom.contains(cellEl)) return;
+    if (!cellEl || !view.dom.contains(cellEl)) {
+      event.preventDefault(); event.stopPropagation();
+      openDocumentMenu(target, event);
+      return;
+    }
     let cell = null;
     try {
       cell = cellAround(view.state.doc.resolve(view.posAtDOM(cellEl, 0)));
@@ -3625,7 +3678,7 @@ export function createRichEditor(parent, options) {
         if (at) anchor = { left: at.left, bottom: at.bottom };
       } catch {}
     }
-    openTableMenu(null, anchor);
+    openTableMenu(null, anchor, hasPoint);
   });
   // Visibility follows one anchor: the hovered table/zone when the pointer
   // is over a table or its chrome, otherwise the selected table (keyboard /
@@ -3761,6 +3814,12 @@ export function createRichEditor(parent, options) {
   }
   let sourcePress = null;
   view.dom.addEventListener('mousedown', event => {
+    // Rendered projections must not arm a secondary-button selection: its
+    // later mouseup would steal focus from the context menu.
+    if (event.button === 2 && event.target instanceof Element && event.target.closest('.math-inline,.math-block,.html-inline,.extension-preview')) {
+      event.preventDefault(); event.stopPropagation();
+      return;
+    }
     sourcePress = event.button === 0 ? { x:event.clientX, y:event.clientY } : null;
   }, true);
   const sourceGesture = event => {
@@ -3777,9 +3836,7 @@ export function createRichEditor(parent, options) {
     }
     const control = target.closest('button,input,textarea,select');
     if (control) return;
-    const sourceTarget = event.type === 'dblclick'
-      ? target.closest('h1,h2,h3,h4,h5,h6,a,.math-formula,.code-container,.image-widget,.html-inline,.extension-preview,blockquote,li,ul,ol,table,hr')
-      : event.type === 'keydown' ? target.closest('.math-formula') : null;
+    const sourceTarget = event.type === 'keydown' ? target.closest('.math-formula') : null;
     if (sourceTarget && revealSourceBlock(sourceTarget)) { event.preventDefault(); event.stopImmediatePropagation(); }
     else if (model.sourceEdit && event.type === 'click' && !target.closest('button,input,textarea')) {
       const selection = sourceSelection(view.state);
@@ -3796,7 +3853,13 @@ export function createRichEditor(parent, options) {
     });
   });
   view.dom.addEventListener('click', sourceGesture, true);
-  view.dom.addEventListener('dblclick', sourceGesture, true);
+  view.dom.addEventListener('dblclick', event => {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    const divider = event.target instanceof Element ? event.target.closest('hr') : null;
+    if (divider && view.dom.contains(divider) && revealSourceBlock(divider)) {
+      event.preventDefault(); event.stopPropagation();
+    }
+  }, true);
   view.dom.addEventListener('keydown', event => {
     if (['Enter', ' '].includes(event.key) && event.target.closest?.('.math-formula')) sourceGesture(event);
   }, true);
@@ -3940,6 +4003,7 @@ export function createRichEditor(parent, options) {
       view.focus();
     },
     destroy() {
+      endHandleDrag(false);
       if (hoverRaf) cancelAnimationFrame(hoverRaf);
       if (tableChromeFrame) cancelAnimationFrame(tableChromeFrame);
       hoverPending = null;
@@ -3957,6 +4021,7 @@ export function createRichEditor(parent, options) {
       document.removeEventListener('pointermove', onHandlePointerMove);
       document.removeEventListener('pointerup', onHandlePointerUp);
       document.removeEventListener('pointercancel', onHandlePointerCancel);
+      document.removeEventListener('keydown', onHandleDragKey, true);
       try { document.removeEventListener('pointermove', onTablePointerOver); } catch {}
       cancelHoverClear();
       hoverAnchor = null;

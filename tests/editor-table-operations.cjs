@@ -105,7 +105,7 @@ for (const name of TABLE_OPERATION_NAMES) assert.equal(typeof tableOperation(nam
 assert.throws(() => tableOperation('move-row-sideways'), /Unknown table operation/);
 assert.throws(() => tableOperation(), /Unknown table operation/);
 
-// Move rows. The first row is a header and must stay in place.
+// Row contents can move across the first position; header roles stay at the top.
 {
   const table = makeTable([['H', 'Header'], ['A', '1'], ['B', '2'], ['C', '3']]);
   const state = stateAt(table, 2, 0);
@@ -118,10 +118,15 @@ assert.throws(() => tableOperation(), /Unknown table operation/);
   assert.equal(down.applied, true, 'row moves down');
   assert.deepEqual(grid(down.state.doc.firstChild), [['H', 'Header'], ['B', '2'], ['A', '1'], ['C', '3']]);
 
-  assert.equal(run('move-row-up', stateAt(table, 1, 0)).applied, false, 'data cannot enter the header slot');
+  const promoted = run('move-row-up', stateAt(table, 1, 0));
+  assert.equal(promoted.applied, true, 'data can enter the first slot');
+  assert.deepEqual(grid(promoted.state.doc.firstChild), [['A', '1'], ['H', 'Header'], ['B', '2'], ['C', '3']]);
+  promoted.state.doc.firstChild.forEach((row, offset, index) => row.forEach(cell => {
+    assert.equal(cell.type.spec.tableRole, index === 0 ? 'header_cell' : 'cell');
+  }));
   assert.equal(run('move-row-down', stateAt(table, 3, 0)).applied, false, 'last row cannot move down');
   assert.equal(run('move-row-up', stateAt(table, 0, 0)).applied, false, 'header row cannot move');
-  assert.equal(run('move-row-down', stateAt(table, 0, 0)).applied, false, 'header row cannot move');
+  assert.equal(run('move-row-down', stateAt(table, 0, 0)).applied, true, 'first row can move down');
 }
 
 // A wider row selection moves as one block.
@@ -295,7 +300,7 @@ assert.throws(() => tableOperation(), /Unknown table operation/);
   const command = tableOperation('move-row-down');
   assert.equal(command(state), true, 'dry run reports applicability');
   assert.equal(state.doc, before, 'dry run does not mutate the editor state');
-  assert.equal(tableOperation('move-row-up')(state), false, 'dry run reports impossible moves');
+  assert.equal(tableOperation('move-row-up')(stateAt(table, 0, 0)), false, 'dry run reports impossible moves');
 }
 
 // Sorting refuses a body with fewer than two rows.

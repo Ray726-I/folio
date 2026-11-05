@@ -1,3 +1,4 @@
+const { openMarkdown } = require('./editor-test-actions.cjs');
 const assert=require('node:assert/strict');
 const {openEditor}=require('./editor-browser.cjs');
 (async()=>{
@@ -19,7 +20,12 @@ const {openEditor}=require('./editor-browser.cjs');
  assert.equal(await page.locator('.math-block.folio-rendered-selected').count(),0);
  await page.locator('#preferences-close').click();
  await page.locator('#view-menu').waitFor({state:'hidden'});
- await page.locator('.math-block .math-formula').dblclick();await page.locator('.folio-source-edit').waitFor();
+ await page.locator('.math-block .math-formula').click({button:'right'});
+ const contextMenu=page.getByRole('menu',{name:'Document menu'});
+ await contextMenu.waitFor({state:'visible'});
+ assert.equal(await contextMenu.getByRole('menuitem').first().textContent(),'Edit Markdown');
+ await page.keyboard.press('Escape');
+ await openMarkdown(page.locator('.math-block .math-formula'));await page.locator('.folio-source-edit').waitFor();
  await page.keyboard.press('Escape');
  await page.evaluate(()=>{const p=document.querySelectorAll('.ProseMirror > p');const r=document.createRange();r.setStart(p[0].firstChild,0);r.setEnd(p[1].firstChild,p[1].firstChild.length);window.getSelection().removeAllRanges();window.getSelection().addRange(r);document.dispatchEvent(new Event('selectionchange'));});
  assert.equal(await page.locator('.math-block.folio-rendered-selected').count(),1,'spanning selection still includes formula');
@@ -27,5 +33,5 @@ const {openEditor}=require('./editor-browser.cjs');
  await page.waitForFunction(()=>!document.querySelector('.math-block.folio-rendered-selected'));
  assert.equal(await page.evaluate(()=>current.content),source);assert.deepEqual(s.errors,[]);
  }finally{await s.close();}
- console.log('PASS: formula clicks do not create sticky selection; double-click editing and range selections work');
+ console.log('PASS: formula clicks do not create sticky selection; context-menu editing and range selections work');
 })().catch(e=>{console.error(e);process.exitCode=1;});

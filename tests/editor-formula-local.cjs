@@ -1,3 +1,4 @@
+const { openMarkdown } = require('./editor-test-actions.cjs');
 const assert = require('node:assert/strict');
 const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.cjs');
 (async () => {
@@ -10,7 +11,7 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
     assert.equal(await page.locator('.math-block .math-edit').count(), 0, 'formula editing does not require a separate button');
     assert.equal(await page.locator('.math-block .math-formula').getAttribute('aria-label'), 'Edit formula');
     const blockFormula = page.locator('.math-block .math-formula');
-    await blockFormula.dblclick();
+    await openMarkdown(blockFormula);
     const markdown = page.locator('.folio-source-edit');
     assert.match(await markdown.textContent(), /x\^2 \+ y\^2/);
     await markdown.evaluate(element => window.getSelection().selectAllChildren(element));

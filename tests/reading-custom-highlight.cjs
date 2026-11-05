@@ -1,3 +1,4 @@
+const { openMarkdown } = require('./editor-test-actions.cjs');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const os = require('node:os');
@@ -102,7 +103,7 @@ async function highlightState(page) {
 
     // 5. Clicking an inline atom reveals its Markdown in the shared surface
     // with a collapsed caret, so the old reading highlight clears.
-    await page.locator('#preview .html-inline').first().dblclick();
+    await openMarkdown(page.locator('#preview .html-inline').first());
     await page.waitForTimeout(300);
     assert.equal(await page.locator('.folio-source-edit').count(), 1, 'atom click reveals editable Markdown');
     const onNode = await highlightState(page);

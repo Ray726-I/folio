@@ -1,8 +1,9 @@
+const { openMarkdown } = require('./editor-test-actions.cjs');
 const assert = require('node:assert/strict');
 const { openEditor } = require('./editor-browser.cjs');
 
 // Footnote markup uses a rendered projection. Dragging can span prose and
-// the projection. A deliberate double-click reveals the exact source.
+// the projection. The context menu reveals the exact source.
 const source = `# Showcase
 
 Before word here.
@@ -83,8 +84,8 @@ Press <kbd>Use</kbd> to run and stop <samp>here.</samp>[^1]
     assert.ok((await page.evaluate(() => current.content)) === source, 'an outside drag leaves the Markdown untouched');
     await page.evaluate(() => window.getSelection().removeAllRanges());
 
-    // C: double-click reveals exact source in the shared editor.
-    await page.locator('.extension-preview samp').first().dblclick();
+    // C: the context menu reveals exact source in the shared editor.
+    await openMarkdown(page.locator('.extension-preview samp').first());
     const sourceBlock = page.locator('.folio-source-edit');
     await sourceBlock.waitFor({ state: 'visible' });
     assert.equal(await page.evaluate(() => editor.isSource()), false);

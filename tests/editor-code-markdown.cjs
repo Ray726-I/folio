@@ -1,3 +1,4 @@
+const { openMarkdown } = require('./editor-test-actions.cjs');
 const assert = require('node:assert/strict');
 const { openEditor } = require('./editor-browser.cjs');
 
@@ -6,7 +7,7 @@ const { openEditor } = require('./editor-browser.cjs');
   const session = await openEditor(source);
   try {
     const { page } = session;
-    await page.locator('.code-container').dblclick();
+    await openMarkdown(page.locator('.code-container'));
     const input = page.locator('.folio-source-edit');
     assert.equal(await input.textContent({ timeout: 3000 }), '```rust\nhello world\n```');
     await input.evaluate(block => window.getSelection().selectAllChildren(block));

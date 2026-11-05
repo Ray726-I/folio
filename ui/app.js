@@ -385,7 +385,6 @@ function setTouchpadZoom(enabled, announce = true) {
   $('preference-touchpad-zoom').checked = touchpadZoom;
   invoke('set_touchpad_zoom', { enabled: touchpadZoom }).catch(toast);
   if ($('command-dialog').open) renderCommands();
-  if (announce) status(`Touchpad zoom ${touchpadZoom ? 'enabled' : 'disabled'}`);
 }
 function applyReadingFont(font = readingFont, persist = true) {
   readingFont = ['sans', 'mono'].includes(font) ? font : 'serif';

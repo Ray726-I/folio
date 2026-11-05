@@ -1,3 +1,4 @@
+const { openMarkdown } = require('./editor-test-actions.cjs');
 const assert = require('node:assert/strict');
 const { openEditor } = require('./editor-browser.cjs');
 (async () => {
@@ -9,7 +10,7 @@ const { openEditor } = require('./editor-browser.cjs');
   assert.equal(await page.locator('.mermaid-host summary').count(), 0, 'diagram has no separate source disclosure');
   await page.locator('.mermaid-host svg').click();
   assert.equal(await page.locator('.folio-source-edit').count(), 0, 'single click keeps the diagram rendered');
-  await page.locator('.mermaid-host svg').dblclick();
+  await openMarkdown(page.locator('.mermaid-host svg'));
   const block = page.locator('.folio-source-edit');
   await block.waitFor();
   assert.equal(await block.textContent(), '```mermaid\ngraph TD;\nA-->B;\n```');
@@ -34,5 +35,5 @@ const { openEditor } = require('./editor-browser.cjs');
   assert.equal(await page.evaluate(()=>current.content), source);
   assert.deepEqual(session.errors, []);
  } finally { await session.close(); }
- console.log('PASS: double-click Mermaid source participates in document selection, live edits, undo and lock');
+ console.log('PASS: context-menu Mermaid source participates in document selection, live edits, undo and lock');
 })().catch(e=>{console.error(e);process.exitCode=1;});

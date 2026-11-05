@@ -1,3 +1,4 @@
+const { openMarkdown } = require('./editor-test-actions.cjs');
 const assert = require('node:assert/strict');
 const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.cjs');
 
@@ -11,12 +12,12 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
     await blocks.first().locator('.katex').waitFor();
     await blocks.nth(1).locator('.math-error').waitFor();
     assert.equal(await page.evaluate(() => current.content), source, 'rendering preserves exact fences');
-    await blocks.first().dblclick();
+    await openMarkdown(blocks.first());
     await page.locator('.folio-source-edit').waitFor();
     assert.match(await page.locator('.folio-source-edit').textContent(), /x\^2 \+ y\^2/);
     await page.keyboard.press('Escape');
     await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
-    await blocks.first().dblclick();
+    await openMarkdown(blocks.first());
     await page.waitForTimeout(200);
     assert.equal(await page.locator('.folio-source-edit').count(), 0, 'lock prevents editing math source');
     assert.equal(await page.evaluate(() => current.content), source);

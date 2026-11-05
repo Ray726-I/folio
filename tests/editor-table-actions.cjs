@@ -53,6 +53,8 @@ const { openEditor } = require('./editor-browser.cjs');
 
     await page.locator('#preview td').first().click({ button: 'right' });
     await menu.waitFor({ state: 'visible' });
+    await page.keyboard.press('ArrowDown'); // Edit Markdown
+    await page.keyboard.press('ArrowDown'); // Row submenu
     await page.keyboard.press('ArrowRight');
     assert.equal(await page.locator('.folio-table-submenu:visible').count(), 1, 'keyboard opens the submenu');
     await page.keyboard.press('ArrowLeft');
@@ -76,8 +78,12 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
     await page.mouse.down();
     await page.mouse.move(start.x + start.width / 2, target.y + target.height - 1, { steps: 12 });
+    await page.locator('.folio-table-drag-preview').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('.folio-table-drag-source').count(), 1, 'drag marks the original row');
     await page.mouse.up();
     assert.equal(await page.locator('#preview tr').nth(1).locator('td').first().innerText(), 'Beta', 'dragging a row changes its order');
+    assert.equal(await page.evaluate(() => window.getSelection().toString()), '', 'dragging does not leave text selected');
+    assert.equal(await page.locator('#preview .selectedCell').count(), 0, 'dragging does not leave a cell range selected');
     await page.keyboard.press('Control+z');
     await page.waitForFunction(text => current.content === text, source);
     await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();

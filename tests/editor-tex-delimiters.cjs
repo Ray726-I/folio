@@ -1,3 +1,4 @@
+const { openMarkdown } = require('./editor-test-actions.cjs');
 const assert = require('node:assert/strict');
 const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.cjs');
 
@@ -16,7 +17,7 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
     await page.keyboard.type('!');
     await page.waitForFunction(() => current.content.endsWith('After.!\n'));
     assert.ok((await page.evaluate(() => current.content)).includes('\\[\nA = \\begin{bmatrix}'));
-    await page.locator('.math-inline .math-formula').first().dblclick();
+    await openMarkdown(page.locator('.math-inline .math-formula').first());
     await page.locator('.folio-source-edit').waitFor();
     await page.locator('#preview .ProseMirror').waitFor({ state: 'visible' });
     assert.equal(await page.evaluate(() => current.content), source.replace('After.', 'After.!'), 'editing access must preserve source');

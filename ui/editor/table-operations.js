@@ -3,7 +3,6 @@ import {
   TableMap,
   isInTable,
   moveTableColumn,
-  moveTableRow,
   selectedRect
 } from 'prosemirror-tables';
 
@@ -16,8 +15,8 @@ import {
 // spans exactly one row and one column. On a merged/non-rectangular table the
 // operation returns false instead of guessing how cells should move. The first
 // row is treated as a header row only when every cell in it has the
-// `header_cell` table role. Header rows are never sorted, duplicated as data,
-// moved, or displaced by a data row moving up.
+// `header_cell` table role. Sorting and duplication preserve that header;
+// reordering allows any row to move and keeps header cells in the first slot.
 
 export const TABLE_OPERATION_NAMES = Object.freeze([
   'move-row-up',
@@ -152,35 +151,44 @@ function replaceTable(state, dispatch, context, rows, selection) {
   return true;
 }
 
-// Move a contiguous block of data rows one row in `direction`. A selection of
-// one row reuses prosemirror-tables' stock command; wider selections need a
-// block move, which the stock command does not expose. Both paths keep the
-// header row fixed and refuse to move data above it.
+// Row contents can cross the header boundary. Cell roles belong to their
+// destination row, so Markdown still has exactly one header at the top.
+function normalizeMovedRows(state, context, rows) {
+  if (!context.headerRows) return rows;
+  return rows.map((row, index) => {
+    const type = state.schema.nodes[index === 0 ? 'table_header' : 'table_cell'];
+    const cells = [];
+    row.forEach(cell => cells.push(type.create(cell.attrs, cell.content, cell.marks)));
+    return row.type.create(row.attrs, cells, row.marks);
+  });
+}
+
+export function moveTableRowTo(from, to) {
+  return (state, dispatch) => {
+    const context = tableContext(state);
+    if (!context || !Number.isInteger(from) || !Number.isInteger(to) ||
+        from < 0 || to < 0 || from >= context.rows.length || to >= context.rows.length || from === to) return false;
+    const rows = context.rows.slice();
+    const [row] = rows.splice(from, 1);
+    rows.splice(to, 0, row);
+    return replaceTable(state, dispatch, context, normalizeMovedRows(state, context, rows), {
+      top: to, bottom: to, left: 0, right: context.map.width - 1
+    });
+  };
+}
+
 function moveRows(state, dispatch, view, direction) {
   const context = tableContext(state);
   if (!context) return false;
-  const { rect, rows, headerRows } = context;
+  const { rect, rows } = context;
   const top = rect.top, bottom = rect.bottom;
-  if (top < headerRows || bottom >= rows.length) return false;
-  if (direction < 0) {
-    if (top <= headerRows) return false;
-  } else if (bottom >= rows.length - 1) {
-    return false;
-  }
-  const length = bottom - top + 1;
-  const newTop = top + direction;
-  if (newTop < headerRows || newTop + length > rows.length) return false;
-  if (length === 1) {
-    return moveTableRow({ from: top, to: newTop, select: true })(state, dispatch, view);
-  }
+  const length = bottom - top + 1, newTop = top + direction;
+  if (newTop < 0 || newTop + length > rows.length) return false;
   const block = rows.slice(top, bottom + 1);
   const rest = rows.slice(0, top).concat(rows.slice(bottom + 1));
   const nextRows = rest.slice(0, newTop).concat(block, rest.slice(newTop));
-  return replaceTable(state, dispatch, context, nextRows, {
-    top: newTop,
-    bottom: newTop + length - 1,
-    left: 0,
-    right: context.map.width - 1
+  return replaceTable(state, dispatch, context, normalizeMovedRows(state, context, nextRows), {
+    top: newTop, bottom: newTop + length - 1, left: 0, right: context.map.width - 1
   });
 }
 

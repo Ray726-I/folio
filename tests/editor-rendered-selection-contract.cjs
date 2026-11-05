@@ -1,3 +1,4 @@
+const { openMarkdown } = require('./editor-test-actions.cjs');
 const assert = require('node:assert/strict');
 const { openEditor } = require('./editor-browser.cjs');
 (async()=>{
@@ -9,15 +10,15 @@ const { openEditor } = require('./editor-browser.cjs');
   await page.locator('.math-block .katex-html').waitFor();
   await page.locator('.mermaid-host svg').click();
   assert.equal(await page.locator('.folio-source-edit').count(),0,'single click keeps diagram rendered');
-  await page.locator('.mermaid-host svg').dblclick();
-  assert.equal(await page.locator('.folio-source-edit').count(),1,'double click reveals diagram Markdown');
+  await openMarkdown(page.locator('.mermaid-host svg'));
+  assert.equal(await page.locator('.folio-source-edit').count(),1,'context menu reveals diagram Markdown');
   await page.keyboard.press('Escape');
-  await page.locator('blockquote').dblclick();
+  await openMarkdown(page.locator('blockquote'));
   assert.equal(await page.locator('.folio-source-edit').textContent(),'> Quoted **bold** text.');
   await page.keyboard.press('Escape');
   for (const selector of ['.math-block', 'ul']) {
-   await page.locator(selector).dblclick();
-   assert.equal(await page.locator('.folio-source-edit').count(), 1, selector + ' reveals Markdown on double click');
+   await openMarkdown(page.locator(selector));
+   assert.equal(await page.locator('.folio-source-edit').count(), 1, selector + ' reveals Markdown from the context menu');
    await page.keyboard.press('Escape');
    assert.equal(await page.evaluate(()=>current.content), source);
   }
@@ -45,5 +46,5 @@ const { openEditor } = require('./editor-browser.cjs');
   assert.equal(await page.evaluate(()=>current.content),source,'pasting copied Markdown preserves fences and formatting exactly');
   assert.deepEqual(session.errors,[]);
  }finally{await session.close();}
- console.log('PASS: double-click editing, rendered diagram selection, exact Markdown copy and zero-write view changes');
+ console.log('PASS: context-menu editing, rendered diagram selection, exact Markdown copy and zero-write view changes');
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -1,3 +1,4 @@
+const { openMarkdown } = require('./editor-test-actions.cjs');
 const assert = require('node:assert/strict');
 const { openEditor } = require('./editor-browser.cjs');
 (async()=>{
@@ -9,11 +10,11 @@ const { openEditor } = require('./editor-browser.cjs');
   await page.locator('.extension-block').last().hover();
   assert.equal(await page.locator('.extension-edit,.extension-source-editor,.extension-actions').count(),0,'no source buttons or separate source panels remain');
   assert.equal(await page.getByRole('button',{name:/edit (source|front matter|image)/i}).count(),0);
-  await page.locator('.extension-preview').first().dblclick();
+  await openMarkdown(page.locator('.extension-preview').first());
   await page.locator('.folio-source-edit').waitFor();
   assert.match(await page.locator('.folio-source-edit').textContent(), /title: Example/);
   await page.keyboard.press('Escape');
-  await page.locator('.extension-preview').filter({hasText:'A note callout.'}).dblclick();
+  await openMarkdown(page.locator('.extension-preview').filter({hasText:'A note callout.'}));
   assert.match(await page.locator('.folio-source-edit').textContent(), /> \[!NOTE\]/);
   await page.keyboard.press('Escape');
   await page.locator('.extension-preview').filter({hasText:'Definition'}).focus();

@@ -1,3 +1,4 @@
+const { openMarkdown } = require('./editor-test-actions.cjs');
 const assert = require('node:assert/strict');
 const { openEditor } = require('./editor-browser.cjs');
 
@@ -7,7 +8,7 @@ const { openEditor } = require('./editor-browser.cjs');
   try {
     const { page } = session;
     async function editBlock(target, original, replacement) {
-      await target.dblclick();
+      await openMarkdown(target);
       const block = page.locator('.folio-source-edit');
       assert.equal(await block.textContent({ timeout: 3000 }), original);
       await block.evaluate(element => window.getSelection().selectAllChildren(element));

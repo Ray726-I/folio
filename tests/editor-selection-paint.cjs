@@ -1,3 +1,4 @@
+const { openMarkdown } = require('./editor-test-actions.cjs');
 const assert = require('node:assert/strict');
 const { openEditor } = require('./editor-browser.cjs');
 (async () => {
@@ -6,7 +7,7 @@ const { openEditor } = require('./editor-browser.cjs');
  try {
   const { page } = session;
   await page.locator('.code-container.code-highlighted').first().waitFor();
-  await page.locator('.code-container').first().dblclick();
+  await openMarkdown(page.locator('.code-container').first());
   await page.locator('.folio-source-edit').waitFor();
   await page.locator('.code-container.code-highlighted').waitFor();
   const state = await page.evaluate(async () => {

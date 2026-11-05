@@ -1,21 +1,22 @@
+const { openMarkdown } = require('./editor-test-actions.cjs');
 const assert = require('node:assert/strict');
 const { openEditor } = require('./editor-browser.cjs');
 (async () => {
  for (const fixture of [
-  ['# Title\n\nBody below.\n', 'h1', 'dblclick'],
-  ['[Title](https://example.com)\n\nBody below.\n', 'a', 'dblclick'],
-  ['```js\nlet x = 1;\n```\n\nBody below.\n', '.code-container', 'dblclick'],
-  ['$x+1$\n\nBody below.\n', '.math-formula', 'dblclick'],
-  ['![Title](local.png)\n\nBody below.\n', '.image-widget', 'dblclick'],
-  ['---\ntitle: Example\n---\n\nBody below.\n', '.extension-preview', 'dblclick'],
-  ['Press <kbd>Use</kbd>.\n\nBody below.\n', '.html-inline', 'dblclick'],
+  ['# Title\n\nBody below.\n', 'h1'],
+  ['[Title](https://example.com)\n\nBody below.\n', 'a'],
+  ['```js\nlet x = 1;\n```\n\nBody below.\n', '.code-container'],
+  ['$x+1$\n\nBody below.\n', '.math-formula'],
+  ['![Title](local.png)\n\nBody below.\n', '.image-widget'],
+  ['---\ntitle: Example\n---\n\nBody below.\n', '.extension-preview'],
+  ['Press <kbd>Use</kbd>.\n\nBody below.\n', '.html-inline'],
  ]) {
-  const [source, selector, gesture] = fixture;
+  const [source, selector] = fixture;
   console.log('Checking', selector);
   const session = await openEditor(source);
   try {
    const { page } = session;
-   await page.locator('#preview ' + selector).first()[gesture]({ timeout: 5000 });
+   await openMarkdown(page.locator('#preview ' + selector).first());
    assert.equal(await page.locator('.folio-source-edit').count(), 1, selector + ' source is document content');
    assert.equal(await page.locator('.folio-source-edit input,.folio-source-edit textarea').count(), 0);
    assert.equal(await page.evaluate(() => current.content), source, 'opening is zero-write');
@@ -43,7 +44,7 @@ const { openEditor } = require('./editor-browser.cjs');
   await page.mouse.move(renderedPoints.b.x, renderedPoints.b.y, {steps:15}); await page.mouse.up();
   assert.match(await page.evaluate(() => window.getSelection().toString()), /Title[\s\S]*Body below/, 'selection crosses a rendered heading');
   assert.equal(await page.locator('.folio-source-edit').count(), 0, 'dragging keeps the heading rendered');
-  await page.locator('#preview h1').dblclick();
+  await openMarkdown(page.locator('#preview h1'));
   const points = await page.evaluate(() => {
    const point = (element, end) => {
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
