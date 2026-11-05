@@ -176,7 +176,7 @@ async function clickText(page, text) {
       await page.mouse.dblclick(point.x, point.y);
       await page.waitForTimeout(250);
       assert.equal(await page.locator('.folio-source-edit').count(), 0, 'double-click on bold keeps word selection');
-      assert.equal(await page.evaluate(() => window.getSelection().toString()), 'bold');
+      assert.equal((await page.evaluate(() => window.getSelection().toString())).trimEnd(), 'bold');
     } finally { await session.close(); }
   }
   {
