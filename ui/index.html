@@ -23,6 +23,7 @@
   <script src="file-tree.js" defer></script>
   <script src="panes.js" defer></script>
   <script src="app.js" defer></script>
+  <script src="affordances.js" defer></script>
 </head>
 <body>
   <svg class="icon-definitions" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
@@ -47,6 +48,7 @@
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
     <symbol id="i-theme" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9c0-1.5-1-2-2.5-2H17a2 2 0 0 1-2-2c0-1.5.5-2.5-.5-3.5A4 4 0 0 0 12 3Z"/><path d="M7 9h.01M9 6h.01M6 13h.01M9 17h.01"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="3" y="7" width="13" height="15" rx="1.5"/><path d="M7.5 4.5v-1A1.5 1.5 0 0 1 9 2h10a1.5 1.5 0 0 1 1.5 1.5v13a1.5 1.5 0 0 1-1.5 1.5"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
     <symbol id="i-focus" viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"/></symbol>
@@ -94,7 +96,7 @@
     </section>
 
     <div id="recovery-warning" role="alert" hidden></div>
-    <div id="document-tabs" class="document-tabs" hidden><div class="top-rail"><button type="button" data-rail-action="find" aria-label="Search document" aria-controls="find-bar" aria-pressed="false" title="Search folder contents (Ctrl+Shift+F); find in document without a folder"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></button></div><div id="tab-list" role="tablist" aria-label="Open documents"></div><button id="all-documents" class="icon-button" aria-label="All documents" aria-keyshortcuts="Control+Shift+A Meta+Shift+A" title="All documents (Ctrl+Shift+A)"><svg class="icon" aria-hidden="true"><use href="#i-tab-search"/></svg></button><header class="headerbar">
+    <div id="document-tabs" class="document-tabs" hidden><div class="top-rail"><button type="button" data-rail-action="find" aria-label="Search document" aria-controls="find-bar" aria-pressed="false" title="Search folder contents (Ctrl+Shift+F); find in document without a folder"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></button></div><div id="tab-list" role="tablist" aria-label="Open documents"></div><header class="headerbar">
     <div class="header-start"><svg class="icon document-emblem" aria-hidden="true"><use href="#i-file"/></svg></div>
     <div class="window-title"><div class="window-title-line"><span id="document-name">Folio</span><span id="dirty-dot" class="dirty-dot" aria-label="Unsaved changes" hidden></span></div><div id="document-location" class="subtitle">Markdown, one file at a time</div></div>
     <div class="header-end">
@@ -103,9 +105,9 @@
         <button id="document-mode-button" class="button ghost mode-button" type="button"><svg class="icon" aria-hidden="true"><use href="#i-read"/></svg><span id="document-mode-label">Read</span></button>
         <button id="document-mode-menu-button" class="mode-caret-button" type="button" aria-label="Choose document mode" title="Choose document mode" aria-haspopup="menu" aria-expanded="false" aria-controls="document-mode-menu"><svg class="icon mode-menu-caret" aria-hidden="true"><use href="#i-caret"/></svg></button>
         <div id="document-mode-menu" class="menu menu-right" role="menu" aria-label="Document mode" hidden>
-          <button class="menu-item" role="menuitemradio" aria-checked="true" data-document-mode="reading">Read</button>
-          <button class="menu-item" role="menuitemradio" aria-checked="false" data-document-mode="edit">Edit</button>
-          <button class="menu-item" role="menuitemradio" aria-checked="false" data-document-mode="source">Source</button>
+          <button class="menu-item" role="menuitemradio" aria-checked="true" data-document-mode="reading" aria-label="Read">Read</button>
+          <button class="menu-item" role="menuitemradio" aria-checked="false" data-document-mode="edit" aria-label="Edit">Edit</button>
+          <button class="menu-item" role="menuitemradio" aria-checked="false" data-document-mode="source" aria-label="Source">Source</button>
           <div class="menu-separator" role="separator"></div>
           <button id="lock-document" class="menu-item" role="menuitemcheckbox" aria-checked="false" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg><span>Open as read-only</span></button>
           <p class="menu-description">Read prevents accidental edits. Read-only protects the document in every mode.</p>
@@ -155,7 +157,7 @@
       <span class="header-divider" aria-hidden="true"></span>
       <span id="save-state" class="save-state document-control" role="status" hidden></span>
       <button id="save" class="icon-button document-control" title="Save (Ctrl+S)" aria-label="Save" hidden><svg class="icon" aria-hidden="true"><use href="#i-save"/></svg></button>
-      <div class="menu-group document-control" id="document-more-group" hidden><button id="document-more-button" class="icon-button" aria-label="Additional document actions" aria-haspopup="menu" aria-expanded="false" aria-controls="document-more-menu"><svg class="icon" aria-hidden="true"><use href="#i-more"/></svg></button><div id="document-more-menu" class="menu menu-right" role="menu" aria-label="Document actions" hidden><button class="menu-item" role="menuitem" data-app-action="find"><span class="menu-text">Find in document</span><span class="menu-hint">Ctrl+F</span></button><div class="menu-separator" role="separator"></div><button  class="menu-item" role="menuitem" data-app-action="copy-path"><span class="menu-text">Copy document path</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="reveal"><span class="menu-text">Reveal in file manager</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="rename"><span class="menu-text">Rename…</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="duplicate"><span class="menu-text">Duplicate…</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="pdf"><span class="menu-text">Export as PDF…</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="html"><span class="menu-text">Export as HTML…</span><span class="menu-hint"></span></button><button class="menu-item" role="menuitem" data-app-action="recovery"><span class="menu-text">Recover documents…</span></button><button  class="menu-item" role="menuitem" data-app-action="close"><span class="menu-text">Close document</span><span class="menu-hint"></span></button></div></div>
+      <div class="menu-group document-control" id="document-more-group" hidden><button id="document-more-button" class="icon-button" aria-label="Additional document actions" aria-haspopup="menu" aria-expanded="false" aria-controls="document-more-menu"><svg class="icon" aria-hidden="true"><use href="#i-more"/></svg></button><div id="document-more-menu" class="menu menu-right" role="menu" aria-label="Document actions" hidden><button id="all-documents" class="menu-item" role="menuitem"><span class="menu-text">All documents</span><span class="menu-hint">Ctrl+Shift+A</span></button><button class="menu-item" role="menuitem" data-app-action="find"><span class="menu-text">Find in document</span><span class="menu-hint">Ctrl+F</span></button><div class="menu-separator" role="separator"></div><button  class="menu-item" role="menuitem" data-app-action="copy-path"><span class="menu-text">Copy document path</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="reveal"><span class="menu-text">Reveal in file manager</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="rename"><span class="menu-text">Rename…</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="duplicate"><span class="menu-text">Duplicate…</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="pdf"><span class="menu-text">Export as PDF…</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="html"><span class="menu-text">Export as HTML…</span><span class="menu-hint"></span></button><button class="menu-item" role="menuitem" data-app-action="recovery"><span class="menu-text">Recover documents…</span></button><button  class="menu-item" role="menuitem" data-app-action="close"><span class="menu-text">Close document</span><span class="menu-hint"></span></button></div></div>
     </div>
   </header></div>
     <div id="document-view" class="document-view" hidden>
@@ -163,13 +165,14 @@
         <div class="rail-dock">
 
 
-          <button type="button" data-dock-tab="outline" aria-label="Contents" aria-controls="outline" aria-pressed="false" title="Contents — click again to close"><svg class="icon" aria-hidden="true"><use href="#i-outline"/></svg></button>
+          <button type="button" data-dock-tab="outline" aria-label="Outline" aria-controls="outline" aria-pressed="false" title="Outline — click again to close"><svg class="icon" aria-hidden="true"><use href="#i-outline"/></svg></button>
           <button type="button" data-dock-tab="files" aria-label="Files" aria-controls="file-browser" aria-pressed="false" title="Files — click again to close"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg></button>
         </div>
       </nav>
       <aside id="folder-search" class="sidebar" aria-label="Search in folder" hidden>
         <div class="sidebar-head"><div class="sidebar-heading"><h2>Search</h2><p id="folder-search-root" class="sidebar-meta"></p></div><button id="folder-search-close" class="icon-button tiny" aria-label="Close folder search"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div>
         <div class="folder-search-query"><input id="folder-search-input" type="search" aria-label="Search folder contents" placeholder="Search in files…" spellcheck="false"></div>
+        <details class="folder-search-help"><summary>Path filters</summary><p>Include: <code>in:docs/*</code> · Exclude: <code>-in:archive/*</code><br>Use quotes for paths with spaces: <code>in:"my notes/*"</code></p></details>
         <p id="folder-search-status" class="folder-search-status" role="status" aria-live="polite">Type to search folder contents.</p>
         <div id="folder-search-results" class="sidebar-scroll" aria-label="Folder content matches"></div>
       </aside>

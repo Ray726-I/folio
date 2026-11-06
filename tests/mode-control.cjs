@@ -38,7 +38,7 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.equal(current.mainHasPopup, null, 'the cycling button does not advertise a popup');
     const readColor = current.color;
     assert.equal(current.background, 'rgba(0, 0, 0, 0)', 'mode color stays on the text and icon');
-    assert.ok(current.caretWidth <= 20, 'the caret keeps a compact click target');
+    assert.ok(current.caretWidth >= 24 && current.caretWidth <= 32, 'the caret meets the minimum target size while staying compact');
 
     await page.locator('#document-mode-button').click();
     await page.mouse.move(0, 0);

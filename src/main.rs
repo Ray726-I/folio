@@ -1605,7 +1605,38 @@ struct SearchResults {
     truncated: bool,
 }
 
+#[cfg(test)]
 fn search_folder_at(path: &Path, query: &str) -> Result<SearchResults, String> {
+    search_folder_filtered(path, query, "", "")
+}
+
+// Comma-separated, case-insensitive path substrings; * spans any characters.
+fn search_path_matches(path: &str, patterns: &str) -> bool {
+    let path = path.to_lowercase();
+    patterns
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .any(|pattern| {
+            let pattern = pattern.to_lowercase();
+            let mut remaining = path.as_str();
+            pattern.split('*').all(|part| {
+                if let Some(at) = remaining.find(part) {
+                    remaining = &remaining[at + part.len()..];
+                    true
+                } else {
+                    false
+                }
+            })
+        })
+}
+
+fn search_folder_filtered(
+    path: &Path,
+    query: &str,
+    include: &str,
+    exclude: &str,
+) -> Result<SearchResults, String> {
     use std::io::Read;
     let path = path.canonicalize().map_err(|e| e.to_string())?;
     let (entries, truncated, skipped) = scan_folder(&path)?;
@@ -1619,6 +1650,17 @@ fn search_folder_at(path: &Path, query: &str) -> Result<SearchResults, String> {
     }
     let mut budget = 16 * 1024 * 1024_u64;
     for entry in entries.into_iter().filter(|entry| !entry.directory) {
+        let relative = Path::new(&entry.path)
+            .strip_prefix(&path)
+            .unwrap_or(Path::new(&entry.path))
+            .to_string_lossy()
+            .replace('\\', "/");
+        if (include.split(',').any(|pattern| !pattern.trim().is_empty())
+            && !search_path_matches(&relative, include))
+            || search_path_matches(&relative, exclude)
+        {
+            continue;
+        }
         if result.results.len() >= 100 || budget == 0 {
             result.truncated = true;
             break;
@@ -1692,6 +1734,8 @@ fn search_folder_at(path: &Path, query: &str) -> Result<SearchResults, String> {
 #[tauri::command(async)]
 fn search_folder(
     query: String,
+    include: Option<String>,
+    exclude: Option<String>,
     webview: tauri::Webview,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<SearchResults, String> {
@@ -1706,7 +1750,12 @@ fn search_folder(
         .get(webview.label())
         .map(|(path, _)| path.clone())
         .ok_or("Open a folder to search files.")?;
-    search_folder_at(&path, &query)
+    search_folder_filtered(
+        &path,
+        &query,
+        include.as_deref().unwrap_or(""),
+        exclude.as_deref().unwrap_or(""),
+    )
 }
 
 #[tauri::command]
@@ -2840,6 +2889,24 @@ mod document_action_tests {
         symlink(&root, &alias).unwrap();
         let result = search_folder_at(&alias, "needle").unwrap();
         assert_eq!(result.results.len(), 1);
+    }
+
+    #[test]
+    fn folder_search_filters_before_the_result_budget() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("a-archive.md"),
+            "needle\n".repeat(110),
+        )
+        .unwrap();
+        fs::write(directory.path().join("z-guide.md"), "needle here").unwrap();
+        let result = search_folder_filtered(directory.path(), "needle", "*guide.md", "").unwrap();
+        assert_eq!(result.results.len(), 1);
+        assert_eq!(result.results[0].name, "z-guide.md");
+        assert!(!result.truncated);
+        let result = search_folder_filtered(directory.path(), "needle", "", "archive").unwrap();
+        assert_eq!(result.results.len(), 1);
+        assert!(!result.truncated);
     }
 
     #[test]

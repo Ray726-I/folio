@@ -299,7 +299,7 @@ function setupSidebarResize(sidebarId, dividerId, key, defaultWidth, styleName =
   // first launch; drags persist once per gesture instead of per move.
   preferences.set(key, appliedWidth);
   divider.addEventListener('pointerdown', event => {
-    event.preventDefault(); divider.setPointerCapture(event.pointerId); divider.classList.add('dragging');
+    event.preventDefault(); divider.setPointerCapture(event.pointerId); divider.classList.add('dragging'); document.documentElement.classList.add('pane-resizing');
     // Layout is read once per gesture; pointermove then only reads the pointer.
     measureOther(); dragLeft = sidebar.getBoundingClientRect().left;
   });
@@ -311,11 +311,12 @@ function setupSidebarResize(sidebarId, dividerId, key, defaultWidth, styleName =
   });
   divider.addEventListener('pointerup', event => {
     if (divider.hasPointerCapture(event.pointerId)) divider.releasePointerCapture(event.pointerId);
-    divider.classList.remove('dragging');
+    divider.classList.remove('dragging'); document.documentElement.classList.remove('pane-resizing');
     if (frame) { cancelAnimationFrame(frame); frame = 0; }
     applyPending();
     preferences.set(key, appliedWidth);
   });
+  divider.addEventListener('lostpointercapture', () => { divider.classList.remove('dragging'); document.documentElement.classList.remove('pane-resizing'); });
   divider.addEventListener('keydown', event => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
@@ -669,7 +670,7 @@ async function openFolderPath(path, confirmed = false) {
     await renderPreview();
     showDocument(); $('reader-scroll').scrollTop = 0; status('');
     $('folder-empty').querySelector('h1').textContent = folderEntries.some(entry => !entry.directory) ? 'Folder opened' : 'No Markdown files';
-    $('folder-empty').querySelector('p').textContent = folderEntries.some(entry => !entry.directory) ? 'Choose a Markdown file from the file tree.' : 'This folder has no Markdown files. Open another folder to browse it.';
+    $('folder-empty').querySelector('p').textContent = folderEntries.some(entry => !entry.directory) ? 'Open File Explorer (Ctrl+B) or use Quick open (Ctrl+P) to choose a Markdown file.' : 'This folder has no Markdown files. Open another folder to browse it.';
     const limits = [];
     if (listing.skipped) limits.push(`${listing.skipped} unreadable ${listing.skipped === 1 ? 'entry was' : 'entries were'} skipped`);
     if (listing.truncated) limits.push('only the first 5,000 entries are shown');
@@ -760,6 +761,7 @@ function renderRecent() {
 let commandScope = 'commands', commandRows = [], filteredRows = [], selectedCommand = 0;
 function allCommands() {
   const commands = [
+    { label: 'Quick open…', icon: 'search', shortcut: 'Ctrl+P', scope: 'files' },
     { label: 'New document', icon: 'plus', shortcut: 'Ctrl+N', action: () => newDocument() },
     { label: 'Open file…', icon: 'file', shortcut: 'Ctrl+O', action: openEntry },
     { label: 'Open folder…', icon: 'folder-open', shortcut: 'Ctrl+Shift+O', detail: 'Open a folder with the selected picker', action: openFolderEntry },
@@ -893,6 +895,7 @@ function commandRow(command, index) {
 }
 function buildCommandRows() {
   const list = commandScope === 'themes' ? themeCommands()
+    : commandScope === 'files' ? quickOpenCommands()
     : commandScope === 'documents' ? [...documents.values()].map(doc => ({ label: doc.name, detail: doc.path || 'Unsaved document', icon: 'file', action: () => enqueue(() => activateDocument(doc)) }))
     : allCommands();
   commandRows = list.map(commandRow);
@@ -907,12 +910,25 @@ function updateActiveCommand() {
 }
 function filterCommands() {
   const query = $('command-search').value.trim().toLocaleLowerCase();
-  filteredRows = commandRows.filter(row => `${row.command.label} ${row.command.detail || ''}`.toLocaleLowerCase().includes(query));
+  if (!query) filteredRows = commandRows.slice();
+  else if (commandScope === 'files') {
+    filteredRows = commandRows.map(row => ({row, score: fuzzyFileScore(query, `${row.command.label} ${row.command.detail || ''}`)}))
+      .filter(item => item.score >= 0).sort((a,b)=>b.score-a.score).map(item=>item.row);
+  } else {
+    const scoreField = (value, priority) => {
+      if (!value) return -1;
+      const text = value.toLocaleLowerCase(), score = fuzzyFileScore(query, text);
+      return score < 0 ? -1 : score + priority + (text.includes(query) ? 10000 : 0);
+    };
+    filteredRows = commandRows.map(row => ({row, score: Math.max(
+      scoreField(row.command.label, 1000), scoreField(row.command.shortcut, 800), scoreField(row.command.detail, 0)
+    )})).filter(item => item.score >= 0).sort((a,b)=>b.score-a.score).map(item=>item.row);
+  }
   selectedCommand = Math.max(0, Math.min(selectedCommand, filteredRows.length - 1));
   $('command-list').replaceChildren(...filteredRows.map(row => row.element));
   $('command-empty').hidden = filteredRows.length > 0;
-  $('command-empty').textContent = commandScope === 'documents' ? 'No open documents' : 'No matching commands';
-  $('command-scope').textContent = commandScope === 'themes' ? 'Appearance' : commandScope === 'documents' ? 'Open documents' : query ? 'Search results' : 'Commands';
+  $('command-empty').textContent = commandScope === 'files' ? 'No matching files in the open folder or tabs' : commandScope === 'documents' ? 'No open documents' : 'No matching commands';
+  $('command-scope').textContent = commandScope === 'files' ? 'Quick open' : commandScope === 'themes' ? 'Appearance' : commandScope === 'documents' ? 'Open documents' : query ? 'Search results' : 'Commands';
   $('palette-hint').hidden = commandScope !== 'themes';
   $('command-results').scrollTop = 0;
   updateActiveCommand();
@@ -923,7 +939,7 @@ function openCommands(scope = 'commands') {
   commandScope = scope;
   selectedCommand = 0;
   $('command-search').value = '';
-  $('command-search').placeholder = scope === 'themes' ? 'Search themes…' : scope === 'documents' ? 'Search open documents…' : 'Search commands…';
+  $('command-search').placeholder = scope === 'files' ? 'Search folder files…' : scope === 'themes' ? 'Search themes…' : scope === 'documents' ? 'Search open documents…' : 'Search commands…';
   buildCommandRows();
   // Opening Appearance lands on the theme that is already applied, so the
   // checked row and the highlighted row agree.
@@ -983,19 +999,26 @@ $('palette-hint').addEventListener('click', () => openCommands());
 let matches = [], findIndex = -1, findSource = null;
 function openFind() { if (focusedPane === 'companion') return openCompanionFind(); if (!current.active) return; $('find-bar').hidden = false; syncDocumentChrome(); $('find-input').focus(); $('find-input').select(); updateFind(); syncFindControl(); }
 function clearHighlights() { editor?.clearHighlight?.(); }
+function documentSearchPattern(query) {
+  const enabled=id=>$(id)?.getAttribute('aria-pressed')==='true';
+  let pattern=enabled('find-regex')?query:query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if(enabled('find-word'))pattern=`(?<![\\p{L}\\p{N}_])(?:${pattern})(?![\\p{L}\\p{N}_])`;
+  return new RegExp(pattern,enabled('find-case')?'gu':'giu');
+}
 function findMatches(query) {
-  const result = [];
-  if (!query) return result;
-  let search;
-  try { search = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu'); }
-  catch { return result; }
+  const result=[]; if(!query)return result;
+  let search;try{search=documentSearchPattern(query);}catch{return result;}
   let match;
-  while ((match = search.exec(current.content)) && result.length < 2000) result.push({ from: match.index, to: match.index + match[0].length });
+  while((match=search.exec(current.content))&&result.length<2000){
+    result.push({from:match.index,to:match.index+match[0].length});
+    if(!match[0].length){const point=current.content.codePointAt(search.lastIndex);search.lastIndex+=point>0xffff?2:1;}
+  }
   return result;
 }
 function findCountLabel(count) { return count >= 2000 ? '2,000+' : String(count); }
 function updateFind() {
   const query = $('find-input').value;
+  try { if(query)documentSearchPattern(query); $('find-input').removeAttribute('aria-invalid'); } catch { matches=[];findIndex=-1;$('find-input').setAttribute('aria-invalid','true');$('find-result').textContent='Invalid regular expression';clearHighlights();return; }
   matches = findMatches(query); findIndex = -1; findSource = current.content;
   if (!query) { $('find-result').textContent = ''; clearHighlights(); return; }
   if (matches.length) nextFind(1);
@@ -1377,8 +1400,12 @@ document.addEventListener('keydown', event => {
     return;
   }
   if (event.key === 'F11') { event.preventDefault(); invoke('toggle_fullscreen').catch(toast); return; }
+  if (event.key === 'F6' && companionDocument) { event.preventDefault(); const pane=focusedPane==='main'?'companion':'main'; focusPane(pane); $(pane==='main'?'reader-scroll':'companion-scroll').focus(); return; }
   if (!control) return;
   const key = event.key.toLowerCase();
+  if (!event.altKey && !event.shiftKey && key === 'p') { event.preventDefault(); openCommands('files'); return; }
+  if (!event.altKey && !event.shiftKey && ['1','2','3'].includes(key) && current.active) { event.preventDefault(); setDocumentMode({1:'reading',2:'edit',3:'source'}[key]); return; }
+  if (!event.altKey && key === '\\' && current.active) { event.preventDefault(); companionDocument ? closeReadingCompanion() : showReadingCompanion(); return; }
   if (key === 't') { event.preventDefault(); event.shiftKey ? enqueue(reopenDocument) : newDocument(); return; }
   if (event.ctrlKey && key === 'tab' && documents.size) { event.preventDefault(); const tabs = [...documents.values()], index = tabs.indexOf(current); enqueue(() => activateDocument(tabs[(index + (event.shiftKey ? -1 : 1) + tabs.length) % tabs.length])); return; }
   if (key === 'a' && !event.altKey && !event.shiftKey && !event.isComposing &&
@@ -1454,7 +1481,7 @@ Your files stay yours. This sample is just a starting point.[^1]
 
 async function start() {
   initializePanes(); initializeChrome(); initializeFolderSearch();
-  $('all-documents').onclick = () => openCommands('documents');
+  $('all-documents').onclick = () => { closeAllMenus(); $('document-more-button').focus(); openCommands('documents'); };
   zoomText(0); zoomWindow(0); renderRecent(); setDocumentWidth(wideLayout, false);
   syncOpenAffordance();
   applyTheme(selectedTheme, false); applyReadingFont(readingFont, false);

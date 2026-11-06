@@ -70,8 +70,9 @@ function lineStartsFor(text) {
 function refreshEditorOutline() {
   if (focusedPane === 'companion') { refreshCompanionOutline(); return; }
   if (!editor || !current.active) return;
-  if ($('outline').hidden) return;
+  if ($('outline').hidden && !(dockVisible && dockTab === 'outline')) return;
   const headings = (!editor.isSource?.() && editor.getHeadings?.()) || window.FolioEditor.headings(current.content);
+  $('outline').hidden = !headings.length || !dockVisible || dockTab !== 'outline'; $('outline-divider').hidden = $('outline').hidden;
   const previousEntries = outlineEntries;
   const previousByKey = new Map((outlineStateDocument === current ? previousEntries : []).filter(entry => entry.key).map(entry => [entry.key, entry]));
   const previousActive = previousEntries[outlineActiveIndex];
@@ -136,7 +137,8 @@ function refreshEditorOutline() {
   $('outline-count').textContent = outlineEntries.length ? `${outlineEntries.length} ${outlineEntries.length === 1 ? 'section' : 'sections'}` : 'No headings';
   if (treeChanged || outlineStateDocument !== current) buildOutlineTree(previousEntries);
   if (!outlineEntries.length && !$('outline-items').querySelector('.sidebar-empty')) { const empty = document.createElement('p'); empty.className = 'sidebar-empty'; empty.textContent = 'Add a heading to build the outline.'; $('outline-items').append(empty); }
-  requestAnimationFrame(updateActiveOutline);
+  const activeAtRefresh = outlineActiveIndex;
+  requestAnimationFrame(() => { if (outlineActiveIndex === activeAtRefresh) updateActiveOutline(); });
 }
 
 // A single in-place value editor backed by the existing action dialog. Used

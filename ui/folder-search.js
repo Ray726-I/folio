@@ -39,19 +39,20 @@ function foldedSearchSpan(text, query) {
   return { from: ranges[at][0], to: ranges[at + needle.length - 1][1] };
 }
 async function searchFolderContents() {
-  const epoch = ++grepEpoch, folder = activeFolder?.path, query = $('folder-search-input').value;
+  const epoch = ++grepEpoch, folder = activeFolder?.path, options = parseFolderSearch($('folder-search-input').value), {query, include, exclude} = options;
   const results = $('folder-search-results'), status = $('folder-search-status');
   results.replaceChildren();
   if (!folder || !query) { status.textContent = 'Type to search folder contents.'; return; }
   grepResultsFolder = folder; status.textContent = 'Searching…';
   try {
-    const response = await invoke('search_folder', { query });
+    const response = await invoke('search_folder', { query, include, exclude });
     if (epoch !== grepEpoch || activeFolder?.path !== folder) return;
     let hits = response?.results || [], limited = Boolean(response?.truncated);
     if (current.active && isWithin(current.path || '', folder)) {
-      hits = hits.filter(hit => !samePath(hit.path, current.path)).concat(folderBufferHits(query, current));
+      hits = hits.filter(hit => !samePath(hit.path, current.path)).concat(folderPathAllowed(current.path,folder,options)?folderBufferHits(query, current):[]);
       if (hits.length > 100) { limited = true; hits = hits.slice(0, 100); }
     }
+    hits=hits.filter(hit=>folderPathAllowed(hit.path,folder,options));
     const groups = new Map();
     for (const hit of hits) {
       if (!groups.has(hit.path)) {

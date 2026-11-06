@@ -39,7 +39,15 @@ const { openEditor } = require('./editor-browser.cjs');
       'Change theme…'
     ], 'themes stay inside the Appearance submenu');
     await page.locator('#command-search').fill('nord');
-    assert.equal(await page.locator('#command-list .command-item').count(), 0, 'theme names are not exposed in the main command search');
+    assert.equal(await page.locator('#command-list .command-label').filter({hasText:'Theme: Nord'}).count(), 0, 'theme names are not exposed in the main command search');
+    await page.locator('#command-search').fill('chthm');
+    assert.equal(await page.locator('#command-list .command-label').first().textContent(), 'Change theme…', 'abbreviated command finds the intended action');
+    await page.locator('#command-search').fill('ctrl+shift+f');
+    assert.equal(await page.locator('#command-list .command-label').first().textContent(), 'Search folder contents', 'shortcut searches remain useful');
+    await page.evaluate(() => { current.documentId='test-tab'; current.name='Quarterly Notes.md'; registerDocument(current); openCommands('documents'); });
+    await page.locator('#command-search').fill('qrtn');
+    assert.equal(await page.locator('#command-list .command-label').first().textContent(), 'Quarterly Notes.md', 'open document names support fuzzy matching');
+    await page.evaluate(() => openCommands());
     await page.locator('#command-search').fill('theme');
     const activeId = await page.locator('#command-search').getAttribute('aria-activedescendant');
     assert.equal(await page.locator(`#${activeId} .command-label`).textContent(), 'Change theme…', 'active id follows the visible row');

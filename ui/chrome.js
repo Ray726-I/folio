@@ -44,7 +44,7 @@ function syncDocumentMode() {
   modeButton.title = documentReadOnly ? 'Read-only — choose a mode from the menu' : `${modeLabel} — switch to ${nextLabel}`;
   modeButton.querySelector('use').setAttribute('href', protectedFile || documentReadOnly ? '#i-lock' : documentMode === 'reading' ? '#i-read' : documentMode === 'source' ? '#i-code' : '#i-edit');
   $('filesystem-permission').hidden = !current.active || !protectedFile;
-  for (const button of document.querySelectorAll('[data-document-mode]')) {
+  for (const button of document.querySelectorAll('button[data-document-mode]')) {
     button.setAttribute('aria-checked', String(button.dataset.documentMode === documentMode));
     button.disabled = protectedFile && button.dataset.documentMode === 'edit';
     button.title = button.disabled ? 'This file is not writable. Use Save As to create a writable copy.' : '';
@@ -325,11 +325,13 @@ function showHelp(shortcuts = false) {
   $('help-dialog').classList.toggle('shortcuts', shortcuts);
   const content = $('help-content'); content.replaceChildren();
   if (shortcuts) {
-    const table = document.createElement('table');
-    for (const [label, key] of [['Open File', 'Ctrl+O'], ['Open Folder', 'Ctrl+Shift+O'], ['New document', 'Ctrl+N'], ['Save / Save As', 'Ctrl+S / Ctrl+Shift+S'], ['Undo / Redo', 'Ctrl+Z / Ctrl+Shift+Z'], ['Cut / Copy / Paste', 'Ctrl+X / Ctrl+C / Ctrl+V'], ['Select All', 'Ctrl+A'], ['Find / Replace', 'Ctrl+F / Ctrl+H'], ['Search folder contents', 'Ctrl+Shift+F'], ['File Explorer', 'Ctrl+B'], ['Bold in Edit mode', 'Ctrl+B (in document)'], ['Command window', 'Ctrl+Shift+P'], ['All documents (search open tabs)', 'Ctrl+Shift+A'], ['Fullscreen', 'F11'], ['Zoom in / out / reset', 'Ctrl++ / Ctrl+- / Ctrl+0'], ['Document text size', 'Ctrl+Shift++ / Ctrl+Shift+- / Ctrl+Shift+0'], ['Close File / Quit', 'Ctrl+W / Ctrl+Q']]) {
+    let table;
+    for (const [label, key] of [['Open File', 'Ctrl+O'], ['Open Folder', 'Ctrl+Shift+O'], ['Quick open folder file', 'Ctrl+P'], ['New document', 'Ctrl+N / Ctrl+T'], ['Reopen closed tab', 'Ctrl+Shift+T'], ['Save / Save As', 'Ctrl+S / Ctrl+Shift+S'], ['Undo / Redo', 'Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y'], ['Cut / Copy / Paste', 'Ctrl+X / Ctrl+C / Ctrl+V'], ['Select All', 'Ctrl+A'], ['Find / Replace', 'Ctrl+F / Ctrl+H'], ['Search folder contents', 'Ctrl+Shift+F'], ['File Explorer', 'Ctrl+B'], ['Bold / Italic in Edit mode', 'Ctrl+B / Ctrl+I (in document)'], ['Read / Edit / Source', 'Ctrl+1 / Ctrl+2 / Ctrl+3'], ['Next / Previous tab', 'Ctrl+Tab / Ctrl+Shift+Tab'], ['Toggle reading companion', 'Ctrl+\\'], ['Switch reading panes', 'F6'], ['Table navigation / next row', 'Tab / Shift+Tab / Enter'], ['Command window', 'Ctrl+Shift+P'], ['All documents (search open tabs)', 'Ctrl+Shift+A'], ['Fullscreen', 'F11'], ['Zoom in / out / reset', 'Ctrl++ / Ctrl+- / Ctrl+0'], ['Document text size', 'Ctrl+Shift++ / Ctrl+Shift+- / Ctrl+Shift+0'], ['Close File / Quit', 'Ctrl+W / Ctrl+Q']]) {
+      const group = label === 'Open File' ? 'Files' : label === 'Undo / Redo' ? 'Editing' : label === 'File Explorer' ? 'Navigation and view' : null;
+      if(group){const heading=document.createElement('h3');heading.textContent=group;table=document.createElement('table');content.append(heading,table);}
       const row = table.insertRow(); row.insertCell().textContent = label; row.insertCell().textContent = key;
     }
-    content.append(table); const note = document.createElement('p'); note.textContent = 'On macOS, use Command in place of Ctrl. Escape exits focus mode.'; content.append(note);
+    const note = document.createElement('p'); note.textContent = 'On macOS, use Command in place of Ctrl. Escape exits focus mode.'; content.append(note);
   } else { const p = document.createElement('p'); p.textContent = 'Folio 0.1.0 · A quiet place for Markdown. Read, edit and keep your files on your own disk. Built with Rust and Tauri. MIT licensed.'; content.append(p); }
   $('help-dialog').showModal(); $('help-close').focus();
 }
@@ -371,7 +373,7 @@ function replaceMatches(all) {
   const query = $('find-input').value, replacement = $('replace-input').value;
   if (!query) return;
   let next;
-  if (all) next = current.content.replace(new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu'), () => replacement);
+  if (all) { try { next = current.content.replace(documentSearchPattern(query), () => replacement); } catch { updateFind(); return; } }
   else {
     if (findSource !== current.content) updateFind();
     const match = matches[Math.max(0, findIndex)]; if (!match) return;
@@ -444,7 +446,7 @@ function initializeChrome() {
   $('document-mode-button').onclick = cycleDocumentMode;
   setupMenu('document-mode-menu-button', 'document-mode-menu'); setupMenu('document-more-button', 'document-more-menu');
   $('lock-document').onclick = toggleDocumentReadOnly;
-  document.querySelectorAll('[data-document-mode]').forEach(button => button.onclick = () => setDocumentMode(button.dataset.documentMode));
+  document.querySelectorAll('button[data-document-mode]').forEach(button => button.onclick = () => setDocumentMode(button.dataset.documentMode));
   document.querySelectorAll('[data-app-action]').forEach(button => button.onclick = () => runAppAction(button.dataset.appAction));
   $('open-recent-button').onclick = event => { event.stopPropagation(); openRecentMenu(); };
   const recentGroup = $('open-recent-button').parentElement;

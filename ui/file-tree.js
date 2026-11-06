@@ -19,6 +19,7 @@ function showTreeMenu(entry, origin, point, newOnly = false) {
   const menu = $('tree-menu'); menu.replaceChildren(); menu.hidden = false;
   const parent = entry.directory ? entry.path : dirname(entry.path);
   const actions = [['New file', () => editTreeName('new-file', { path: parent, directory: true })], ['New folder', () => editTreeName('new-folder', { path: parent, directory: true })]];
+  if (!newOnly && !entry.directory) actions.length=0;
   if (!newOnly) {
     actions.push(['Rename', () => editTreeName('rename', entry)], ['Duplicate', () => enqueue(() => performTreeOperation('duplicate', entry))]);
     const doc = [...documents.values()].find(doc => samePath(doc.path, entry.path) && doc.content !== doc.saved);
@@ -27,7 +28,11 @@ function showTreeMenu(entry, origin, point, newOnly = false) {
       ['Copy path', () => navigator.clipboard.writeText(entry.path).catch(toast)], ['Reveal', () => invoke('reveal_path', { path: entry.path }).catch(toast)]);
   }
   for (const [label, action] of actions) {
-    const button = document.createElement('button'); button.type = 'button'; button.className = 'menu-item'; button.role = 'menuitem'; button.textContent = label;
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'menu-item'; button.role = 'menuitem'; button.setAttribute('aria-label',label);
+    button.append(icon(({Rename:'edit',Duplicate:'file','Duplicate current edits':'file','Move to…':'folder','Move to Trash':'close','Copy path':'file',Reveal:'folder-open','New file':'plus','New folder':'folder'})[label]||'file'));
+    const text=document.createElement('span');text.className='menu-text';text.textContent=label;button.append(text);
+    if(label==='Move to Trash')button.classList.add('destructive');
+    if(label==='Rename'){const hint=document.createElement('span');hint.className='menu-hint';hint.textContent='F2';button.append(hint);}
     button.onclick = () => { closeTreeMenu(); Promise.resolve(action()).catch(toast); }; menu.append(button);
   }
   const box = origin.getBoundingClientRect();

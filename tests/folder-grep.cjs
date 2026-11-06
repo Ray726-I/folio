@@ -12,7 +12,7 @@ const { openEditor } = require('./editor-browser.cjs');
    window.grepCalls = 0;
    window.__TAURI__.core.invoke = (command,args) => {
     if(command !== 'search_folder') return base(command,args);
-    window.grepCalls++;
+    window.grepCalls++; window.lastGrepArgs=args;
     return Promise.resolve({results:[{path:'/tmp/notes/b.md',name:'b.md',line:3,offset:8,length:12,snippet:'Needle first',fingerprint},{path:'/tmp/notes/b.md',name:'b.md',line:4,offset:21,length:13,snippet:'Needle second',fingerprint}],truncated:false});
    };
   }, createHash('sha256').update(source).digest('hex'));
@@ -24,6 +24,9 @@ const { openEditor } = require('./editor-browser.cjs');
   assert.equal(await page.locator('#folder-search').isVisible(),true);
   assert.equal(await page.locator('#file-browser').isHidden(),true);
   assert.equal(await page.locator('#outline').isHidden(),true);
+  await page.locator('#folder-search-input').fill('Needle in:*.md -in:archive/*');
+  await page.waitForFunction(()=>window.lastGrepArgs?.query==='Needle' && window.lastGrepArgs.include==='*.md' && window.lastGrepArgs.exclude==='archive/*');
+  await page.locator('#folder-search-results .grep-match').first().waitFor();
   await page.locator('#folder-search-input').fill('Needle');
   await page.locator('#folder-search-results .grep-match').nth(1).waitFor();
   await page.locator('#folder-search-results .grep-match').nth(1).click();

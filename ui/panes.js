@@ -124,7 +124,9 @@ function initializePanes() {
   new ResizeObserver(entries => $('document-view').classList.toggle('pane-narrow', entries[0].contentRect.width < 720)).observe(split);
   let ratio=50; const resize = value => { ratio=Math.min(75,Math.max(25,value)); split.style.setProperty('--pane-ratio',ratio+'%'); divider.setAttribute('aria-valuenow',ratio); }; resize(50);
   divider.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();resize(e.key==='Home'?25:e.key==='End'?75:ratio+(e.key==='ArrowLeft'?-5:5));}};
-  divider.onpointerdown=e=>{divider.setPointerCapture(e.pointerId);}; divider.onpointermove=e=>{if(divider.hasPointerCapture(e.pointerId)){const b=split.getBoundingClientRect();resize((e.clientX-b.left)/b.width*100);}};
+  divider.onpointerdown=e=>{if(e.button!==0)return;e.preventDefault();divider.setPointerCapture(e.pointerId);document.documentElement.classList.add('pane-resizing');};
+  const endResize=()=>document.documentElement.classList.remove('pane-resizing');
+  divider.addEventListener('lostpointercapture',endResize); divider.addEventListener('pointercancel',endResize); window.addEventListener('blur',endResize); divider.onpointermove=e=>{if(divider.hasPointerCapture(e.pointerId)){const b=split.getBoundingClientRect();resize((e.clientX-b.left)/b.width*100);}};
   main.addEventListener('focusin',()=>focusPane('main')); main.addEventListener('pointerdown',()=>{if(focusedPane!=='main')focusPane('main');});
   reader.addEventListener('focusin',()=>{if(focusedPane!=='companion')focusPane('companion');}); reader.addEventListener('pointerdown',()=>{if(focusedPane!=='companion')focusPane('companion');});
   $('companion-close').onclick=closeReadingCompanion;

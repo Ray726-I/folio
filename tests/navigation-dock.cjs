@@ -5,7 +5,7 @@ const { openEditor } = require('./editor-browser.cjs');
   const session = await openEditor('# Heading\n\nText\n');
   try {
     const { page } = session;
-    const outline = page.getByRole('button', { name: 'Contents', exact: true });
+    const outline = page.getByRole('button', { name: 'Outline', exact: true });
     const files = page.getByRole('button', { name: 'Files', exact: true });
     assert.equal(await outline.getAttribute('aria-pressed', { timeout: 3000 }), 'true');
     assert.equal(await page.locator('#outline').isVisible(), true);

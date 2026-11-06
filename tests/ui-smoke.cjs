@@ -102,7 +102,7 @@ let errors = [];
   await page.evaluate(() => setDocumentMode('edit'));
   assert.equal(await page.locator('#lock-document').getAttribute('aria-pressed'), 'false');
   assert.equal(await page.locator('#view-menu #source-snapshot').count(), 1, 'the source snapshot lives in the View menu');
-  if (await page.locator('#outline').isHidden()) await page.getByRole('button', { name: 'Contents', exact: true }).click();
+  if (await page.locator('#outline').isHidden()) await page.getByRole('button', { name: 'Outline', exact: true }).click();
   await page.waitForFunction(() => !document.getElementById('outline').hidden);
   await page.waitForFunction(() => document.querySelectorAll('#outline-items .outline-link[aria-current="location"]').length === 1);
   assert.equal(await page.evaluate(() => getComputedStyle(document.body).getPropertyValue('--dock-sidebar-width').trim()), '280px', 'the wider navigation dock default should drive its CSS variable');
@@ -223,7 +223,7 @@ let errors = [];
 
   await page.setViewportSize({ width: 720, height: 800 });
   await page.waitForFunction(() => window.matchMedia('(max-width:960px)').matches);
-  if (await page.locator('#outline').isHidden()) await page.getByRole('button', { name: 'Contents', exact: true }).click();
+  if (await page.locator('#outline').isHidden()) await page.getByRole('button', { name: 'Outline', exact: true }).click();
   await page.waitForFunction(() => document.getElementById('outline').hidden === false);
   assert.equal(await page.locator('#file-browser').getAttribute('hidden'), '', 'on narrow screens the outline takes over from the file tree');
   await page.getByRole('button', { name: 'Files', exact: true }).click();

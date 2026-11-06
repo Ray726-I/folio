@@ -55,13 +55,14 @@ Text.
     assert.ok(rhythm.diagramTop >= 10 && rhythm.diagramBottom > rhythm.diagramTop, 'diagrams get deliberate vertical breathing room');
 
     // The all-documents control is used to open the palette and receives focus
-    // back when it closes. Its focus indication should be a hairline, not a
-    // thick accent frame that stays around a previously used icon.
+    // back when it closes. Keyboard focus retains a visible outline as well
+    // as its fill so the control is identifiable in light themes.
+    await page.click('#document-more-button');
     await page.click('#all-documents');
     await page.waitForSelector('#command-dialog[open]');
     await page.keyboard.press('Escape');
     const focus = await page.evaluate(() => {
-      const button = document.getElementById('all-documents');
+      const button = document.getElementById('document-more-button');
       const style = getComputedStyle(button), base = document.createElement('span');
       base.style.background = 'var(--hover)'; document.body.append(base);
       const hover = getComputedStyle(base).backgroundColor; base.remove();
@@ -69,7 +70,7 @@ Text.
     });
     assert.equal(focus.focused, true, 'closing the palette returns focus to its trigger');
     assert.ok(focus.visible, 'the trigger receives visible keyboard focus');
-    assert.equal(focus.outline, 'none', 'a previously used control does not keep a colored border');
+    assert.equal(focus.outline, 'solid', 'keyboard focus has a visible outline');
     assert.notEqual(focus.background, 'rgba(0, 0, 0, 0)', 'keyboard focus is still marked with a quiet fill');
     assert.deepEqual(errors, []);
     console.log('PASS: callouts, math density, diagram rhythm, and quiet focus rings are consistent.');
