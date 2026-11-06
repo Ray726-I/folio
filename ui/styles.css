@@ -4380,3 +4380,16 @@ button.editor-trailing-input { display: block; text-align: left; cursor: text; }
 main { display:flex; flex-direction:column; }
 .document-view { flex:1; min-height:0; height:auto; }
 .document-tabs,#recovery-warning { flex-shrink:0; }
+
+/* Explorer operations share the document menus and existing type/theme tokens. */
+.tree-new-button { min-height:26px; padding:2px 7px; font-size:11px; }
+.tree-menu { position:fixed; width:248px; z-index:90; }
+.tree-name-form { display:grid; gap:5px; padding:8px 10px; font-size:12px; }
+.tree-name-form label { color:var(--muted); }
+.tree-name-form input,.tree-move-body input { width:100%; box-sizing:border-box; padding:6px 8px; border:1px solid var(--line); border-radius:5px; background:var(--bg); color:var(--fg); font:inherit; }
+.tree-name-form input:focus-visible,.tree-move-body input:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+#tree-name-error,#tree-move-error { color:var(--red); margin:0; font-size:12px; }
+#tree-name-error:empty,#tree-move-error:empty { display:none; }
+.tree-move-dialog { max-width:min(480px,calc(100vw - 32px)); }
+.tree-move-body { display:grid; gap:10px; padding:18px; font-size:13px; }
+#tree-move-hint { color:var(--muted); margin:0; font-size:12px; }

@@ -1028,6 +1028,26 @@ fn toggle_fullscreen(webview: tauri::Webview, window: tauri::Window) -> Result<(
 }
 
 #[tauri::command(async)]
+fn reveal_path(
+    path: String,
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    renderer::ensure_main(webview.label())?;
+    let scope = state
+        .folder_scope
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("Open a workspace folder first.")?;
+    let path = scope.validated_source(Path::new(&path))?;
+    app.opener()
+        .reveal_item_in_dir(path)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command(async)]
 fn reveal_document(
     document_id: Option<String>,
     webview: tauri::Webview,
@@ -2274,6 +2294,7 @@ fn main() {
             recovery_saved,
             toggle_fullscreen,
             reveal_document,
+            reveal_path,
             rename_document,
             duplicate_document,
             export_html,

@@ -20,6 +20,7 @@
   <script src="folder-search.js" defer></script>
   <script src="recovery.js" defer></script>
   <script src="workspace.js" defer></script>
+  <script src="file-tree.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -128,6 +129,7 @@
             <p id="folder-name" class="sidebar-meta"></p>
           </div>
           <div class="sidebar-actions">
+            <button id="folder-new" class="button tree-new-button" aria-label="New file or folder" aria-haspopup="menu" aria-expanded="false" aria-controls="tree-menu">New</button>
             <button id="folder-refresh" class="icon-button tiny" title="Refresh file tree" aria-label="Refresh file tree">
               <svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>
             </button>
@@ -306,5 +308,11 @@
     </form>
   </dialog>
   <div id="toast" role="status" aria-live="polite" hidden></div>
+<div id="tree-menu" class="menu tree-menu" role="menu" aria-label="File operations" hidden></div>
+<dialog id="tree-move-dialog" class="file-dialog tree-move-dialog" aria-labelledby="tree-move-title">
+ <form id="tree-move-form"><div class="file-dialog-header"><h2 id="tree-move-title">Move file</h2></div>
+ <div class="tree-move-body"><label for="tree-move-path">Destination folder</label><input id="tree-move-path" type="text" spellcheck="false" aria-describedby="tree-move-hint tree-move-error"><p id="tree-move-hint">Enter the full path of a folder in this workspace.</p><p id="tree-move-error" role="alert"></p></div>
+ <div class="file-dialog-footer"><button id="tree-move-cancel" type="button" class="button">Cancel</button><button id="tree-move-confirm" type="submit" class="button suggested">Move</button></div></form>
+</dialog>
 </body>
 </html>

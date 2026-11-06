@@ -234,6 +234,7 @@ function renderNavigationDock() {
   $('folder-divider').hidden = $('file-browser').hidden;
   $('dock-open-folder').hidden = Boolean(activeFolder);
   $('folder-refresh').hidden = !activeFolder;
+  $('folder-new').hidden = !activeFolder;
   for (const tab of document.querySelectorAll('[data-dock-tab]')) {
     // Contents has nothing to list without a document; keep the rail honest
     // instead of exposing a mode that would open an empty panel.
@@ -619,6 +620,7 @@ function renderFolderEntries() {
       button.onclick = () => requestOpen(entry.path);
     }
     const label = document.createElement('span'); label.textContent = entry.name; button.append(label);
+    bindTreeEntry(button, entry);
     list.append(button);
   }
   if (!folderEntries.length) {
@@ -720,6 +722,7 @@ async function save(saveAs = false, force = false, owner = current) {
 }
 const documentSaves = new Map();
 function requestSave(saveAs = false) {
+  if (transitionLocked) return Promise.resolve(false);
   if (!current.documentId) return enqueue(() => save(saveAs));
   const owner = current, previous = documentSaves.get(owner.documentId);
   const operation = previous ? previous.catch(() => {}).then(() => save(saveAs, false, owner)) : save(saveAs, false, owner);
@@ -1061,7 +1064,7 @@ function setFormatToolbarVisible(visible, persist = true) {
 }
 
 function closeAllMenus(returnFocus = false) {
-  for (const id of ['open-menu', 'view-menu', 'format-menu', 'folio-menu', 'edit-menu', 'application-view-menu', 'go-menu', 'help-menu', 'document-mode-menu', 'document-more-menu', 'open-recent-menu']) {
+  for (const id of ['open-menu', 'view-menu', 'format-menu', 'folio-menu', 'edit-menu', 'application-view-menu', 'go-menu', 'help-menu', 'document-mode-menu', 'document-more-menu', 'open-recent-menu', 'tree-menu']) {
     const menu = $(id);
     if (menu && !menu.hidden) {
       menu.hidden = true;
@@ -1137,6 +1140,7 @@ $('open-path').addEventListener('input', () => {
 $('open-dialog').addEventListener('keydown', event => { if (event.altKey && event.key === 'ArrowLeft' && pickerListing?.parent) { event.preventDefault(); browseTo(pickerListing.parent).catch(toast); } });
 $('open-confirm').onclick = confirmOpenPicker;
 $('open-cancel').onclick = $('open-dialog-close').onclick = () => $('open-dialog').close();
+initializeFileTree();
 $('folder-close').onclick = () => setFolderVisible(false);
 for (const tab of document.querySelectorAll('[data-dock-tab]')) {
   tab.addEventListener('click', () => toggleDock(tab.dataset.dockTab));

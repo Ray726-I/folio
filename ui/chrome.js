@@ -387,7 +387,7 @@ function runAppAction(action) {
     issue: () => invoke('open_link', { url: 'https://github.com/Ray726-I/folio/issues' }),
     'copy-path': () => navigator.clipboard.writeText(current.path).then(() => status('Document path copied')),
     reveal: () => invoke('reveal_document', { documentId: current.documentId }), rename: renameDocument,
-    duplicate: () => enqueue(async () => { const path = await invoke('duplicate_document', { documentId: current.documentId, content: current.content }); if (path) status(`Duplicated to ${path}`); }),
+    duplicate: () => { const entry = workspaceEntry(current.path); if (entry) return enqueue(() => performTreeOperation('duplicate', entry)); return enqueue(async () => { const path = await invoke('duplicate_document', { documentId: current.documentId, content: current.content }); if (path) status(`Duplicated to ${path}`); }); },
     html: () => enqueue(async () => { const path = await invoke('export_html', { documentId: current.documentId, content: current.content }); if (path) status(`Exported to ${path}`); }),
     pdf: () => { status('Choose a PDF destination in the print dialog'); window.print(); }
   };
@@ -408,6 +408,8 @@ function closeDocument() {
 }
 async function renameDocument() {
   if (!current.path) return;
+  const entry = workspaceEntry(current.path);
+  if (entry) { dockTab = 'files'; dockVisible = true; expandParentsOf(entry.path); renderFolderEntries(); return editTreeName('rename', entry); }
   const owner = current, name = await editValue({ title: 'Rename document', value: current.name });
   if (name === null || name === current.name || owner !== current) return;
   return enqueue(async () => {

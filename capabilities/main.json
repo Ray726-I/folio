@@ -17,6 +17,7 @@
       "allow-recovery-saved",
 
       "allow-reveal-document",
+      "allow-reveal-path",
       "allow-rename-document",
       "allow-duplicate-document",
       "allow-export-html",

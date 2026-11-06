@@ -16,6 +16,7 @@ fn main() {
             "recovery_discard",
             "recovery_saved",
             "reveal_document",
+            "reveal_path",
             "rename_document",
             "duplicate_document",
             "export_html",
