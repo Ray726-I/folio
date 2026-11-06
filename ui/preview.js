@@ -185,7 +185,7 @@ async function requestMermaidRender(source, signal, owner = 'primary') {
   signal?.addEventListener('abort', abort, { once: true });
   if (signal?.aborted) abort();
   try {
-    if (!signal?.aborted) await invoke('mermaid_render_request', { request: { id, source, theme: { variables: mermaidThemeVariables() } } });
+    if (!signal?.aborted) await invoke('mermaid_render_request', { request: { id, source, theme: { variables: mermaidThemeVariables(), css: mermaidThemeCSS() } } });
   } catch (error) {
     mermaidPending.delete(id);
     throw error;

@@ -46,12 +46,21 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.equal(current.mode, 'edit');
     assert.equal(current.label, 'Edit');
     assert.equal(current.groupMode, 'edit');
-    assert.equal(current.menuHidden, true, 'cycling never opens the dropdown');
-    assert.equal(current.background, 'rgba(0, 0, 0, 0)', 'cycling does not tint the button background');
+    assert.equal(current.menuHidden, true, 'toggling never opens the dropdown');
+    assert.equal(current.background, 'rgba(0, 0, 0, 0)', 'toggling does not tint the button background');
     const editColor = current.color;
 
     await page.locator('#document-mode-button').click();
     await page.mouse.move(0, 0);
+    current = await state();
+    assert.equal(current.mode, 'reading', 'the toggle stops at Read instead of cycling into Source');
+
+    // Source lives in the caret menu only.
+    await page.locator('#document-mode-menu-button').click();
+    current = await state();
+    assert.equal(current.menuHidden, false, 'the caret still opens the dropdown');
+    assert.equal(current.expanded, 'true');
+    await page.getByRole('menuitemradio', { name: 'Source', exact: true }).click();
     current = await state();
     assert.equal(current.mode, 'source');
     assert.equal(current.label, 'Source');
@@ -63,16 +72,14 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.locator('#document-mode-button').click();
     await page.mouse.move(0, 0);
     current = await state();
-    assert.equal(current.mode, 'reading');
+    assert.equal(current.mode, 'edit', 'leaving Source with the toggle returns to Edit');
+    assert.equal(current.menuHidden, true, 'the toggle never opens the dropdown');
 
     await page.locator('#document-mode-menu-button').click();
+    await page.getByRole('menuitemradio', { name: 'Read', exact: true }).click();
     current = await state();
-    assert.equal(current.menuHidden, false, 'the caret still opens the dropdown');
-    assert.equal(current.expanded, 'true');
-    await page.getByRole('menuitemradio', { name: 'Edit', exact: true }).click();
-    current = await state();
-    assert.equal(current.mode, 'edit');
-    assert.equal(current.label, 'Edit');
+    assert.equal(current.mode, 'reading');
+    assert.equal(current.label, 'Read');
     assert.equal(current.menuHidden, true);
     assert.equal(current.expanded, 'false', 'selecting a mode closes the dropdown');
     await page.locator('#document-mode-menu-button').click();
@@ -85,6 +92,6 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.equal(focusState.caretOutline, 'none', 'the caret does not draw a second focus box');
     assert.equal(focusState.groupOutline, 'solid', 'the split control focuses as one shape');
     assert.deepEqual(errors, []);
-    console.log('PASS: the main mode control cycles Read/Edit/Source while the caret owns the menu, with distinct selected colors.');
+    console.log('PASS: the main mode control toggles Read/Edit while the caret owns Source, with distinct selected colors.');
   } finally { await session.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

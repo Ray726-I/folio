@@ -52,6 +52,7 @@ def complete(widget, result, *_):
             assert colors['shadow'] == 'none', colors
         assert report['headerSelection'] == '', 'toolbar text must not be selectable: ' + repr(report['headerSelection'])
         assert 'Body text' in report['documentSelection'], 'document text must remain selectable'
+        assert report['shortcutPalette'] and report['shortcutWindowZoom'] and report['shortcutTextZoom'], report
         assert not report['errors'], report['errors']
         print('PASS: native WebKit startup palette at ' + str(zoom) + ' zoom: ' + json.dumps(report), flush=True)
         state['ok'] = True
@@ -74,7 +75,14 @@ def ready(widget, result, *_):
           const selectedText=node=>{const range=document.createRange();range.selectNode(node);const selection=getSelection();selection.removeAllRanges();selection.addRange(range);const text=selection.toString();selection.removeAllRanges();return text;};
           const headerSelection=selectedText(document.querySelector('.window-title'));
           const documentSelection=selectedText(document.querySelector('#preview p'));
-          return {dark,light,headerSelection,documentSelection,errors:window.paletteErrors||[]};
+          const input=document.createElement('input');document.body.append(input);input.focus();
+          input.addEventListener('keydown',event=>event.stopPropagation());
+          const key=(key,code,shiftKey=false)=>document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key,code,ctrlKey:true,shiftKey,bubbles:true,cancelable:true}));
+          key('P','KeyP',true);const shortcutPalette=$('command-dialog').open;
+          const oldZoom=windowZoom;key('=','Equal');const shortcutWindowZoom=windowZoom>oldZoom;
+          const oldSize=fontSize;key('+','Equal',true);const shortcutTextZoom=fontSize>oldSize;
+          $('command-dialog').close();zoomWindow(0,true);zoomText(0,true);input.remove();
+          return {dark,light,headerSelection,documentSelection,shortcutPalette,shortcutWindowZoom,shortcutTextZoom,errors:window.paletteErrors||[]};
         })())''', -1, None, None, None, complete, None)
     except Exception as error:
         print('FAIL: native palette readiness: ' + str(error), flush=True)

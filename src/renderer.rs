@@ -72,6 +72,7 @@ pub const MAX_OUTSTANDING_REQUESTS: usize = 32;
 pub const MAX_THEME_VARIABLES: usize = 256;
 pub const MAX_THEME_KEY_BYTES: usize = 64;
 pub const MAX_THEME_VALUE_BYTES: usize = 128;
+pub const MAX_THEME_CSS_BYTES: usize = 8192;
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 const ALLOWED_ERROR_CODES: &[&str] = &[
@@ -103,6 +104,10 @@ pub struct RenderRequest {
 pub struct RendererTheme {
     #[serde(default)]
     pub variables: BTreeMap<String, ThemeValue>,
+    /// Narrow CSS patches for shapes Mermaid does not expose as variables.
+    /// Rendered inside the isolated webview and re-sanitized with the SVG.
+    #[serde(default)]
+    pub css: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -327,6 +332,15 @@ fn validate_request(request: &RenderRequest) -> Result<(), TransportError> {
         return Err(TransportError::SourceTooLarge);
     }
     if request.theme.variables.len() > MAX_THEME_VARIABLES {
+        return Err(TransportError::InvalidTheme);
+    }
+    if request.theme.css.len() > MAX_THEME_CSS_BYTES
+        || request
+            .theme
+            .css
+            .chars()
+            .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+    {
         return Err(TransportError::InvalidTheme);
     }
     for (key, value) in &request.theme.variables {
@@ -1698,6 +1712,35 @@ mod tests {
     }
 
     #[test]
+    fn accepts_scoped_theme_css_and_rejects_unbounded_css() {
+        // The UI sends a scoped patch for shapes Mermaid hides from theme
+        // variables. A stricter request schema made every diagram fail with
+        // "could not be rendered", so the wire shape is pinned here.
+        let wire = serde_json::json!({
+            "id": "mermaid-1",
+            "source": "erDiagram\n  CUSTOMER { int id PK }",
+            "theme": {
+                "variables": { "primaryColor": "#333446" },
+                "css": ".node[id*=\"-entity-\"] path[fill^=\"hsl(\"] { fill: #29293a !important; }"
+            }
+        });
+        let parsed: RenderRequest = serde_json::from_value(wire).unwrap();
+        assert!(parsed.theme.css.contains("!important"));
+        let mut transport = Transport::default();
+        assert_eq!(transport.submit(parsed), Ok(false));
+
+        let mut oversized = request("mermaid-2");
+        oversized.theme.css = "x".repeat(MAX_THEME_CSS_BYTES + 1);
+        assert_eq!(
+            transport.submit(oversized),
+            Err(TransportError::InvalidTheme)
+        );
+        let mut single_line = request("mermaid-3");
+        single_line.theme.css = ".a{fill:#000}".into();
+        assert_eq!(transport.submit(single_line), Ok(false));
+    }
+
+    #[test]
     fn duplicate_and_excess_requests_are_rejected_without_mutation() {
         let mut transport = Transport::default();
         assert_eq!(transport.submit(request("mermaid-1")), Ok(false));
@@ -1915,6 +1958,18 @@ mod tests {
         assert!(!sanitized.to_ascii_lowercase().contains("onclick"));
         assert!(sanitized.contains("linearGradient"));
         assert!(sanitized.contains("xmlns=\"http://www.w3.org/2000/svg\""));
+    }
+
+    #[test]
+    fn trusted_sanitizer_preserves_scoped_theme_css() {
+        // Mermaid's ER attribute rows are patched with a scoped !important
+        // rule because they carry no class. The CSS pass must keep the
+        // attribute selector and its priority instead of dropping the rule.
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg"><style>.node[id*="-entity-"] path[fill^="hsl("] { fill:#29293a !important; }</style><path fill="hsl(240, 18%, 8%)"/></svg>"#;
+        let sanitized = sanitize_svg_result(svg).unwrap();
+        assert!(sanitized.contains(r#"path[fill^="hsl("]"#));
+        assert!(sanitized.contains("!important"));
+        assert!(sanitized.contains("#29293a"));
     }
 
     #[test]

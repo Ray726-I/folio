@@ -100,11 +100,35 @@ function updatePreviewPalette() {
   root.style.setProperty('--diagram-line', readableColor(mixColors(foreground, background, .22), background, 3));
   return true;
 }
-function mermaidThemeVariables() {
+// Node surfaces shared by the diagram families that read primary/actor
+// colours instead of the categorical palette. A 4.5% lift disappears at
+// reading size, so those diagrams rendered as bare outlines on the page;
+// nodes now sit on a real card with an accent-tinted border, while nested
+// containers keep the quieter --diagram-node fill.
+function diagramSurface() {
   const background = cssVarColor('--bg');
+  const foreground = cssVarColor('--fg');
   const dark = colorLuminance(background) < .35;
+  return {
+    background,
+    dark,
+    card: mixColors(background, foreground, dark ? .12 : .07),
+    cardSoft: mixColors(background, foreground, dark ? .06 : .035)
+  };
+}
+function mermaidThemeCSS() {
+  const { cardSoft } = diagramSurface();
+  // Mermaid 11 derives ER attribute rows from the primary colour's lightness
+  // minus 5% and 10%, so dark themes paint near-black bands inside a themed
+  // entity. The rows carry no class, only that inline hsl() fill.
+  return `.node[id*="-entity-"] path[fill^="hsl("] { fill: ${cardSoft} !important; }`;
+}
+function mermaidThemeVariables() {
+  const { background, dark, card, cardSoft } = diagramSurface();
   const node = cssVarColor('--diagram-node'), border = cssVarColor('--diagram-border');
   const text = cssVarColor('--read-strong'), line = cssVarColor('--diagram-line');
+  const accent = cssVarColor('--accent');
+  const cardBorder = readableColor(mixColors(accent, card, .4), card, 3);
   const colors = ['blue', 'green', 'yellow', 'purple', 'red'].map(name => cssVarColor(`--read-${name}`));
   const palette = [...new Set([...colors, ...colors.map((color, index) => mixColors(color, colors[(index + 1) % colors.length], .5)), mixColors(colors[0], colors[2], .5), mixColors(colors[1], colors[3], .5)])];
 
@@ -124,43 +148,54 @@ function mermaidThemeVariables() {
     categorical[`cScalePeer${index}`] = readableColor(palette[index], fills[index], 3);
     categorical[`cScaleInv${index}`] = categorical[`cScalePeer${index}`];
   }
+  // Git graphs index their own branch colours (git0…git7) and none of the
+  // cScale slots, so every branch used to fall back to the Mermaid default.
+  for (let index = 0; index < 8; index++) {
+    const branch = readableColor(palette[index % palette.length], background, 3);
+    categorical[`git${index}`] = branch;
+    categorical[`gitBranchLabel${index}`] = readableColor(chartInk, branch, 4.5);
+  }
   return {
     ...categorical,
     darkMode: dark,
-    background: cssVarColor('--bg'),
+    background,
     fontFamily: '"Inter","Adwaita Sans","Cantarell",system-ui,sans-serif',
     fontSize: '15px',
-    primaryColor: node,
+    primaryColor: card,
     primaryTextColor: text,
-    primaryBorderColor: border,
+    primaryBorderColor: cardBorder,
     lineColor: line,
-    secondaryColor: cssVarColor('--surface'),
+    secondaryColor: card,
     secondaryTextColor: text,
-    secondaryBorderColor: border,
-    tertiaryColor: node,
+    secondaryBorderColor: cardBorder,
+    tertiaryColor: card,
     tertiaryTextColor: text,
-    tertiaryBorderColor: border,
+    tertiaryBorderColor: cardBorder,
     textColor: text,
     titleColor: text,
-    mainBkg: node,
-    nodeBorder: border,
+    mainBkg: card,
+    nodeBorder: cardBorder,
     clusterBkg: background,
     clusterBorder: border,
     edgeLabelBackground: background,
-    actorBkg: node,
-    actorBorder: border,
+    actorBkg: card,
+    actorBorder: cardBorder,
     actorTextColor: text,
     actorLineColor: line,
     signalColor: line,
     signalTextColor: text,
-    labelBoxBkgColor: background,
+    labelBoxBkgColor: card,
     labelTextColor: text,
-    labelBoxBorderColor: border,
-    noteBkgColor: cssVarColor('--hover'),
+    labelBoxBorderColor: cardBorder,
+    noteBkgColor: cardSoft,
     noteTextColor: text,
-    noteBorderColor: border,
+    noteBorderColor: cardBorder,
     activationBkgColor: cssVarColor('--selection'),
-    activationBorderColor: border,
+    activationBorderColor: cardBorder,
+    compositeBackground: node,
+    compositeTitleBackground: cardSoft,
+    attributeBackgroundColorOdd: card,
+    attributeBackgroundColorEven: cardSoft,
     sequenceNumberColor: text,
     pieSectionTextColor: dark ? '#171717' : '#ffffff',
     pieLegendTextColor: text,

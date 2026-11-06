@@ -611,6 +611,19 @@ class Smoke:
             )
         self.log("initial scratch unchanged before input")
 
+        # Exercise application shortcuts before explicitly focusing the editor.
+        # If the palette does not take focus, the search text can leak into the
+        # document and the subsequent exact-byte save will detect it.
+        self.kb.chord("p", ctrl=True, shift=True)
+        self.kb.type_text("zzzz")
+        self.kb.chord("p", ctrl=True, shift=True)
+        self.kb.chord("=", ctrl=True)
+        self.kb.chord("-", ctrl=True)
+        self.kb.chord("=", ctrl=True, shift=True)
+        self.kb.chord("-", ctrl=True, shift=True)
+        self.wait_clean("global shortcuts")
+        self.log("palette and both zoom shortcuts before editor focus")
+
         # Case 1: rich editor keyboard input.
         self.kb.chord("End", ctrl=True)
         self.kb.type_text(" native")
@@ -736,6 +749,11 @@ def main() -> int:
     log = log_path.open("wb")
 
     env = os.environ.copy()
+    # A private display and D-Bus session do not isolate WebKit's persistent
+    # storage. Keep restored workspaces and user documents out of this test.
+    env["XDG_DATA_HOME"] = str(scratch_dir / "xdg-data")
+    env["XDG_CONFIG_HOME"] = str(scratch_dir / "xdg-config")
+    env["XDG_CACHE_HOME"] = str(scratch_dir / "xdg-cache")
     env.pop("FOLIO_NATIVE_PROBE", None)
     env["GDK_BACKEND"] = "x11"
     process = subprocess.Popen(

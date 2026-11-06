@@ -39,9 +39,12 @@ function syncDocumentMode() {
   const modeLabel = $('document-mode-label').textContent;
   const nextLabel = { reading: 'Read', edit: 'Edit', source: 'Source' }[nextDocumentMode()];
   $('document-mode-group').dataset.mode = documentReadOnly ? 'readonly' : documentMode;
-  modeButton.disabled = documentReadOnly;
-  modeButton.setAttribute('aria-label', documentReadOnly ? 'Read-only — choose a mode from the menu' : `${modeLabel} — switch to ${nextLabel}`);
-  modeButton.title = documentReadOnly ? 'Read-only — choose a mode from the menu' : `${modeLabel} — switch to ${nextLabel}`;
+  // The toggle can only offer Edit when the file is writable; otherwise the
+  // caret menu remains the way to reach Source.
+  modeButton.disabled = documentReadOnly || protectedFile;
+  const blockedLabel = documentReadOnly ? 'Read-only — choose a mode from the menu' : 'Not writable — choose a mode from the menu';
+  modeButton.setAttribute('aria-label', modeButton.disabled ? blockedLabel : `${modeLabel} — switch to ${nextLabel}`);
+  modeButton.title = modeButton.disabled ? blockedLabel : `${modeLabel} — switch to ${nextLabel}`;
   modeButton.querySelector('use').setAttribute('href', protectedFile || documentReadOnly ? '#i-lock' : documentMode === 'reading' ? '#i-read' : documentMode === 'source' ? '#i-code' : '#i-edit');
   $('filesystem-permission').hidden = !current.active || !protectedFile;
   for (const button of document.querySelectorAll('button[data-document-mode]')) {
@@ -67,12 +70,13 @@ function syncDocumentMode() {
     if (action === 'forward') button.disabled = documentNavigationIndex >= documentNavigation.length - 1;
   });
 }
+// The caret menu owns Source; the primary control stays a Read/Edit toggle so
+// writing mode and reading mode are one click apart.
 function nextDocumentMode() {
-  const modes = current.writable === false ? ['reading', 'source'] : ['reading', 'edit', 'source'];
-  const index = modes.indexOf(documentMode);
-  return modes[(index + 1) % modes.length] || 'edit';
+  if (documentMode === 'edit') return 'reading';
+  return current.writable === false ? 'reading' : 'edit';
 }
-function cycleDocumentMode() { setDocumentMode(nextDocumentMode()); }
+function toggleDocumentMode() { setDocumentMode(nextDocumentMode()); }
 function setDocumentMode(next) {
   if (focusedPane === 'companion') return;
   if (!current.active || transitionLocked || !['reading', 'edit', 'source'].includes(next)) return;
@@ -443,7 +447,7 @@ async function renameDocument() {
 }
 function initializeChrome() {
   for (const id of ['file', 'edit', 'view', 'go', 'help']) setupMenu('menu-' + id + '-button', id === 'file' ? 'open-menu' : id === 'view' ? 'application-view-menu' : id + '-menu');
-  $('document-mode-button').onclick = cycleDocumentMode;
+  $('document-mode-button').onclick = toggleDocumentMode;
   setupMenu('document-mode-menu-button', 'document-mode-menu'); setupMenu('document-more-button', 'document-more-menu');
   $('lock-document').onclick = toggleDocumentReadOnly;
   document.querySelectorAll('button[data-document-mode]').forEach(button => button.onclick = () => setDocumentMode(button.dataset.documentMode));

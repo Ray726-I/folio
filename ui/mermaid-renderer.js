@@ -327,6 +327,9 @@
         if (typeof value === 'string' || typeof value === 'boolean') themeVariables[key] = value;
       }
     }
+    // Narrow CSS patches for shapes Mermaid does not expose as variables. The
+    // trusted side re-sanitizes this text with the rest of the SVG.
+    const themeCSS = request.theme && typeof request.theme.css === 'string' ? request.theme.css.slice(0, 8192) : '';
 
     window.mermaid.initialize({
       startOnLoad: false,
@@ -336,6 +339,7 @@
       look: 'classic',
       htmlLabels: false,
       themeVariables,
+      themeCSS,
       fontFamily: '"Inter","Adwaita Sans","Cantarell",system-ui,sans-serif',
       flowchart: { htmlLabels: false, curve: 'basis', nodeSpacing: 36, rankSpacing: 46, padding: 16, diagramPadding: 8, useMaxWidth: true },
       sequence: { useMaxWidth: true },

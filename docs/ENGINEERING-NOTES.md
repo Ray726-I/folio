@@ -118,6 +118,14 @@ should outlive any one feature pass. Current performance numbers live in
   keep the previous theme's ink.
 - Diagram refreshes after a theme change are coalesced (160 ms). Rapid theme
   switches pay for one Mermaid re-render, not one per switch.
+- Flowchart, sequence, class, ER and state nodes read `primaryColor`/`actorBkg`,
+  not the categorical `cScale*` palette that already coloured pie, gantt and
+  mindmap. They use a card surface with an accent-tinted border; Mermaid 11
+  derives ER attribute rows from the primary colour's lightness minus 5%/10%,
+  so `mermaidThemeCSS()` supplies that one surface the variables cannot.
+- The palette can open over a pending confirmation. `ask()` shows one prompt at
+  a time: a second request queues until the first settles, so a command cannot
+  replace the actions of the prompt the user is already answering.
 
 ## Document preferences
 

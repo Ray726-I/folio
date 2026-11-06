@@ -403,8 +403,9 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () 
 window.matchMedia('(max-width:640px)').addEventListener('change', event => {
   renderNavigationDock();
 });
+let confirmQueue = Promise.resolve();
 function ask(title, message, choices) {
-  return new Promise(resolve => {
+  const show = () => new Promise(resolve => {
     const dialog = $('confirm-dialog'); $('confirm-title').textContent = title; $('confirm-message').textContent = message; $('confirm-actions').replaceChildren();
     const finish = value => { dialog.close(); dialog.removeEventListener('cancel', cancel); resolve(value); };
     const cancel = event => { event.preventDefault(); finish('cancel'); };
@@ -414,6 +415,12 @@ function ask(title, message, choices) {
     }
     dialog.showModal(); $('confirm-actions').firstElementChild?.focus();
   });
+  // The command palette can open over a pending prompt, and a command it runs
+  // may ask again. Queue that prompt instead of replacing the actions of the
+  // one the user is already answering.
+  const result = confirmQueue.then(show, show);
+  confirmQueue = result.then(() => {}, () => {});
+  return result;
 }
 async function allowDiscard() {
   
@@ -934,7 +941,6 @@ function filterCommands() {
   updateActiveCommand();
 }
 function openCommands(scope = 'commands') {
-  if ($('confirm-dialog').open) return;
   closeAllMenus();
   commandScope = scope;
   selectedCommand = 0;
@@ -1384,10 +1390,22 @@ document.addEventListener('keydown', event => {
     openReplace();
   }
 }, true);
+// Capture application-wide shortcuts before inputs and editor widgets can stop
+// key events. A native window must still be focused to receive these events.
+window.addEventListener('keydown', event => {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey || event.isComposing) return;
+  const key = event.key.toLowerCase();
+  let action;
+  if (event.shiftKey && key === 'p') action = () => $('command-dialog').open ? $('command-dialog').close() : openCommands();
+  else if (event.code === 'Equal' || event.code === 'NumpadAdd' || key === '+' || key === '=') action = () => event.shiftKey ? zoomText(1) : zoomWindow(.1);
+  else if (event.code === 'Minus' || event.code === 'NumpadSubtract' || key === '-' || key === '_') action = () => event.shiftKey ? zoomText(-1) : zoomWindow(-.1);
+  else if (event.code === 'Digit0' || event.code === 'Numpad0' || key === '0') action = () => event.shiftKey ? zoomText(0, true) : zoomWindow(0, true);
+  if (!action) return;
+  event.preventDefault(); event.stopPropagation(); action();
+}, true);
 document.addEventListener('keydown', event => {
   const control = event.ctrlKey || event.metaKey;
   if (control && !event.altKey && event.shiftKey && event.key.toLowerCase() === 'a') { event.preventDefault(); openCommands('documents'); return; }
-  if (control && event.shiftKey && event.key.toLowerCase() === 'p') { event.preventDefault(); $('command-dialog').open ? $('command-dialog').close() : openCommands(); return; }
   if (event.defaultPrevented) return;
   if ($('recovery-dialog').open || $('help-dialog').open || $('command-dialog').open || $('confirm-dialog').open || $('open-dialog').open || $('source-dialog').open || $('editor-action-dialog').open) return;
   if (event.key === 'Escape') {
@@ -1419,9 +1437,6 @@ document.addEventListener('keydown', event => {
     if (event.target.matches('input,textarea')) return;
     event.preventDefault(); enqueue(() => undoRedo(key === 'y' || event.shiftKey));
   }
-  else if (event.code === 'Equal' || key === '+' || key === '=') { event.preventDefault(); event.shiftKey ? zoomText(1) : zoomWindow(.1); }
-  else if (event.code === 'Minus' || key === '-' || key === '_') { event.preventDefault(); event.shiftKey ? zoomText(-1) : zoomWindow(-.1); }
-  else if (key === '0') { event.preventDefault(); event.shiftKey ? zoomText(0, true) : zoomWindow(0, true); }
   else if (key === 'o') { event.preventDefault(); event.shiftKey ? openFolderEntry() : openEntry(); }
   else if (key === 'b' && editor && (event.target.closest?.('#preview .ProseMirror') || event.target.closest?.('#preview'))) { event.preventDefault(); editor.command('bold'); }
   else if (key === 'b' && !event.target.closest?.('#preview .ProseMirror')) { event.preventDefault(); toggleDock('files'); }

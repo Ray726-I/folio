@@ -117,6 +117,7 @@ async function deliverOk(page, id, tag) {
     assert.equal(first.source, 'graph TD;\nA-->B;', 'request carries the exact diagram source');
     assert.equal(typeof first.theme.variables, 'object', 'request carries theme variables');
     assert.equal(typeof first.theme.variables.background, 'string', 'theme variables include the background');
+    assert.match(first.theme.css, /!important/, 'request carries the scoped theme CSS patch');
     const order = await page.evaluate(() => window.__bridge.callOrder);
     assert.ok(order.includes('listen:mermaid-render-result'), 'main listens for results');
     assert.ok(order.indexOf('listen:mermaid-render-result') < order.indexOf('invoke:mermaid_render_request'), 'main listens before invoking');
