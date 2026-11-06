@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-finish-window-transfer"
+description = "Enables the finish_window_transfer command without any pre-configured scope."
+commands.allow = ["finish_window_transfer"]
+
+[[permission]]
+identifier = "deny-finish-window-transfer"
+description = "Denies the finish_window_transfer command without any pre-configured scope."
+commands.deny = ["finish_window_transfer"]

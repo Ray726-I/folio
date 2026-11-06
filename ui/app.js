@@ -48,13 +48,14 @@ const dirty = () => current.content !== current.saved;
 // until the next save attempt. Rendered visibly by updateTitle().
 let saveStatus = null;
 function saveState() {
-  if (!current.active) return { text: '', state: 'idle' };
-  if (saveStatus === 'saving') return { text: 'Saving…', state: 'saving' };
-  if (saveStatus && saveStatus.error) return { text: 'Save failed', state: 'error' };
+  const owner = focusedDocument(), ownerStatus = owner === current ? saveStatus : owner.saveStatus || owner.view?.saveStatus;
+  if (!owner.active) return { text: '', state: 'idle' };
+  if (ownerStatus === 'saving') return { text: 'Saving…', state: 'saving' };
+  if (ownerStatus && ownerStatus.error) return { text: 'Save failed', state: 'error' };
   // Compact dirty label: the short "Edited" keeps the indicator footprint
   // near the old Saved width so no wide gap is reserved. The full
   // "Unsaved changes" meaning lives in the accessible name and tooltip.
-  return dirty() ? { text: 'Edited', state: 'dirty' } : { text: 'Saved', state: 'saved' };
+  return owner.content !== owner.saved ? { text: 'Edited', state: 'dirty' } : { text: 'Saved', state: 'saved' };
 }
 function commandError(error) {
   if (error && typeof error === 'object') return { code: error.code || 'error', message: error.message || String(error) };
@@ -79,28 +80,29 @@ function sendTitle(name, dirty) {
 }
 let renderedTitleKey = null;
 function updateTitle() {
-  const name = current.active ? current.name : activeFolder?.name || '';
+  const owner = focusedDocument(), ownerStatus = owner === current ? saveStatus : owner.saveStatus || owner.view?.saveStatus;
+  const name = owner.active ? owner.name : activeFolder?.name || '';
   // Typing calls this on every keystroke. Everything below is derived from
   // these values, so when none of them changed there is nothing to write: the
   // name, dirty flag and save state are stable for the whole typing burst.
   const state = saveState();
-  const key = [name, current.path || activeFolder?.path || '', current.active ? 1 : 0,
-    dirty() ? 1 : 0, state.text, state.state, saveStatus?.error || '', documentMode, documentReadOnly, current.writable].join('\u0000');
+  const key = [name, owner.path || activeFolder?.path || '', owner.active ? 1 : 0,
+    (owner.content !== owner.saved) ? 1 : 0, state.text, state.state, ownerStatus?.error || '', documentMode, documentReadOnly, owner.writable].join('\u0000');
   if (key === renderedTitleKey) return;
   renderedTitleKey = key;
   syncDocumentMode();
   $('document-name').textContent = name || 'Folio';
   const emblem = document.querySelector('.document-emblem');
-  const kind = current.active ? fileIconName(current.path || current.name) : 'folder';
+  const kind = owner.active ? fileIconName(owner.path || owner.name) : 'folder';
   emblem?.querySelector('use')?.setAttribute('href', `#i-${kind}`);
   emblem?.classList.toggle('file-kind-markdown', kind === 'markdown');
-  $('document-location').textContent = current.path ? current.path : activeFolder?.path || (current.active ? 'Unsaved document' : 'Markdown files and folders');
-  $('document-location').title = current.path || activeFolder?.path || '';
-  $('dirty-dot').hidden = !dirty();
-  const saveButton = $('save'), isDirty = dirty();
+  $('document-location').textContent = owner.path ? owner.path : activeFolder?.path || (owner.active ? 'Unsaved document' : 'Markdown files and folders');
+  $('document-location').title = owner.path || activeFolder?.path || '';
+  $('dirty-dot').hidden = !(owner.content !== owner.saved);
+  const saveButton = $('save'), isDirty = (owner.content !== owner.saved);
   saveButton.classList.toggle('is-dirty', isDirty);
-  const saveLabel = !current.active ? 'Save (Ctrl+S)'
-    : isDirty ? `Save (Ctrl+S) — unsaved changes in ${current.name}` : 'Save (Ctrl+S) — all changes saved';
+  const saveLabel = !owner.active ? 'Save (Ctrl+S)'
+    : isDirty ? `Save (Ctrl+S) — unsaved changes in ${owner.name}` : 'Save (Ctrl+S) — all changes saved';
   saveButton.setAttribute('aria-label', saveLabel);
   saveButton.title = saveLabel;
   saveButton.dataset.state = state.state;
@@ -110,15 +112,15 @@ function updateTitle() {
   // The short "Edited" label still announces the full meaning to assistive
   // technology and hover, so nothing is lost by staying compact.
   const accessibleText = state.state === 'dirty' ? 'Unsaved changes' : state.text;
-  const stateTitle = state.state === 'error' && saveStatus?.error ? saveStatus.error
+  const stateTitle = state.state === 'error' && ownerStatus?.error ? saveStatus.error
     : state.state === 'dirty' ? 'Unsaved changes' : '';
   saveStateElement.title = stateTitle;
-  const compactSaveLabel = `Save (Ctrl+S) — ${state.state === 'error' ? `Save failed: ${saveStatus?.error || ''}` : accessibleText}`;
+  const compactSaveLabel = `Save (Ctrl+S) — ${state.state === 'error' ? `Save failed: ${ownerStatus?.error || ''}` : accessibleText}`;
   saveButton.title = compactSaveLabel;
   saveButton.setAttribute('aria-label', compactSaveLabel);
-  saveStateElement.setAttribute('aria-label', state.state === 'error' && saveStatus?.error ? `Save failed: ${saveStatus.error}` : `Save state: ${accessibleText || 'no document'}`);
+  saveStateElement.setAttribute('aria-label', state.state === 'error' && ownerStatus?.error ? `Save failed: ${saveStatus.error}` : `Save state: ${accessibleText || 'no document'}`);
   clearTimeout(titleTimer);
-  titleTimer = setTimeout(() => sendTitle(name, dirty()), 120);
+  titleTimer = setTimeout(() => sendTitle(name, (owner.content !== owner.saved)), 120);
 }
 function countWords(text) {
   let words = 0, inWord = false;
@@ -203,15 +205,8 @@ function syncDocumentChrome() {
   const view = document.getElementById('document-view');
   const reader = document.getElementById('reader-scroll');
   if (!view || !reader || !reader.parentElement) return;
-  let height = 0;
-  for (const child of reader.parentElement.children) {
-    if (child === reader) break;
-    if (child.hidden) continue;
-    const style = getComputedStyle(child);
-    if (style.display === 'none' || style.position === 'absolute' || style.position === 'fixed') continue;
-    height += child.getBoundingClientRect().height;
-  }
-  view.style.setProperty('--document-chrome-height', `${Math.round(height)}px`);
+  const height = Math.max(0, reader.getBoundingClientRect().top - view.getBoundingClientRect().top);
+  view.style.setProperty('--document-chrome-height', `${Math.ceil(height)}px`);
 }
 function syncDockForViewport() {
   const narrow = narrowDrawers();
@@ -398,7 +393,7 @@ function toggleReadingFont() { applyReadingFont(readingFont === 'serif' ? 'sans'
 function toggleRemoteImages() {
   remoteImages = !remoteImages;
   preferences.set('remoteImages', remoteImages);
-  previewSnapshot = null;
+  previewSnapshot = null; scheduleCompanionRender(0);
   status(remoteImages ? 'Remote images will load from the network' : 'Remote images are blocked');
   if (current.active) editor?.refreshMedia(!remoteImages);
 }
@@ -461,7 +456,7 @@ async function openPath(path, confirmed = false) {
     if (!document.documentId && activeFolder && !samePath(document.path, activeFolder.path) && !isWithin(document.path, activeFolder.path)) { activeFolder = null; folderEntries = []; expandedFolders.clear(); }
     if (activeFolder) expandParentsOf(document.path);
     setLineEnding(document.lineEnding || null);
-    showDocument(); $('reader-scroll').scrollTop = 0; await refreshEditorSurface(); addRecent(current.path); return true;
+    showDocument(); focusPane('main'); $('reader-scroll').scrollTop = 0; await refreshEditorSurface(); scheduleCompanionRender(0); addRecent(current.path); return true;
   } finally {
     setTransitionLocked(false);
   }
@@ -692,22 +687,23 @@ function requestOpenLocation(path) {
     return openPath(path);
   });
 }
-async function save(saveAs = false, force = false, owner = current) {
+async function save(saveAs = false, force = false, owner = current, automatic = false) {
   if (!owner.active || owner.closing) return false;
   if (!saveAs && ((owner === current ? documentReadOnly : owner.view?.readOnly) || owner.writable === false)) { toast('This document is read-only. Use Save As to create a writable copy.'); return false; }
   if (owner === current) editor?.checkpoint();
   const snapshot = owner.content, savedRevision = owner.revision || 0;
-  const setSaveStatus = value => { owner.saveStatus = value; if (owner.view) owner.view.saveStatus = value; if (owner === current) { saveStatus = value; updateTitle(); } };
+  const setSaveStatus = value => { owner.saveStatus = value; if (owner.view) owner.view.saveStatus = value; if (owner === current) saveStatus = value; if (owner === focusedDocument()) updateTitle(); };
   if (owner === current) status('Saving…'); setSaveStatus('saving');
   try {
     const saved = await invoke('save_document', { documentId: owner.documentId, content: snapshot, saveAs, force });
     if (!saved) { setSaveStatus(null); if (owner === current) status(''); return false; }
-    owner.path = saved.path; owner.name = saved.name; owner.saved = snapshot; if (saveAs) { owner.writable = true; if (owner === current) documentReadOnly = false; } await recoveryWriter.saved(owner, savedRevision); renderTabs(); persistWorkspace(); setSaveStatus(null); if (owner !== current) return true; $('disk-banner').hidden = true; addRecent(owner.path); status('Saved');
+    owner.path = saved.path; owner.name = saved.name; owner.saved = snapshot; owner.autoSavePaused = false; if (saveAs) { owner.writable = true; if (owner === current) documentReadOnly = false; } await recoveryWriter.saved(owner, savedRevision); renderTabs(); persistWorkspace(); setSaveStatus(null); if (owner !== current) return true; $('disk-banner').hidden = true; addRecent(owner.path); status('Saved');
     await renderPreview();
     return true;
   } catch (error) {
     status('');
     const failure = commandError(error);
+    if (automatic) { owner.autoSavePaused = failure.code === 'file_changed'; setSaveStatus({error:failure.message}); if (owner.autoSavePaused) status('Automatic saving paused: file changed on disk. Save to review.'); return false; }
     if (failure.code !== 'file_changed') { setSaveStatus({ error: failure.message }); throw new Error(failure.message); }
     // The conflict is unresolved while the dialog is open: report unsaved
     // changes, never Saving… or Saved, until the user picks an outcome.
@@ -724,7 +720,7 @@ const documentSaves = new Map();
 function requestSave(saveAs = false) {
   if (transitionLocked) return Promise.resolve(false);
   if (!current.documentId) return enqueue(() => save(saveAs));
-  const owner = current, previous = documentSaves.get(owner.documentId);
+  const owner = focusedDocument(), previous = documentSaves.get(owner.documentId);
   const operation = previous ? previous.catch(() => {}).then(() => save(saveAs, false, owner)) : save(saveAs, false, owner);
   documentSaves.set(owner.documentId, operation);
   operation.catch(toast).finally(() => { if (documentSaves.get(owner.documentId) === operation) documentSaves.delete(owner.documentId); });
@@ -745,7 +741,7 @@ function newDocument(sample = false) {
       registerDocument(current); if (dirty()) documentEdited();
       resetDocumentPresentation(sample ? undefined : 'edit');
       setLineEnding(null);
-      showDocument(); $('reader-scroll').scrollTop = 0; await refreshEditorSurface(); if (!sample) editor?.focus();
+      showDocument(); focusPane('main'); $('reader-scroll').scrollTop = 0; await refreshEditorSurface(); scheduleCompanionRender(0); if (!sample) editor?.focus();
     } finally {
       setTransitionLocked(false);
     }
@@ -767,6 +763,9 @@ function allCommands() {
   const commands = [
     { label: 'Open file…', icon: 'file', shortcut: 'Ctrl+O', action: openEntry },
     { label: 'Open folder…', icon: 'folder-open', detail: 'Open a folder with the selected picker', action: openFolderEntry },
+    { label: 'New window', icon: 'file', action: () => invoke('new_window') },
+    { label: 'Move tab to new window', icon: 'file', action: () => enqueue(moveDocumentToNewWindow) },
+    { label: 'Show reading companion', icon: 'read', action: () => showReadingCompanion() },
     { label: 'Recover documents…', icon: 'file', action: reviewRecovery },
     { label: 'Reopen closed tab', icon: 'file', action: () => enqueue(reopenDocument) },
     { label: 'New document', icon: 'plus', shortcut: 'Ctrl+N', action: () => newDocument() },
@@ -946,7 +945,7 @@ $('command-dialog').addEventListener('click', event => { if (event.target === $(
 $('palette-hint').addEventListener('click', () => openCommands());
 
 let matches = [], findIndex = -1, findSource = null;
-function openFind() { if (!current.active) return; $('find-bar').hidden = false; syncDocumentChrome(); $('find-input').focus(); $('find-input').select(); updateFind(); syncFindControl(); }
+function openFind() { if (focusedPane === 'companion') return openCompanionFind(); if (!current.active) return; $('find-bar').hidden = false; syncDocumentChrome(); $('find-input').focus(); $('find-input').select(); updateFind(); syncFindControl(); }
 function clearHighlights() { editor?.clearHighlight?.(); }
 function findMatches(query) {
   const result = [];
@@ -1279,7 +1278,7 @@ Your files stay yours. This sample is just a starting point.[^1]
 `;
 
 async function start() {
-  initializeChrome(); initializeFolderSearch();
+  initializePanes(); initializeChrome(); initializeFolderSearch();
   $('all-documents').onclick = () => { openCommands(); $('command-search').value = ''; commandRows = [...documents.values()].map(doc => ({ label: doc.name, detail: doc.path || 'Unsaved document', icon: 'file', action: () => enqueue(() => activateDocument(doc)) })).map(commandRow); filterCommands(); };
   zoomText(0); zoomWindow(0); renderRecent(); setDocumentWidth(wideLayout, false); setFormatToolbarVisible(formatToolbarVisible, false);
   syncOpenAffordance();
@@ -1298,8 +1297,10 @@ async function start() {
   if (omarchy && !$('preference-theme').querySelector('[value=omarchy]')) { const option = document.createElement('option'); option.value = 'omarchy'; option.textContent = 'Omarchy'; $('preference-theme').append(option); }
   applyDocumentPreferences();
   await invoke('ready').catch(() => {});
-  const startupLayout = preferences.get('restoreSession', true) ? preferences.get('workspaceLayout', {}) : {};
-  await reviewRecovery();
+  workspaceWindowLabel = state.windowLabel || 'main';
+  const startupLayout = workspaceWindowLabel === 'main' && preferences.get('restoreSession', true) ? restorableWorkspaceLayout() : {};
+  if (state.pendingTransfer) await mountTransferredDocument(state.pendingTransfer);
+  else if (workspaceWindowLabel === 'main') await reviewRecovery();
   const layout = startupLayout;
   for (const path of state.paths || []) requestOpenLocation(path);
   for (const path of layout.paths || []) enqueue(async () => { if ([...documents.values()].some(doc => samePath(doc.path || doc.originalPath, path))) return; await openPath(path); });

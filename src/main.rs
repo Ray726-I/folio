@@ -36,10 +36,15 @@ struct AppState {
     documents: Mutex<workspace::Registry>,
     recovery: Mutex<Option<recovery::Store>>,
     folder: Mutex<Option<PathBuf>>,
+    window_folders:
+        Mutex<std::collections::HashMap<String, (PathBuf, Arc<file_operations::Scope>)>>,
+    window_pending: Mutex<std::collections::HashMap<String, Vec<String>>>,
+    window_transfers: Mutex<std::collections::HashMap<String, WindowTransfer>>,
     folder_scope: Mutex<Option<Arc<file_operations::Scope>>>,
     pending: Mutex<Vec<String>>,
     picker_active: Mutex<bool>,
     renderer: Mutex<Transport>,
+    render_routes: Mutex<renderer::Routes>,
     renderer_creation: Mutex<()>,
     renderer_recycling: Mutex<bool>,
     renderer_handoff: Mutex<()>,
@@ -47,8 +52,209 @@ struct AppState {
     /// `ready` or by the startup fallback. Test-and-set keeps `ready`
     /// idempotent and the fallback from re-showing a visible window.
     shown: AtomicBool,
+    window_shown: Mutex<std::collections::HashSet<String>>,
     /// Linux touchpad pinch gestures are blocked unless the user opts in.
     touchpad_zoom: AtomicBool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PendingWindowTransfer {
+    token: String,
+    document: serde_json::Value,
+}
+struct WindowTransfer {
+    token: String,
+    document_id: String,
+    source: String,
+    session: Option<serde_json::Value>,
+    completion: std::sync::mpsc::Sender<()>,
+}
+fn cleanup_workspace(state: &AppState, label: &str) {
+    workspace::unregister_window(label);
+    state.window_folders.lock().unwrap().remove(label);
+    state.window_pending.lock().unwrap().remove(label);
+    state.window_shown.lock().unwrap().remove(label);
+    let mut transfers = state.window_transfers.lock().unwrap();
+    let mut registry = state.documents.lock().unwrap();
+    transfers.retain(|destination, transfer| {
+        if destination == label || transfer.source == label {
+            registry.rollback_transfer(&transfer.document_id);
+            false
+        } else {
+            true
+        }
+    });
+    let ids: Vec<_> = registry
+        .sessions
+        .keys()
+        .filter(|id| registry.owner(id) == label)
+        .cloned()
+        .collect();
+    for id in ids {
+        let _ = registry.close(&id);
+    }
+    registry.window_active.remove(label);
+}
+#[tauri::command(async)]
+fn new_window(
+    document_id: Option<String>,
+    session: Option<serde_json::Value>,
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<String, String> {
+    renderer::ensure_main(webview.label())?;
+    let label = format!("workspace-{}", workspace::fresh_id());
+    let (sender, receiver) = std::sync::mpsc::channel();
+    if let Some(id) = &document_id {
+        let session = session.ok_or("Capture the document before moving it.")?;
+        if session
+            .get("documentId")
+            .and_then(serde_json::Value::as_str)
+            != Some(id.as_str())
+        {
+            return Err("The transfer snapshot does not match its document.".into());
+        }
+        if serde_json::to_vec(&session)
+            .map_err(|e| e.to_string())?
+            .len()
+            > 32 * 1024 * 1024
+        {
+            return Err("This document snapshot is too large to move to another window.".into());
+        }
+        let token = workspace::fresh_id();
+        state
+            .documents
+            .lock()
+            .unwrap()
+            .begin_transfer(webview.label(), &label, id, &token)?;
+        state.window_transfers.lock().unwrap().insert(
+            label.clone(),
+            WindowTransfer {
+                token,
+                document_id: id.clone(),
+                source: webview.label().into(),
+                session: Some(session),
+                completion: sender,
+            },
+        );
+    } else if session.is_some() {
+        return Err("A transfer snapshot requires a document ID.".into());
+    }
+    workspace::register_window(&label);
+    let built =
+        tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("index.html".into()))
+            .title("Folio")
+            .inner_size(1120.0, 800.0)
+            .min_inner_size(600.0, 440.0)
+            .decorations(true)
+            .visible(false)
+            .on_navigation(is_app_navigation)
+            .build();
+    let window = match built {
+        Ok(window) => window,
+        Err(error) => {
+            cleanup_workspace(&state, &label);
+            return Err(format!("Could not create a window: {error}"));
+        }
+    };
+    #[cfg(target_os = "linux")]
+    {
+        let gesture_state = state.inner().clone();
+        if let Err(error) = window.with_webview(move |webview| {
+            webview.inner().connect_event(move |_, event| {
+                if event.event_type() == EventType::TouchpadPinch
+                    && !gesture_state.touchpad_zoom.load(Ordering::SeqCst)
+                {
+                    gtk::glib::Propagation::Stop
+                } else {
+                    gtk::glib::Propagation::Proceed
+                }
+            });
+        }) {
+            cleanup_workspace(&state, &label);
+            let _ = window.destroy();
+            return Err(error.to_string());
+        }
+    }
+    if document_id.is_none() {
+        let fallback = app.clone();
+        let fallback_label = label.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(2));
+            if workspace::ensure_window(&fallback_label).is_err() {
+                return;
+            }
+            let state = fallback.state::<Arc<AppState>>();
+            if state
+                .window_shown
+                .lock()
+                .unwrap()
+                .insert(fallback_label.clone())
+            {
+                if let Some(window) = fallback.get_webview_window(&fallback_label) {
+                    let _ = window.show();
+                }
+            }
+        });
+    }
+    if let Some(document_id) = &document_id {
+        if receiver.recv_timeout(Duration::from_secs(30)).is_err() {
+            // Hold the transfer map while deciding rollback, so an acknowledgement
+            // and timeout cannot both commit opposite ownership outcomes.
+            let mut transfers = state.window_transfers.lock().unwrap();
+            if let Some(transfer) = transfers.remove(&label) {
+                state
+                    .documents
+                    .lock()
+                    .unwrap()
+                    .rollback_transfer(&transfer.document_id);
+                drop(transfers);
+                cleanup_workspace(&state, &label);
+                let _ = window.destroy();
+                return Err(
+                    "The new window did not accept the document. Your original tab is still open."
+                        .into(),
+                );
+            }
+            // An acknowledgement committed just before the timeout fired.
+            if state.documents.lock().unwrap().owner(document_id) != label {
+                drop(transfers);
+                cleanup_workspace(&state, &label);
+                let _ = window.destroy();
+                return Err(
+                    "The window transfer was cancelled. Your original tab is still open.".into(),
+                );
+            }
+        }
+    }
+    Ok(label)
+}
+#[tauri::command(async)]
+fn finish_window_transfer(
+    token: String,
+    document_id: String,
+    webview: tauri::Webview,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    renderer::ensure_main(webview.label())?;
+    let mut transfers = state.window_transfers.lock().unwrap();
+    let transfer = transfers
+        .get(webview.label())
+        .ok_or("No pending window transfer")?;
+    if transfer.token != token || transfer.document_id != document_id || transfer.session.is_some()
+    {
+        return Err("Invalid window transfer acknowledgement".into());
+    }
+    state
+        .documents
+        .lock()
+        .unwrap()
+        .finish_transfer(webview.label(), &document_id, &token)?;
+    let transfer = transfers.remove(webview.label()).unwrap();
+    let _ = transfer.completion.send(());
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -281,6 +487,8 @@ fn scan_folder_with_limits(
 #[serde(rename_all = "camelCase")]
 struct Bootstrap {
     paths: Vec<String>,
+    window_label: String,
+    pending_transfer: Option<PendingWindowTransfer>,
     theme: Option<theme::Theme>,
     platform: &'static str,
 }
@@ -292,7 +500,31 @@ fn bootstrap(
 ) -> Result<Bootstrap, String> {
     renderer::ensure_main(webview.label())?;
     Ok(Bootstrap {
-        paths: std::mem::take(&mut *state.pending.lock().unwrap()),
+        paths: if webview.label() == "main" {
+            std::mem::take(&mut *state.pending.lock().unwrap())
+        } else {
+            state
+                .window_pending
+                .lock()
+                .unwrap()
+                .remove(webview.label())
+                .unwrap_or_default()
+        },
+        window_label: webview.label().into(),
+        pending_transfer: state
+            .window_transfers
+            .lock()
+            .unwrap()
+            .get_mut(webview.label())
+            .and_then(|transfer| {
+                transfer
+                    .session
+                    .take()
+                    .map(|document| PendingWindowTransfer {
+                        token: transfer.token.clone(),
+                        document,
+                    })
+            }),
         theme: theme::current(),
         platform: std::env::consts::OS,
     })
@@ -303,17 +535,37 @@ fn open_document(
     path: String,
     reuse_existing: Option<bool>,
     webview: tauri::Webview,
+    app: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<Document, String> {
     renderer::ensure_main(webview.label())?;
     if *state.picker_active.lock().unwrap() {
         return Err("Finish choosing a file or folder first.".into());
     }
-    let (_, data) = state
-        .documents
-        .lock()
-        .unwrap()
-        .open_with_reuse(Path::new(&path), reuse_existing.unwrap_or(false))?;
+    if let Ok(path) = Path::new(&path).canonicalize() {
+        let registry = state.documents.lock().unwrap();
+        if let Some((id, _)) = registry
+            .sessions
+            .iter()
+            .find(|(_, doc)| doc.as_ref().is_some_and(|doc| doc.path == path))
+        {
+            if registry.owner(id) != webview.label() {
+                if let Some(owner) = app.get_webview_window(registry.owner(id)) {
+                    let _ = owner.unminimize();
+                    let _ = owner.set_focus();
+                }
+                return Err(
+                    "This file is open in another window. Its owning window has been focused."
+                        .into(),
+                );
+            }
+        }
+    }
+    let (_, data) = state.documents.lock().unwrap().open_for(
+        webview.label(),
+        Path::new(&path),
+        reuse_existing.unwrap_or(true),
+    )?;
     Ok(data)
 }
 
@@ -334,8 +586,14 @@ fn open_folder(
         return Err("Choose a folder to open.".into());
     }
     let (entries, truncated, skipped) = scan_folder(&path)?;
-    *state.folder_scope.lock().unwrap() = Some(Arc::new(file_operations::Scope::new(&path)?));
-    *state.folder.lock().unwrap() = Some(path.clone());
+    if webview.label() == "main" {
+        *state.folder_scope.lock().unwrap() = Some(Arc::new(file_operations::Scope::new(&path)?));
+        *state.folder.lock().unwrap() = Some(path.clone());
+    }
+    state.window_folders.lock().unwrap().insert(
+        webview.label().into(),
+        (path.clone(), Arc::new(file_operations::Scope::new(&path)?)),
+    );
     Ok(FolderListing {
         name: path
             .file_name()
@@ -373,12 +631,27 @@ fn file_operation(
 ) -> Result<FileOperationResult, String> {
     renderer::ensure_main(webview.label())?;
     let folder = state
-        .folder_scope
+        .window_folders
         .lock()
         .unwrap()
-        .clone()
+        .get(webview.label())
+        .map(|(_, scope)| scope.clone())
         .ok_or("Open a workspace folder first.")?;
     let mut registry = state.documents.lock().unwrap();
+    if ["move", "rename", "trash"].contains(&action.as_str()) {
+        let source = folder.validated_source(Path::new(&path))?;
+        for (id, document) in &registry.sessions {
+            if document.as_ref().is_some_and(|doc| {
+                doc.path.starts_with(&source)
+                    || doc
+                        .path
+                        .ancestors()
+                        .any(|ancestor| same_file::is_same_file(ancestor, &source).unwrap_or(false))
+            }) {
+                registry.id_for(webview.label(), Some(id), true).map_err(|_| "An affected file belongs to another window or is moving. Close or move its tab first.")?;
+            }
+        }
+    }
     perform_workspace_operation(
         &mut registry,
         &folder,
@@ -526,7 +799,11 @@ fn new_document(
 ) -> Result<NewDocument, String> {
     renderer::ensure_main(webview.label())?;
     Ok(NewDocument {
-        document_id: state.documents.lock().unwrap().new_document(),
+        document_id: state
+            .documents
+            .lock()
+            .unwrap()
+            .new_document_for(webview.label()),
         revision: 0,
     })
 }
@@ -555,8 +832,7 @@ fn activate_document(
 ) -> Result<(), String> {
     renderer::ensure_main(webview.label())?;
     let mut registry = state.documents.lock().unwrap();
-    registry.id(Some(&document_id))?;
-    registry.active = Some(document_id);
+    registry.activate_for(webview.label(), &document_id)?;
     Ok(())
 }
 #[tauri::command(async)]
@@ -566,7 +842,9 @@ fn close_document(
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     renderer::ensure_main(webview.label())?;
-    state.documents.lock().unwrap().close(&document_id)
+    let mut registry = state.documents.lock().unwrap();
+    registry.id_for(webview.label(), Some(&document_id), true)?;
+    registry.close(&document_id)
 }
 #[tauri::command(async)]
 fn recovery_write(
@@ -582,6 +860,7 @@ fn recovery_write(
     // Keep the registry locked through durability: close/save cannot invalidate
     // the native baseline while a snapshot is being captured.
     let registry = state.documents.lock().unwrap();
+    registry.id_for(webview.label(), Some(&document_id), true)?;
     let baseline = registry.recovery_metadata(&document_id)?;
     let record = recovery::Record {
         document_id,
@@ -619,11 +898,11 @@ fn recovery_list(
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<Vec<RecoverySummary>, String> {
     renderer::ensure_main(webview.label())?;
-    Ok(recovery_store(&state, &app)?
-        .as_mut()
-        .unwrap()
-        .list()?
+    let records = recovery_store(&state, &app)?.as_mut().unwrap().list()?;
+    let registry = state.documents.lock().unwrap();
+    Ok(records
         .into_iter()
+        .filter(|r| !registry.sessions.contains_key(&r.document_id))
         .map(|r| RecoverySummary {
             document_id: r.document_id,
             revision: r.revision,
@@ -698,7 +977,10 @@ fn recovery_restore(
         ),
     );
     registry.sessions.insert(document_id.clone(), original);
-    registry.active = Some(document_id.clone());
+    registry
+        .owners
+        .insert(document_id.clone(), webview.label().into());
+    registry.activate_for(webview.label(), &document_id)?;
     Ok(Recovered {
         document_id,
         revision: record.revision,
@@ -720,6 +1002,10 @@ fn recovery_discard(
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     renderer::ensure_main(webview.label())?;
+    let registry = state.documents.lock().unwrap();
+    if registry.sessions.contains_key(&document_id) {
+        return Err("Close this document before discarding its recovery.".into());
+    }
     recovery_store(&state, &app)?
         .as_mut()
         .unwrap()
@@ -734,7 +1020,8 @@ fn recovery_saved(
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     renderer::ensure_main(webview.label())?;
-    state.documents.lock().unwrap().id(Some(&document_id))?;
+    let registry = state.documents.lock().unwrap();
+    registry.id_for(webview.label(), Some(&document_id), true)?;
     recovery_store(&state, &app)?
         .as_mut()
         .unwrap()
@@ -800,8 +1087,17 @@ fn save_document(
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<Option<Saved>, CommandError> {
     renderer::ensure_main(webview.label()).map_err(CommandError::from)?;
-    let id = state.documents.lock().unwrap().id(document_id.as_deref())?;
-    let original = state.documents.lock().unwrap().get(Some(&id))?;
+    let id =
+        state
+            .documents
+            .lock()
+            .unwrap()
+            .id_for(webview.label(), document_id.as_deref(), true)?;
+    let original = state
+        .documents
+        .lock()
+        .unwrap()
+        .get_for(webview.label(), Some(&id))?;
     let current_path = original.as_ref().map(|document| document.path.clone());
     let path = match (save_as, current_path.as_ref()) {
         (false, Some(path)) => path.clone(),
@@ -824,7 +1120,7 @@ fn save_document(
         }
     };
     let mut registry = state.documents.lock().unwrap();
-    registry.id(Some(&id))?;
+    registry.id_for(webview.label(), Some(&id), true)?;
     registry.check_destination(&id, &path)?;
     let current = registry.sessions.get(&id).unwrap();
     if current.as_ref().map(|d| (&d.path, &d.fingerprint))
@@ -868,7 +1164,7 @@ async fn render_markdown(
         .documents
         .lock()
         .unwrap()
-        .get(document_id.as_deref())?
+        .get_for(webview.label(), document_id.as_deref())?
         .map(|d| d.path);
     // Comrak, syntect, ammonia, and base64 encoding are all synchronous; keep
     // them off the async runtime so the renderer stays responsive.
@@ -936,10 +1232,17 @@ fn ready(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
-    if window.label() != renderer::MAIN_LABEL {
-        return Ok(());
-    }
-    if !state.shown.swap(true, Ordering::SeqCst) {
+    renderer::ensure_main(window.label())?;
+    let first = if window.label() == "main" {
+        !state.shown.swap(true, Ordering::SeqCst)
+    } else {
+        state
+            .window_shown
+            .lock()
+            .unwrap()
+            .insert(window.label().into())
+    };
+    if first {
         window.show().map_err(|error| error.to_string())?;
     }
     Ok(())
@@ -980,7 +1283,7 @@ fn document_changed(
         .documents
         .lock()
         .unwrap()
-        .get(document_id.as_deref())?
+        .get_for(webview.label(), document_id.as_deref())?
         .as_ref()
         .is_some_and(document::changed))
 }
@@ -1009,14 +1312,25 @@ fn close_window(
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     renderer::ensure_main(webview.label())?;
+    if state
+        .window_transfers
+        .lock()
+        .unwrap()
+        .values()
+        .any(|transfer| transfer.source == webview.label())
     {
-        let _handoff = state.renderer_handoff.lock().unwrap();
-        state.renderer.lock().unwrap().take_all_pending();
+        return Err("Wait for the document to finish moving before closing this window.".into());
     }
-    if let Some(renderer) = app.get_webview_window(renderer::RENDERER_LABEL) {
-        let _ = renderer.destroy();
+    // Keep document ownership usable if the platform rejects destruction.
+    window.destroy().map_err(|error| error.to_string())?;
+    cancel_window_renders(&app, state.inner(), webview.label());
+    cleanup_workspace(&state, webview.label());
+    if workspace::window_labels().is_empty() {
+        if let Some(renderer) = app.get_webview_window(renderer::RENDERER_LABEL) {
+            let _ = renderer.destroy();
+        }
     }
-    window.destroy().map_err(|error| error.to_string())
+    Ok(())
 }
 
 #[tauri::command]
@@ -1036,10 +1350,11 @@ fn reveal_path(
 ) -> Result<(), String> {
     renderer::ensure_main(webview.label())?;
     let scope = state
-        .folder_scope
+        .window_folders
         .lock()
         .unwrap()
-        .clone()
+        .get(webview.label())
+        .map(|(_, scope)| scope.clone())
         .ok_or("Open a workspace folder first.")?;
     let path = scope.validated_source(Path::new(&path))?;
     app.opener()
@@ -1059,7 +1374,7 @@ fn reveal_document(
         .documents
         .lock()
         .unwrap()
-        .get(document_id.as_deref())?
+        .get_for(webview.label(), document_id.as_deref())?
         .ok_or("Save the document first.")?
         .path;
     app.opener()
@@ -1079,7 +1394,7 @@ fn rename_document(
         return Err("Use a Markdown filename (.md, .markdown, .mdown or .mdtxt).".into());
     }
     let mut registry = state.documents.lock().unwrap();
-    let id = registry.id(document_id.as_deref())?;
+    let id = registry.id_for(webview.label(), document_id.as_deref(), true)?;
     let original = registry
         .get(Some(&id))?
         .ok_or("Save the document before renaming it.")?;
@@ -1103,11 +1418,16 @@ fn duplicate_document(
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<Option<String>, String> {
     renderer::ensure_main(webview.label())?;
+    state
+        .documents
+        .lock()
+        .unwrap()
+        .id_for(webview.label(), document_id.as_deref(), true)?;
     let original = state
         .documents
         .lock()
         .unwrap()
-        .get(document_id.as_deref())?;
+        .get_for(webview.label(), document_id.as_deref())?;
     let mut dialog = app
         .dialog()
         .file()
@@ -1155,11 +1475,16 @@ fn export_html(
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<Option<String>, String> {
     renderer::ensure_main(webview.label())?;
+    state
+        .documents
+        .lock()
+        .unwrap()
+        .id_for(webview.label(), document_id.as_deref(), true)?;
     let original = state
         .documents
         .lock()
         .unwrap()
-        .get(document_id.as_deref())?;
+        .get_for(webview.label(), document_id.as_deref())?;
     let Some(file) = app
         .dialog()
         .file()
@@ -1314,10 +1639,11 @@ fn search_folder(
         return Err("Use a shorter search query.".into());
     }
     let path = state
-        .folder
+        .window_folders
         .lock()
         .unwrap()
-        .clone()
+        .get(webview.label())
+        .map(|(path, _)| path.clone())
         .ok_or("Open a folder to search files.")?;
     search_folder_at(&path, &query)
 }
@@ -1349,7 +1675,7 @@ fn resolve_document_link(
         .documents
         .lock()
         .unwrap()
-        .get(document_id.as_deref())?;
+        .get_for(webview.label(), document_id.as_deref())?;
     let base = current
         .as_ref()
         .and_then(|document| document.path.parent())
@@ -1508,6 +1834,7 @@ fn finish_renderer_recycle_locked(state: &AppState) -> bool {
     !state.renderer.lock().unwrap().is_empty()
 }
 
+#[cfg(test)]
 fn submit_renderer_request(state: &AppState, request: RenderRequest) -> Result<bool, String> {
     let _handoff = state.renderer_handoff.lock().unwrap();
     if *state.renderer_recycling.lock().unwrap() {
@@ -1519,6 +1846,58 @@ fn submit_renderer_request(state: &AppState, request: RenderRequest) -> Result<b
         .unwrap()
         .submit(request)
         .map_err(|error| error.to_string())
+}
+
+fn submit_window_renderer_request(
+    state: &AppState,
+    window: &str,
+    mut request: RenderRequest,
+) -> Result<(RenderRequest, bool), String> {
+    let _handoff = state.renderer_handoff.lock().unwrap();
+    if *state.renderer_recycling.lock().unwrap() {
+        return Err("The diagram renderer is restarting. Try again.".into());
+    }
+    let native = state
+        .render_routes
+        .lock()
+        .unwrap()
+        .record(window, &request.id)?;
+    request.id = native.clone();
+    let result = state
+        .renderer
+        .lock()
+        .unwrap()
+        .submit(request.clone())
+        .map_err(|error| error.to_string());
+    match result {
+        Ok(dispatch) => Ok((request, dispatch)),
+        Err(error) => {
+            state.render_routes.lock().unwrap().remove(&native);
+            Err(error)
+        }
+    }
+}
+fn cancel_window_renders(app: &tauri::AppHandle, state: &AppState, window: &str) {
+    let mut recycle = false;
+    let ids = {
+        let _handoff = state.renderer_handoff.lock().unwrap();
+        let ids = state.render_routes.lock().unwrap().take_window(window);
+        let mut transport = state.renderer.lock().unwrap();
+        for id in &ids {
+            recycle |= transport.cancel(id).ok().flatten().unwrap_or(false);
+        }
+        ids
+    };
+    for id in ids {
+        let _ = app.emit_to(
+            renderer::RENDERER_LABEL,
+            "mermaid-render-cancel",
+            CancelRequest { id },
+        );
+    }
+    if recycle {
+        recycle_renderer(app, state);
+    }
 }
 
 /// A dispatched request observed a missing window. Readiness belongs to the
@@ -1607,8 +1986,13 @@ fn finish_recycle(app: tauri::AppHandle) {
     }
 }
 
-fn emit_render_result(app: &tauri::AppHandle, event: renderer::RenderResultEvent) {
-    let _ = app.emit_to(renderer::MAIN_LABEL, "mermaid-render-result", event);
+fn emit_render_result(app: &tauri::AppHandle, mut event: renderer::RenderResultEvent) {
+    let state = app.state::<Arc<AppState>>();
+    let route = state.render_routes.lock().unwrap().remove(&event.id);
+    if let Some((owner, client_id)) = route {
+        event.id = client_id;
+        let _ = app.emit_to(&owner, "mermaid-render-result", event);
+    }
 }
 
 fn emit_render_failure(app: &tauri::AppHandle, id: &str, code: &str, message: &str) {
@@ -1648,24 +2032,30 @@ async fn mermaid_render_request(
     if had_expired {
         recycle_renderer(&app, state.inner());
     }
-    let dispatch = submit_renderer_request(state.inner(), request.clone())?;
+    let (request, dispatch) =
+        submit_window_renderer_request(state.inner(), webview.label(), request)?;
     if dispatch {
         if app.get_webview_window(renderer::RENDERER_LABEL).is_none() {
-            finish_dispatched_missing_window(state.inner(), &request.id, || {
+            if let Err(error) = finish_dispatched_missing_window(state.inner(), &request.id, || {
                 ensure_renderer_window(&app, state.inner())
-            })?;
+            }) {
+                state.render_routes.lock().unwrap().remove(&request.id);
+                return Err(error);
+            }
         } else if let Err(error) = app.emit_to(
             renderer::RENDERER_LABEL,
             "mermaid-render-request",
             request.clone(),
         ) {
             let _ = state.renderer.lock().unwrap().cancel(&request.id);
+            state.render_routes.lock().unwrap().remove(&request.id);
             recycle_renderer(&app, state.inner());
             return Err(error.to_string());
         }
     } else if app.get_webview_window(renderer::RENDERER_LABEL).is_none() {
         if let Err(error) = ensure_renderer_window(&app, state.inner()) {
             let _ = state.renderer.lock().unwrap().cancel(&request.id);
+            state.render_routes.lock().unwrap().remove(&request.id);
             return Err(error);
         }
     }
@@ -1680,12 +2070,25 @@ fn mermaid_render_cancel(
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     renderer::ensure_main(webview.label())?;
-    let outcome = state
-        .renderer
-        .lock()
-        .unwrap()
-        .cancel(&id)
-        .map_err(|error| error.to_string())?;
+    let (id, outcome) = {
+        let _handoff = state.renderer_handoff.lock().unwrap();
+        let Some(native) = state
+            .render_routes
+            .lock()
+            .unwrap()
+            .find(webview.label(), &id)?
+        else {
+            return Ok(());
+        };
+        let outcome = state
+            .renderer
+            .lock()
+            .unwrap()
+            .cancel(&native)
+            .map_err(|error| error.to_string())?;
+        state.render_routes.lock().unwrap().remove(&native);
+        (native, outcome)
+    };
     if let Some(dispatched) = outcome {
         let _ = app.emit_to(
             renderer::RENDERER_LABEL,
@@ -2109,9 +2512,27 @@ fn queue_paths(app: &tauri::AppHandle, paths: Vec<String>) {
         return;
     }
     let state = app.state::<Arc<AppState>>();
-    state.pending.lock().unwrap().extend(paths.iter().cloned());
-    let _ = app.emit_to(renderer::MAIN_LABEL, "open-files", paths);
-    if let Some(window) = app.get_webview_window(renderer::MAIN_LABEL) {
+    let labels = workspace::window_labels();
+    let Some(label) = labels
+        .iter()
+        .find(|label| label.as_str() == "main")
+        .or_else(|| labels.first())
+    else {
+        return;
+    };
+    if label == "main" {
+        state.pending.lock().unwrap().extend(paths.iter().cloned());
+    } else {
+        state
+            .window_pending
+            .lock()
+            .unwrap()
+            .entry(label.clone())
+            .or_default()
+            .extend(paths.iter().cloned());
+    }
+    let _ = app.emit_to(label, "open-files", paths);
+    if let Some(window) = app.get_webview_window(label) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
@@ -2189,7 +2610,9 @@ fn main() {
                     std::thread::sleep(Duration::from_secs(10));
                     let current = theme::current();
                     if current != previous {
-                        let _ = handle.emit_to(renderer::MAIN_LABEL, "system-theme", &current);
+                        for label in workspace::window_labels() {
+                            let _ = handle.emit_to(&label, "system-theme", &current);
+                        }
                         previous = current;
                     }
                 }
@@ -2275,8 +2698,14 @@ fn main() {
                 }
                 return;
             }
-            if window.label() != renderer::MAIN_LABEL {
+            if workspace::ensure_window(window.label()).is_err() {
                 return;
+            }
+            if let tauri::WindowEvent::Destroyed = event {
+                let app = window.app_handle();
+                let state = app.state::<Arc<AppState>>();
+                cancel_window_renders(app, state.inner(), window.label());
+                cleanup_workspace(&state, window.label());
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
@@ -2284,6 +2713,8 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            new_window,
+            finish_window_transfer,
             activate_document,
             close_document,
             recovery_write,

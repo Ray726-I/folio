@@ -87,6 +87,7 @@ function lineStartsFor(text) {
   return starts;
 }
 function refreshEditorOutline() {
+  if (focusedPane === 'companion') { refreshCompanionOutline(); return; }
   if (!editor || !current.active) return;
   if ($('outline').hidden) return;
   const headings = (!editor.isSource?.() && editor.getHeadings?.()) || window.FolioEditor.headings(current.content);

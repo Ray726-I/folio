@@ -209,6 +209,7 @@ function scheduleDiagramRefresh(delay = 160) {
   diagramRefreshTimer = setTimeout(() => {
     diagramRefreshTimer = 0;
     if (typeof refreshMermaid === 'function') refreshMermaid();
+    if (typeof scheduleCompanionRender === 'function') scheduleCompanionRender(0);
   }, delay);
 }
 function applyTheme(id, persist = true) {

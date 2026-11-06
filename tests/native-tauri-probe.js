@@ -285,6 +285,7 @@
     window.__folioHangReady = false;
     await tauri.event.listen('mermaid-render-request', event => {
       window.__folioProbeSeen = event && event.payload ? event.payload.id : null;
+      window.__folioProbeSeenSource = event?.payload?.source || null;
     });
     window.mermaid.render = () => new Promise(() => {});
     window.__folioHangReady = true;
@@ -526,7 +527,7 @@
       const lockedText = instance.getText();
       const lockedEditable = lockedRoot.getAttribute('contenteditable');
       const lockNoteVisible = !document.getElementById('editor-lock-note').hidden;
-      const toolbarDisabled = [...document.querySelectorAll('#format-tools button')]
+      const toolbarDisabled = [...document.querySelectorAll('#format-tools button:not(#format-toolbar-close)')]
         .every(button => button.disabled);
       const mutationErrors = [];
       try {
@@ -663,6 +664,33 @@
     }
   }
 
+  async function mainWindowTransfer() {
+    reset();
+    try {
+      setDocumentMode('edit');
+      const previous = current.content;
+      editor.replaceContent(previous + '\nTransferred unfinished thought.\n');
+      const id = current.documentId, content = current.content;
+      const moved = await moveDocumentToNewWindow(current);
+      let denied = false;
+      try { await bridge().core.invoke('save_document', { documentId:id, content:'wrong owner', saveAs:false, force:false }); }
+      catch { denied=true; }
+      publish({ phase:'main-transfer', pass:moved===true && !documents.has(id) && denied, id, content, previous, denied });
+    } catch (error) { publish({phase:'main-transfer',pass:false,error:messageOf(error)}); }
+  }
+  async function destinationWorkspace(afterMainClose = false) {
+    reset();
+    try {
+      const content = current.content;
+      let history = true;
+      if (!afterMainClose) { editor.undo(); history = current.content !== content; editor.undo(true); history = history && current.content === content; }
+      const {result} = await requestMermaidRender('flowchart TD\n Workspace-->Renderer');
+      let saved = true;
+      if (!afterMainClose) saved = await save(false,false,current);
+      publish({phase:afterMainClose?'destination-survivor':'destination-workspace',pass:history && saved && result?.ok===true && result?.sanitized===true && !transitionLocked,history,saved,render:result?.ok,documentId:current.documentId});
+    } catch(error) { publish({phase:afterMainClose?'destination-survivor':'destination-workspace',pass:false,error:messageOf(error)}); }
+  }
+
   window.__folioNativeProbe = {
     mainPrepare,
     rendererProbe,
@@ -670,6 +698,8 @@
     rendererInstallHang,
     mainStartHang,
     mainCancelAndRetry,
-    mainEditor
+    mainEditor,
+    mainWindowTransfer,
+    destinationWorkspace
   };
 })();

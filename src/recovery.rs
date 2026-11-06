@@ -369,6 +369,54 @@ mod tests {
         assert!(!warnings[0].message.contains("secret"));
     }
     #[test]
+    #[ignore = "spawned by forced_process_termination_preserves_the_durable_snapshot"]
+    fn crash_writer_child() {
+        let Some(path) = std::env::var_os("FOLIO_CRASH_TEST_DIR") else {
+            return;
+        };
+        let mut store = Store::new(PathBuf::from(path));
+        store.write(record(7)).unwrap();
+        println!("FOLIO_SNAPSHOT_DURABLE");
+        std::io::stdout().flush().unwrap();
+        loop {
+            std::thread::park();
+        }
+    }
+    #[test]
+    fn forced_process_termination_preserves_the_durable_snapshot() {
+        use std::io::BufRead;
+        let directory = tempfile::tempdir().unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "recovery::tests::crash_writer_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("FOLIO_CRASH_TEST_DIR", directory.path())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut output = std::io::BufReader::new(child.stdout.take().unwrap());
+        let mut line = String::new();
+        let mut durable = false;
+        while output.read_line(&mut line).unwrap() != 0 {
+            if line.contains("FOLIO_SNAPSHOT_DURABLE") {
+                durable = true;
+                break;
+            }
+            line.clear();
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(durable, "child did not acknowledge a durable snapshot");
+        let restored = Store::new(directory.path().into())
+            .restore("doc-1")
+            .unwrap();
+        assert_eq!(restored.content, "draft 7");
+        assert_eq!(restored.revision, 7);
+    }
+    #[test]
     fn oversized_content_is_rejected_without_losing_draft() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = Store::new(dir.path().into());

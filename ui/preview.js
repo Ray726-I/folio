@@ -154,9 +154,10 @@ function ensureMermaidBridge() {
   }
   return mermaidBridgeListener;
 }
-function cancelMermaidPending() {
+function cancelMermaidPending(owner = 'primary') {
   if (!mermaidPending.size) return;
   for (const [id, pending] of mermaidPending) {
+    if (pending.owner !== owner) continue;
     mermaidPending.delete(id);
     pending.resolve(null);
     invoke('mermaid_render_cancel', { id }).catch(() => {});
@@ -170,12 +171,12 @@ function mermaidSourceTooLarge(source) {
     return (source || '').length > MAX_MERMAID_SOURCE_BYTES;
   }
 }
-async function requestMermaidRender(source, signal) {
+async function requestMermaidRender(source, signal, owner = 'primary') {
   const id = `m${++mermaidBridgeId}`;
   await ensureMermaidBridge();
   let resolveResult;
   const result = new Promise(resolve => { resolveResult = resolve; });
-  mermaidPending.set(id, { resolve: resolveResult });
+  mermaidPending.set(id, { resolve: resolveResult, owner });
   const abort = () => {
     if (!mermaidPending.has(id)) return;
     mermaidPending.delete(id); resolveResult(null);

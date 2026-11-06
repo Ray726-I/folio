@@ -10,7 +10,7 @@ function documentEdited(doc = current) {
   doc.revision = (doc.revision || 0) + 1;
   if (doc.content !== doc.saved) recoveryWriter.changed(doc);
   else recoveryWriter.saved(doc, doc.revision);
-  renderTabs(); persistWorkspace();
+  renderTabs(); persistWorkspace(); if (companionFollows || companionDocument === doc) scheduleCompanionRender(); scheduleAutomaticSave(doc);
 }
 function rememberDocument() {
   if (!current.documentId) return;
@@ -42,11 +42,19 @@ async function activateDocument(doc, capture = true) {
   $('document-source').scrollTop = doc.view?.sourceScroll || 0;
   $('find-input').value = doc.view?.find || ''; $('find-bar').hidden = !doc.view?.findOpen;
   if (doc.view?.findOpen) { updateFind(); findIndex = doc.view.findIndex; }
-  updateTitle(); renderTabs(); persistWorkspace(); return true;
+  focusPane('main'); updateTitle(); renderTabs(); persistWorkspace(); scheduleCompanionRender(); return true;
   } finally { setTransitionLocked(false); }
 }
 function persistWorkspace() {
-  preferences.set('workspaceLayout', { paths: [...documents.values()].filter(d => d.path && d.content === d.saved).map(d => d.path), activePath: current.path });
+  const layout = { paths: [...documents.values()].filter(d => d.path && d.content === d.saved).map(d => d.path), activePath: current.path };
+  preferences.set(workspaceWindowLabel === 'main' ? 'workspaceLayout' : `workspaceLayout.${workspaceWindowLabel}`, layout);
+  const windows = preferences.get('workspaceWindowLayouts', {});
+  windows[workspaceWindowLabel] = layout; preferences.set('workspaceWindowLayouts', windows);
+}
+function restorableWorkspaceLayout() {
+  const main = preferences.get('workspaceLayout', {}), paths = [...(main.paths || [])];
+  for (const layout of Object.values(preferences.get('workspaceWindowLayouts', {}))) for (const path of layout.paths || []) if (!paths.some(existing => samePath(existing, path))) paths.push(path);
+  return { paths, activePath: main.activePath };
 }
 let renderedTabs = '';
 function renderTabs() {
@@ -60,6 +68,7 @@ function renderTabs() {
     const duplicates = [...documents.values()].filter(d => d.name === doc.name).length > 1;
     label.textContent = doc.name + (duplicates && doc.path ? ` — ${basename(dirname(doc.path))}` : '') + (doc.content !== doc.saved ? ' •' : ''); tab.append(label);
     tab.onclick = () => enqueue(() => activateDocument(doc));
+    tab.oncontextmenu = event => { event.preventDefault(); const menu=$('tab-context-menu') || document.body.appendChild(Object.assign(document.createElement('div'),{id:'tab-context-menu',className:'menu'})); menu.replaceChildren(); menu.role='menu'; menu.style.cssText=`position:fixed;left:${Math.min(event.clientX,innerWidth-240)}px;top:${event.clientY}px;z-index:1000`; for (const [label,action] of [['Open beside',()=>showReadingCompanion(doc,false)],['Move tab to new window',()=>enqueue(()=>moveDocumentToNewWindow(doc))]]) { const button=document.createElement('button');button.className='menu-item';button.role='menuitem';button.textContent=label;button.onclick=()=>{menu.hidden=true;action();};menu.append(button); } menu.hidden=false;menu.firstChild.focus(); };
     tab.onkeydown = event => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const tabs = [...documents.values()]; const i = tabs.indexOf(doc); const next = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs.at(-1) : tabs[(i + (event.key === 'ArrowLeft' ? -1 : 1) + tabs.length) % tabs.length]; enqueue(async () => { await activateDocument(next); $( `tab-${next.documentId}`).focus(); }); } };
     const close = document.createElement('button'); close.type = 'button'; close.className = 'tab-close icon-button'; close.title = `Close ${doc.name}`; close.setAttribute('aria-label', close.title); close.append(icon('close')); close.onclick = () => enqueue(() => closeWorkspaceDocument(doc));
     const item = document.createElement('div'); item.className = 'tab-item'; item.append(tab, close); list.append(item); if (doc === current) requestAnimationFrame(() => tab.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
@@ -80,6 +89,7 @@ async function closeWorkspaceDocument(doc = current) {
   await invoke('recovery_saved', { documentId: doc.documentId, revision: doc.revision || 0 });
   await invoke('close_document', { documentId: doc.documentId });
   await recoveryWriter.discard(doc).catch(error => recoveryWriter.warning(String(error?.message || error)));
+  if (companionDocument === doc) closeReadingCompanion(); clearTimeout(autoSaveTimers.get(doc.documentId));
   closedDocuments.push({ ...doc, view: doc.view }); documents.delete(doc.documentId);
   if (doc === current) {
     const next = [...documents.values()].at(-1);

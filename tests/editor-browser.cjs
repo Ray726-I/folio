@@ -154,6 +154,7 @@ async function openEditor(source, viewport = { width: 1180, height: 900 }, optio
       return null;
     } }, event: { listen: async (name, callback) => { (window.listeners[name] ??= []).push(callback); return () => {}; } }, webview: { getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) } };
   }, source);
+  if (options.bootstrap) await page.addInitScript(state => { const original=window.__TAURI__.core.invoke; window.__TAURI__.core.invoke=(command,args)=>command==='bootstrap'?Promise.resolve(state):original(command,args); }, options.bootstrap);
   await page.goto(pathToFileURL(path.resolve('ui/index.html')).href);
   await page.waitForFunction(() => typeof editor !== 'undefined' && editor && !busy);
   // Editor tests exercise editing; application tests can request Reading mode.

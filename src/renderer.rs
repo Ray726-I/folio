@@ -31,6 +31,10 @@
 //! report readiness/results, and only for an outstanding request it owns. The
 //! renderer has no file/document/dialog/opener commands.
 
+#[path = "render_routes.rs"]
+mod routes;
+pub use routes::Routes;
+
 use cssparser::{BasicParseErrorKind, ParseError, Parser, Token};
 use roxmltree::Node;
 use serde::{Deserialize, Serialize};
@@ -1179,11 +1183,7 @@ fn escape_attribute(value: &str, output: &mut String) {
 /// Both helper functions are used as the first statement of every protected
 /// command, before any filesystem/document work or dialog opens.
 pub fn ensure_main(label: &str) -> Result<(), String> {
-    if label == MAIN_LABEL {
-        Ok(())
-    } else {
-        Err("This command is only available to the main Folio window.".into())
-    }
+    crate::workspace::ensure_window(label)
 }
 
 pub fn ensure_renderer(label: &str) -> Result<(), String> {
@@ -1414,7 +1414,7 @@ fn run_native_probe(app: &tauri::AppHandle) -> i32 {
     }
     if !wait_until(
         &renderer,
-        "window.__folioProbeSeen === 'native-hang'",
+        "window.__folioProbeSeenSource?.includes('Hang-->Forever')",
         Duration::from_secs(10),
     ) {
         println!("FOLIO_NATIVE_PROBE_FAIL renderer did not receive the hung render");
@@ -1477,6 +1477,78 @@ fn run_native_probe(app: &tauri::AppHandle) -> i32 {
         return 1;
     }
 
+    if let Err(error) = main.eval("window.__folioNativeProbe.mainWindowTransfer();") {
+        println!("FOLIO_NATIVE_PROBE_FAIL could not start window transfer: {error}");
+        return 1;
+    }
+    let Some(transfer_report) = wait_phase(&main, "main-transfer", Duration::from_secs(45)) else {
+        println!("FOLIO_NATIVE_PROBE_FAIL native window transfer timed out");
+        return 1;
+    };
+    println!("FOLIO_NATIVE_PROBE main-transfer: {transfer_report}");
+    if !report_pass(&transfer_report) {
+        return 1;
+    }
+    let destination = crate::workspace::window_labels()
+        .into_iter()
+        .filter(|label| label != MAIN_LABEL)
+        .find_map(|label| app.get_webview_window(&label));
+    let Some(destination) = destination else {
+        println!("FOLIO_NATIVE_PROBE_FAIL destination missing");
+        return 1;
+    };
+    if destination.eval(probe_script).is_err()
+        || destination
+            .eval("window.__folioNativeProbe.destinationWorkspace();")
+            .is_err()
+    {
+        return 1;
+    }
+    let Some(destination_report) = wait_phase(
+        &destination,
+        "destination-workspace",
+        Duration::from_secs(40),
+    ) else {
+        println!("FOLIO_NATIVE_PROBE_FAIL destination verification timed out");
+        return 1;
+    };
+    println!("FOLIO_NATIVE_PROBE destination-workspace: {destination_report}");
+    if !report_pass(&destination_report) {
+        return 1;
+    }
+    if main
+        .eval("window.__TAURI__.core.invoke('close_window').catch(console.error);")
+        .is_err()
+    {
+        return 1;
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.get_webview_window(MAIN_LABEL).is_some() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    if app.get_webview_window(MAIN_LABEL).is_some() {
+        println!("FOLIO_NATIVE_PROBE_FAIL first window did not close");
+        return 1;
+    }
+    if destination
+        .eval("window.__folioNativeProbe.destinationWorkspace(true);")
+        .is_err()
+    {
+        return 1;
+    }
+    let Some(survivor_report) = wait_phase(
+        &destination,
+        "destination-survivor",
+        Duration::from_secs(40),
+    ) else {
+        println!("FOLIO_NATIVE_PROBE_FAIL surviving window timed out");
+        return 1;
+    };
+    println!("FOLIO_NATIVE_PROBE destination-survivor: {survivor_report}");
+    if !report_pass(&survivor_report) {
+        return 1;
+    }
+
     println!("FOLIO_NATIVE_PROBE_PASS");
     0
 }
@@ -1532,7 +1604,10 @@ fn wait_phase(window: &WebviewWindow, phase: &str, timeout: Duration) -> Option<
 
 #[cfg(debug_assertions)]
 fn report_pass(report: &str) -> bool {
-    compact_json(report).contains("\"pass\":true")
+    serde_json::from_str::<serde_json::Value>(report)
+        .ok()
+        .and_then(|value| value.get("pass").and_then(serde_json::Value::as_bool))
+        == Some(true)
 }
 
 #[cfg(debug_assertions)]
@@ -2045,5 +2120,19 @@ mod tests {
             response.headers().get(CONTENT_SECURITY_POLICY).unwrap(),
             RENDERER_CSP
         );
+    }
+}
+
+#[cfg(all(test, debug_assertions))]
+mod native_report_tests {
+    #[test]
+    fn nested_success_cannot_hide_top_level_failure() {
+        assert!(!super::report_pass(
+            r#"{"pass":false,"child":{"pass":true}}"#
+        ));
+        assert!(super::report_pass(
+            r#"{"pass":true,"child":{"pass":false}}"#
+        ));
+        assert!(!super::report_pass("not json"));
     }
 }

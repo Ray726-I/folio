@@ -6,6 +6,8 @@ fn main() {
     // `generate_handler!` without adding it below makes the app ACL deny it.
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
+            "new_window",
+            "finish_window_transfer",
             "toggle_fullscreen",
             "activate_document",
             "close_document",

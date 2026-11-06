@@ -5,6 +5,28 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
+// Labels enter this set only immediately before native window construction.
+fn windows() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    static WINDOWS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    WINDOWS.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::from(["main".into()])))
+}
+pub fn ensure_window(label: &str) -> Result<(), String> {
+    if windows().lock().unwrap().contains(label) {
+        Ok(())
+    } else {
+        Err("This webview is not an application workspace.".into())
+    }
+}
+pub fn register_window(label: &str) {
+    windows().lock().unwrap().insert(label.into());
+}
+pub fn unregister_window(label: &str) {
+    windows().lock().unwrap().remove(label);
+}
+pub fn window_labels() -> Vec<String> {
+    windows().lock().unwrap().iter().cloned().collect()
+}
 pub struct RecoveryBaseline {
     pub original_path: Option<String>,
     pub fingerprint: Option<String>,
@@ -15,6 +37,9 @@ pub struct RecoveryBaseline {
 pub struct Registry {
     pub sessions: HashMap<String, Option<OpenDocument>>,
     pub active: Option<String>,
+    pub owners: HashMap<String, String>,
+    pub window_active: HashMap<String, String>,
+    pub transfers: HashMap<String, (String, String, String)>,
     pub encoding: HashMap<String, (bool, bool)>,
     pub recovery_origins: HashMap<String, (Option<String>, Option<String>)>,
 }
@@ -31,6 +56,123 @@ pub fn fresh_id() -> String {
     )
 }
 impl Registry {
+    pub fn owner(&self, id: &str) -> &str {
+        self.owners.get(id).map(String::as_str).unwrap_or("main")
+    }
+    pub fn id_for(&self, window: &str, id: Option<&str>, mutate: bool) -> Result<String, String> {
+        let id = id
+            .or_else(|| self.window_active.get(window).map(String::as_str))
+            .or_else(|| {
+                if window == "main" {
+                    self.active.as_deref()
+                } else {
+                    None
+                }
+            })
+            .ok_or("No open document")?;
+        self.id(Some(id))?;
+        if let Some((_, destination, _)) = self.transfers.get(id) {
+            if mutate {
+                return Err("This document is moving to another window.".into());
+            }
+            if destination == window {
+                return Ok(id.into());
+            }
+        }
+        if self.owner(id) != window {
+            return Err("This document belongs to another window.".into());
+        }
+        Ok(id.into())
+    }
+    pub fn get_for(&self, window: &str, id: Option<&str>) -> Result<Option<OpenDocument>, String> {
+        if id.is_none()
+            && !self.window_active.contains_key(window)
+            && (window != "main" || self.active.is_none())
+        {
+            return Ok(None);
+        }
+        self.get(Some(&self.id_for(window, id, false)?))
+    }
+    pub fn activate_for(&mut self, window: &str, id: &str) -> Result<(), String> {
+        self.id_for(window, Some(id), true)?;
+        self.window_active.insert(window.into(), id.into());
+        if window == "main" {
+            self.active = Some(id.into());
+        }
+        Ok(())
+    }
+    pub fn new_document_for(&mut self, window: &str) -> String {
+        let id = fresh_id();
+        self.sessions.insert(id.clone(), None);
+        self.owners.insert(id.clone(), window.into());
+        self.activate_for(window, &id).unwrap();
+        id
+    }
+    pub fn open_for(
+        &mut self,
+        window: &str,
+        path: &Path,
+        reuse: bool,
+    ) -> Result<(String, Document), String> {
+        let canonical = path.canonicalize().map_err(|e| e.to_string())?;
+        if let Some((id, _)) = self
+            .sessions
+            .iter()
+            .find(|(_, doc)| doc.as_ref().is_some_and(|d| d.path == canonical))
+        {
+            self.id_for(window, Some(id), true)?;
+        }
+        let main_active = self.active.clone();
+        let (id, data) = self.open_with_reuse(path, reuse)?;
+        if window != "main" {
+            self.active = main_active;
+        }
+        self.owners.insert(id.clone(), window.into());
+        self.activate_for(window, &id)?;
+        Ok((id, data))
+    }
+    pub fn begin_transfer(
+        &mut self,
+        source: &str,
+        destination: &str,
+        id: &str,
+        token: &str,
+    ) -> Result<(), String> {
+        self.id_for(source, Some(id), true)?;
+        self.transfers
+            .insert(id.into(), (source.into(), destination.into(), token.into()));
+        Ok(())
+    }
+    pub fn rollback_transfer(&mut self, id: &str) {
+        self.transfers.remove(id);
+    }
+    pub fn finish_transfer(
+        &mut self,
+        destination: &str,
+        id: &str,
+        token: &str,
+    ) -> Result<(), String> {
+        let (source, target, expected) =
+            self.transfers.get(id).ok_or("No pending window transfer")?;
+        if target != destination || expected != token {
+            return Err("Invalid window transfer acknowledgement".into());
+        }
+        let source = source.clone();
+        self.owners.insert(id.into(), destination.into());
+        self.transfers.remove(id);
+        if self
+            .window_active
+            .get(&source)
+            .is_some_and(|active| active == id)
+        {
+            self.window_active.remove(&source);
+        }
+        if source == "main" && self.active.as_deref() == Some(id) {
+            self.active = None;
+        }
+        self.activate_for(destination, id)
+    }
+    #[cfg(test)]
     pub fn new_document(&mut self) -> String {
         let id = fresh_id();
         self.sessions.insert(id.clone(), None);
@@ -138,6 +280,9 @@ impl Registry {
     pub fn close(&mut self, id: &str) -> Result<(), String> {
         self.id(Some(id))?;
         self.sessions.remove(id);
+        self.owners.remove(id);
+        self.transfers.remove(id);
+        self.window_active.retain(|_, active| active != id);
         self.encoding.remove(id);
         self.recovery_origins.remove(id);
         if self.active.as_deref() == Some(id) {
@@ -149,6 +294,56 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn workspace_prefix_alone_does_not_grant_application_access() {
+        assert!(ensure_window("workspace-forged-label").is_err());
+        register_window("workspace-trusted-test");
+        assert!(ensure_window("workspace-trusted-test").is_ok());
+        unregister_window("workspace-trusted-test");
+        assert!(ensure_window("workspace-trusted-test").is_err());
+    }
+    #[test]
+    fn opening_in_a_second_window_keeps_main_active_and_foreign_baseline() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.md");
+        let b = dir.path().join("b.md");
+        std::fs::write(&a, "a").unwrap();
+        std::fs::write(&b, "b").unwrap();
+        let mut r = Registry::default();
+        let (first, _) = r.open_for("main", &a, true).unwrap();
+        r.open_for("workspace-test", &b, true).unwrap();
+        assert_eq!(r.id_for("main", None, true).unwrap(), first);
+        std::fs::write(&a, "external").unwrap();
+        assert!(r.open_for("workspace-test", &a, false).is_err());
+        assert!(r.save(&first, &a, "edit", false).is_err());
+    }
+    #[test]
+    fn window_context_denies_foreign_sessions_and_resolves_own_active() {
+        let mut r = Registry::default();
+        let a = r.new_document_for("main");
+        let b = r.new_document_for("workspace-test");
+        assert_eq!(r.id_for("main", None, true).unwrap(), a);
+        assert_eq!(r.id_for("workspace-test", None, true).unwrap(), b);
+        assert!(r.id_for("main", Some(&b), false).is_err());
+    }
+    #[test]
+    fn pending_transfer_is_read_only_until_ack_and_rollback_keeps_source() {
+        let mut r = Registry::default();
+        let id = r.new_document_for("main");
+        r.begin_transfer("main", "workspace-test", &id, "token")
+            .unwrap();
+        assert!(r.id_for("workspace-test", Some(&id), false).is_ok());
+        assert!(r.id_for("workspace-test", Some(&id), true).is_err());
+        assert!(r.id_for("main", Some(&id), true).is_err());
+        assert!(r.finish_transfer("main", &id, "token").is_err());
+        r.rollback_transfer(&id);
+        assert!(r.id_for("main", Some(&id), true).is_ok());
+        r.begin_transfer("main", "workspace-test", &id, "token2")
+            .unwrap();
+        r.finish_transfer("workspace-test", &id, "token2").unwrap();
+        assert!(r.id_for("main", Some(&id), false).is_err());
+        assert_eq!(r.id_for("workspace-test", None, true).unwrap(), id);
+    }
     #[test]
     fn reusing_an_open_tab_does_not_refresh_its_save_baseline() {
         let dir = tempfile::tempdir().unwrap();

@@ -3,9 +3,11 @@
     "$schema": "../gen/schemas/desktop-schema.json",
     "identifier": "main",
     "description": "The main Folio webview. Application commands are granted one by one; the renderer webview receives none of them.",
-    "webviews": ["main"],
+    "webviews": ["main", "workspace-*"],
     "permissions": [
       "core:default",
+      "allow-new-window",
+      "allow-finish-window-transfer",
       "allow-toggle-fullscreen",
       "allow-activate-document",
       "allow-close-document",

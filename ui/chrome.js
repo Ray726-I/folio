@@ -2,7 +2,7 @@
 // Application menus and per-document presentation; the editor owns text/history.
 let documentMode = 'reading', documentReadOnly = false;
 let documentNavigation = [], documentNavigationIndex = -1, navigatingHistory = false;
-function documentWritable() { return current.active && current.writable !== false && !documentReadOnly && !transitionLocked; }
+function documentWritable() { return focusedPane !== 'companion' && current.active && current.writable !== false && !documentReadOnly && !transitionLocked; }
 function sourceCaret(input) {
   const { selectionStart: start, selectionEnd: end, selectionDirection: direction } = input;
   return direction === 'backward' ? { anchor: end, head: start } : { anchor: start, head: end };
@@ -65,6 +65,7 @@ function syncDocumentMode() {
   });
 }
 function setDocumentMode(next) {
+  if (focusedPane === 'companion') return;
   if (!current.active || transitionLocked || !['reading', 'edit', 'source'].includes(next)) return;
   if (next === 'edit' && current.writable === false) { toast('Filesystem permissions prevent editing. Use Save As to create a writable copy.'); return; }
   if (documentMode === 'source') {
@@ -95,6 +96,7 @@ function setDocumentMode(next) {
   restore(); requestAnimationFrame(restore);
 }
 function toggleDocumentReadOnly() {
+  if (focusedPane === 'companion') return;
   if (transitionLocked || current.writable === false) return;
   documentReadOnly = !documentReadOnly; syncDocumentMode();
 }
@@ -188,6 +190,7 @@ function scheduleDocumentPreferences() {
 }
 function applyDocumentPreferences() {
   if (preferenceFrame) { cancelAnimationFrame(preferenceFrame); preferenceFrame = 0; }
+  $('preference-auto-save').checked = preferences.get('autoSaveFiles', false) === true;
   $('preference-restore-session').checked = preferences.get('restoreSession', true) !== false;
   $('preference-open-edit').checked = preferences.get('openInEditMode', true) !== false;
   $('preference-touchpad-zoom-row').hidden = nativePlatform !== 'linux';
@@ -285,6 +288,7 @@ function initializePreferencesPanel() {
       applyDocumentPreferences();
     });
   }
+  $('preference-auto-save').onchange = event => { preferences.set('autoSaveFiles', event.target.checked); for (const doc of documents.values()) scheduleAutomaticSave(doc); };
   $('preference-restore-session').onchange = event => preferences.set('restoreSession', event.target.checked);
   $('preference-open-edit').onchange = event => preferences.set('openInEditMode', event.target.checked);
   $('preference-touchpad-zoom').onchange = event => setTouchpadZoom(event.target.checked);
@@ -321,6 +325,7 @@ function showHelp(shortcuts = false) {
   $('help-dialog').showModal(); $('help-close').focus();
 }
 async function editClipboard(action) {
+  if (focusedPane === 'companion') { if (action === 'copy') return navigator.clipboard.writeText(window.getSelection()?.toString() || ''); if (action === 'select-all') { const range=document.createRange(); range.selectNodeContents($('companion-preview')); window.getSelection().removeAllRanges(); window.getSelection().addRange(range); } return; }
   if (!current.active) return;
   if (documentMode === 'source') {
     const input = $('document-source'); input.focus();
@@ -371,17 +376,18 @@ function jumpToSource(offset) {
 }
 function runAppAction(action) {
   closeAllMenus();
+  if (focusedPane === 'companion') { if (action === 'find') return openCompanionFind(); if (action === 'close') return closeReadingCompanion(); if (['undo','redo','cut','paste','replace','reading','rename','duplicate'].includes(action)) return; }
   const actions = {
     open: openEntry, folder: openFolderEntry, new: () => newDocument(), home: goHome,
-    recovery: reviewRecovery, commands: openCommands, save: () => requestSave(), 'save-as': () => requestSave(true), close: closeDocument, quit: requestClose,
+    'new-window': () => invoke('new_window'), 'move-window': () => enqueue(moveDocumentToNewWindow), companion: () => showReadingCompanion(), recovery: reviewRecovery, commands: openCommands, save: () => requestSave(), 'save-as': () => requestSave(true), close: closeDocument, quit: requestClose,
     undo: () => { undoRedo(); syncDocumentMode(); }, redo: () => { undoRedo(true); syncDocumentMode(); },
     cut: () => editClipboard('cut'), copy: () => editClipboard('copy'), paste: () => editClipboard('paste'), 'select-all': () => editClipboard('select-all'),
     find: openFind, 'folder-search': openFolderSearch, replace: openReplace, files: () => toggleDock('files'), outline: () => toggleDock('outline'),
     reading: () => setDocumentMode(documentMode === 'reading' ? 'edit' : 'reading'), focus: toggleFocus, fullscreen: () => invoke('toggle_fullscreen'),
     'zoom-in': () => zoomWindow(.1), 'zoom-out': () => zoomWindow(-.1), 'zoom-reset': () => zoomWindow(0, true),
     back: () => navigateDocumentHistory(-1), forward: () => navigateDocumentHistory(1),
-    heading: () => { setOutline(true); $('outline-items').querySelector('button')?.focus(); },
-    top: () => { const scroller = $(documentMode === 'source' ? 'document-source' : 'reader-scroll'); scroller.scrollTop = 0; }, bottom: () => { const scroller = $(documentMode === 'source' ? 'document-source' : 'reader-scroll'); scroller.scrollTop = scroller.scrollHeight; },
+    heading: () => { if (focusedPane === 'companion') focusPane('companion'); setOutline(true); $('outline-items').querySelector('button')?.focus(); },
+    top: () => { const scroller = $(focusedPane === 'companion' ? 'companion-scroll' : documentMode === 'source' ? 'document-source' : 'reader-scroll'); scroller.scrollTop = 0; }, bottom: () => { const scroller = $(focusedPane === 'companion' ? 'companion-scroll' : documentMode === 'source' ? 'document-source' : 'reader-scroll'); scroller.scrollTop = scroller.scrollHeight; },
     shortcuts: () => showHelp(true), about: () => showHelp(),
     documentation: () => invoke('open_link', { url: 'https://github.com/Ray726-I/folio#readme' }),
     issue: () => invoke('open_link', { url: 'https://github.com/Ray726-I/folio/issues' }),
@@ -394,6 +400,7 @@ function runAppAction(action) {
   try { Promise.resolve(actions[action]?.()).catch(toast); } catch (error) { toast(error); }
 }
 function closeDocument() {
+  if (focusedPane === 'companion') return closeReadingCompanion();
   if (current.documentId) return enqueue(() => closeWorkspaceDocument());
   return enqueue(async () => {
     if (!current.active || !(await allowDiscard())) return false;
