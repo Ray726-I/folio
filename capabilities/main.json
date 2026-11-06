@@ -33,6 +33,8 @@
       "allow-set-task-checked",
       "allow-new-document",
       "allow-save-document",
+      "allow-save-pasted-image",
+      "allow-import-document-image",
       "allow-render-markdown",
       "allow-highlight-code",
       "allow-preview-check",

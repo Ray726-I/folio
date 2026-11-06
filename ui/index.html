@@ -28,6 +28,7 @@
   <svg class="icon-definitions" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
     <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
     <!-- Adwaita symbolic icons © GNOME Project; see vendor/adwaita/README.md. -->
+    <symbol id="i-tab-search" viewBox="0 0 24 24"><path d="M4 8V6.5A1.5 1.5 0 0 1 5.5 5H9l2 2h7.5A1.5 1.5 0 0 1 20 8.5v10A1.5 1.5 0 0 1 18.5 20h-13A1.5 1.5 0 0 1 4 18.5Z"/><circle cx="11" cy="12" r="2.7"/><path d="m13 14 2.4 2.4"/></symbol>
     <symbol id="i-search" viewBox="0 0 16 16"><path style="fill:currentColor;stroke:none" d="M6.5 0C2.921875 0 0 2.921875 0 6.5s2.921875 6.496094 6.5 6.496094c1.429688 0 2.753906-.464844 3.828125-1.253906l2.945313 2.945312c.957031.9375 2.363281-.5 1.40625-1.4375L11.75 10.320312C12.535156 9.246094 13 7.925781 13 6.5 13 2.921875 10.078125 0 6.5 0m0 2C8.996094 2 11 4.003906 11 6.5s-2.003906 4.496094-4.5 4.496094S2 8.996094 2 6.5 4.003906 2 6.5 2m0 0"/></symbol>
     <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"/><path d="M5.5 9.5V21h13V9.5M9.5 21v-6h5v6"/></symbol>
     <symbol id="i-open" viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h5l3 3h6a2 2 0 0 1 2 2v3M3 8h18l-3 12H6L3 8Z"/></symbol>
@@ -91,7 +92,7 @@
     </section>
 
     <div id="recovery-warning" role="alert" hidden></div>
-    <div id="document-tabs" class="document-tabs" hidden><div class="top-rail"><button type="button" data-rail-action="find" aria-label="Search document" aria-controls="find-bar" aria-pressed="false" title="Search folder contents (Ctrl+Shift+F); find in document without a folder"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></button></div><div id="tab-list" role="tablist" aria-label="Open documents"></div><button id="all-documents" class="icon-button" aria-label="All documents" title="All documents" hidden><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></button><header class="headerbar">
+    <div id="document-tabs" class="document-tabs" hidden><div class="top-rail"><button type="button" data-rail-action="find" aria-label="Search document" aria-controls="find-bar" aria-pressed="false" title="Search folder contents (Ctrl+Shift+F); find in document without a folder"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></button></div><div id="tab-list" role="tablist" aria-label="Open documents"></div><button id="all-documents" class="icon-button" aria-label="All documents" aria-keyshortcuts="Control+Shift+A Meta+Shift+A" title="All documents (Ctrl+Shift+A)"><svg class="icon" aria-hidden="true"><use href="#i-tab-search"/></svg></button><header class="headerbar">
     <div class="header-start"><svg class="icon document-emblem" aria-hidden="true"><use href="#i-file"/></svg></div>
     <div class="window-title"><div class="window-title-line"><span id="document-name">Folio</span><span id="dirty-dot" class="dirty-dot" aria-label="Unsaved changes" hidden></span></div><div id="document-location" class="subtitle">Markdown, one file at a time</div></div>
     <div class="header-end">

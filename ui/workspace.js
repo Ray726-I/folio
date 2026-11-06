@@ -61,19 +61,11 @@ function restorableWorkspaceLayout() {
   for (const layout of Object.values(preferences.get('workspaceWindowLayouts', {}))) for (const path of layout.paths || []) if (!paths.some(existing => samePath(existing, path))) paths.push(path);
   return { paths, activePath: main.activePath };
 }
-function syncTabOverflow() {
-  const list = $('tab-list'), button = $('all-documents');
-  if (!list || !button) return;
-  const available = list.clientWidth + (button.hidden ? 0 : button.getBoundingClientRect().width);
-  button.hidden = list.scrollWidth <= available + 1;
-}
-new ResizeObserver(syncTabOverflow).observe($('tab-list'));
 let renderedTabs = '', tabDrag = null, suppressTabClick = false;
 function renderTabs() {
   const strip = $('document-tabs'); if (!strip) return;
   if (tabDrag?.dragging) { tabDrag.needsRender = true; return; }
   strip.hidden = !documents.size && !current.active && !activeFolder; const signature = [...documents.values()].map(d => [d.documentId, d.path, d.name, d.content !== d.saved, d === current]).join('|'); if (signature === renderedTabs) return; renderedTabs = signature; const list = $('tab-list'); list.replaceChildren();
-  requestAnimationFrame(syncTabOverflow);
   for (const doc of documents.values()) {
     const tab = document.createElement('button'); tab.className = 'document-tab'; tab.type = 'button'; tab.role = 'tab';
     tab.dataset.documentId = doc.documentId; tab.id = `tab-${doc.documentId}`; tab.setAttribute('aria-controls', 'document-view'); tab.setAttribute('aria-selected', String(doc === current)); tab.tabIndex = doc === current ? 0 : -1;

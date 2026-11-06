@@ -2,12 +2,13 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
     fs,
-    io::{Read, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     time::SystemTime,
 };
 
 pub const MAX_DOCUMENT_BYTES: u64 = 20 * 1024 * 1024;
+pub const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct OpenDocument {
@@ -188,6 +189,169 @@ pub(crate) fn changed_exact(document: &OpenDocument) -> bool {
     read_bytes(&document.path)
         .map(|(bytes, _)| fingerprint(&bytes) != document.fingerprint)
         .unwrap_or(true)
+}
+
+/// A pasted or dropped image that now lives beside its Markdown document.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedImage {
+    pub path: String,
+    pub name: String,
+}
+
+/// Map the image media types a clipboard can expose to the extension used in
+/// Markdown. SVG is deliberately absent: raster clipboard data is bounded and
+/// simple to validate, while SVG is an XML document with a much wider surface.
+pub fn image_extension_from_mime(mime: &str) -> Option<&'static str> {
+    match mime.trim().to_ascii_lowercase().as_str() {
+        "image/png" => Some("png"),
+        "image/jpeg" | "image/jpg" => Some("jpg"),
+        "image/gif" => Some("gif"),
+        "image/webp" => Some("webp"),
+        _ => None,
+    }
+}
+
+/// Normalize an image filename extension for a dropped file. These are the
+/// formats the native renderer itself resolves; extensions it cannot display
+/// are rejected rather than copied into the folder.
+pub fn image_extension(extension: &str) -> Option<&'static str> {
+    match extension.trim().to_ascii_lowercase().as_str() {
+        "png" => Some("png"),
+        "jpg" | "jpeg" => Some("jpg"),
+        "gif" => Some("gif"),
+        "webp" => Some("webp"),
+        "svg" => Some("svg"),
+        _ => None,
+    }
+}
+
+/// Check the bytes actually match the declared raster format. A clipboard
+/// payload is not trusted just because the webview labels it with a MIME type.
+pub fn validate_image_bytes(extension: &str, bytes: &[u8]) -> Result<(), String> {
+    let valid = match extension.trim().to_ascii_lowercase().as_str() {
+        "png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "jpg" | "jpeg" => bytes.starts_with(&[0xff, 0xd8, 0xff]),
+        "gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
+        "webp" => bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP",
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err("The pasted image is not a supported PNG, JPEG, GIF, or WebP file.".into())
+    }
+}
+
+fn image_name(index: usize, extension: &str) -> String {
+    if index == 1 {
+        format!("image.{extension}")
+    } else {
+        format!("image-{index}.{extension}")
+    }
+}
+
+/// Create a fresh image file without ever replacing an existing one. The
+/// exclusive create is what makes two quick pastes race safely.
+fn create_image_file(directory: &Path, extension: &str) -> Result<(fs::File, PathBuf), String> {
+    if !directory.is_dir() {
+        return Err("The document's folder is no longer available.".into());
+    }
+    for index in 1..=10_000usize {
+        let path = directory.join(image_name(index, extension));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => return Ok((file, path)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("Could not create the image file: {error}")),
+        }
+    }
+    Err("Could not find an unused image filename.".into())
+}
+
+fn saved_image(path: PathBuf) -> SavedImage {
+    let name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into();
+    SavedImage {
+        path: path.to_string_lossy().into(),
+        name,
+    }
+}
+
+/// Save clipboard bytes beside the document under the next free `image.*`
+/// name. The returned name is safe to place directly in Markdown.
+pub fn save_image_bytes(
+    directory: &Path,
+    bytes: &[u8],
+    extension: &str,
+) -> Result<SavedImage, String> {
+    if bytes.is_empty() {
+        return Err("The pasted image is empty.".into());
+    }
+    if bytes.len() as u64 > MAX_IMAGE_BYTES {
+        return Err("The pasted image exceeds Folio's 10 MB image limit.".into());
+    }
+    validate_image_bytes(extension, bytes)?;
+    let (mut file, path) = create_image_file(directory, extension)?;
+    if let Err(error) = file.write_all(bytes) {
+        drop(file);
+        let _ = fs::remove_file(&path);
+        return Err(format!("Could not save the image: {error}"));
+    }
+    Ok(saved_image(path))
+}
+
+/// Copy a dropped image into the document's folder under the next free
+/// `image.*` name. The source file is read-only to Folio and is never moved or
+/// changed; a growing source is still capped by the read budget.
+pub fn import_image(directory: &Path, source: &Path) -> Result<SavedImage, String> {
+    let metadata = fs::metadata(source)
+        .map_err(|error| format!("Could not read the dropped image: {error}"))?;
+    if !metadata.is_file() {
+        return Err("Drop a regular image file, not a folder.".into());
+    }
+    if metadata.len() == 0 {
+        return Err("The dropped image is empty.".into());
+    }
+    if metadata.len() > MAX_IMAGE_BYTES {
+        return Err("The dropped image exceeds Folio's 10 MB image limit.".into());
+    }
+    let extension = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .and_then(image_extension)
+        .ok_or("Only PNG, JPEG, GIF, WebP, and SVG images can be added.")?;
+    let mut input = fs::File::open(source)
+        .map_err(|error| format!("Could not read the dropped image: {error}"))?;
+    let (mut output, path) = create_image_file(directory, extension)?;
+    let copied = match io::copy(
+        &mut Read::by_ref(&mut input).take(MAX_IMAGE_BYTES + 1),
+        &mut output,
+    ) {
+        Ok(copied) => copied,
+        Err(error) => {
+            drop(output);
+            let _ = fs::remove_file(&path);
+            return Err(format!("Could not save the dropped image: {error}"));
+        }
+    };
+    if copied == 0 {
+        drop(output);
+        let _ = fs::remove_file(&path);
+        return Err("The dropped image is empty.".into());
+    }
+    if copied > MAX_IMAGE_BYTES {
+        drop(output);
+        let _ = fs::remove_file(&path);
+        return Err("The dropped image exceeds Folio's 10 MB image limit.".into());
+    }
+    Ok(saved_image(path))
 }
 
 pub fn save(
@@ -438,5 +602,83 @@ mod tests {
             );
         }
         assert!(!changed(&saved));
+    }
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\npayload";
+
+    #[test]
+    fn pasted_images_get_unique_names_beside_the_document() {
+        let directory = tempfile::tempdir().unwrap();
+        let first = save_image_bytes(directory.path(), PNG, "png").unwrap();
+        assert_eq!(first.name, "image.png");
+        assert_eq!(
+            fs::read(&first.path).unwrap(),
+            PNG,
+            "the pasted bytes are written beside the document"
+        );
+        let second = save_image_bytes(directory.path(), PNG, "png").unwrap();
+        assert_eq!(
+            second.name, "image-2.png",
+            "an existing image is never overwritten"
+        );
+        assert_eq!(fs::read(&second.path).unwrap(), PNG);
+    }
+
+    #[test]
+    fn clipboard_media_types_map_to_renderable_extensions() {
+        assert_eq!(image_extension_from_mime("image/png"), Some("png"));
+        assert_eq!(image_extension_from_mime("IMAGE/JPEG"), Some("jpg"));
+        assert_eq!(image_extension_from_mime("image/webp"), Some("webp"));
+        assert_eq!(image_extension_from_mime("image/svg+xml"), None);
+        assert_eq!(image_extension("JPEG"), Some("jpg"));
+        assert_eq!(image_extension("avif"), None);
+    }
+
+    #[test]
+    fn pasted_images_must_match_their_declared_format() {
+        assert!(validate_image_bytes("png", PNG).is_ok());
+        assert!(validate_image_bytes("jpg", PNG).is_err());
+        assert!(validate_image_bytes("gif", b"not an image").is_err());
+        assert!(save_image_bytes(tempfile::tempdir().unwrap().path(), b"not png", "png").is_err());
+    }
+
+    #[test]
+    fn imported_images_are_copied_beside_the_document() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("downloaded.jpg");
+        fs::write(&source, b"jpeg bytes").unwrap();
+        let saved = import_image(directory.path(), &source).unwrap();
+        assert_eq!(saved.name, "image.jpg");
+        assert_eq!(fs::read(&saved.path).unwrap(), b"jpeg bytes");
+        assert_eq!(
+            fs::read(&source).unwrap(),
+            b"jpeg bytes",
+            "the dropped file is left alone"
+        );
+    }
+
+    #[test]
+    fn imported_images_refuse_empty_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let empty = directory.path().join("empty.png");
+        fs::write(&empty, b"").unwrap();
+        assert!(import_image(directory.path(), &empty).is_err());
+    }
+
+    #[test]
+    fn imported_images_refuse_other_file_types() {
+        let directory = tempfile::tempdir().unwrap();
+        let text = directory.path().join("notes.txt");
+        fs::write(&text, b"not an image").unwrap();
+        assert!(import_image(directory.path(), &text).is_err());
+    }
+
+    #[test]
+    fn image_imports_and_pastes_are_bounded() {
+        let directory = tempfile::tempdir().unwrap();
+        let oversized = vec![0; MAX_IMAGE_BYTES as usize + 1];
+        assert!(save_image_bytes(directory.path(), &oversized, "png").is_err());
+        let source = directory.path().join("huge.png");
+        fs::write(&source, &oversized).unwrap();
+        assert!(import_image(directory.path(), &source).is_err());
     }
 }

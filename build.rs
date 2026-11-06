@@ -32,6 +32,8 @@ fn main() {
             "set_task_checked",
             "new_document",
             "save_document",
+            "save_pasted_image",
+            "import_document_image",
             "render_markdown",
             "highlight_code",
             "preview_check",

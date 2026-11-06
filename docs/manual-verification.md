@@ -38,6 +38,21 @@ changes to `src/main.rs`, `tauri.conf.json`, the CSP, or the UI modules.
 10. Try a relative link inside the document folder (opens), a `../` escape (error),
    and a `data:text/html...` link (not clickable).
 
+## Image paste and drop
+
+1. Open a saved document in Edit mode, place the caret, and paste a screenshot.
+   Confirm a new `image.png` appears beside the Markdown file, `![](image.png)`
+   is inserted at the caret, and the image renders in the document.
+2. Paste again immediately. Confirm the second file is `image-2.png`, the first
+   image is untouched, and both links render. Repeat in Source mode and confirm
+   the textarea and saved source contain the same links.
+3. Drop an image from the file manager onto a document. Confirm it is copied
+   beside the document and linked. Repeat while in Reading mode; editing should
+   open so the insertion is visible.
+4. Try an unsaved document, a read-only document, a non-image file, and an image
+   over 10 MB. Confirm each reports a message and leaves the document unchanged.
+   Dropping or pasting a non-image file must keep the normal open/insert path.
+
 ## Remote-image privacy
 
 1. Open a document with `![x](https://example.com/pixel.png)`. Confirm the local

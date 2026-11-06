@@ -43,6 +43,12 @@ should outlive any one feature pass. Current performance numbers live in
   also offered. HTML round-tripping through the rich schema loses fenced-code
   info strings and rewrites list/TeX bytes; HTML remains a fallback only when no
   text is available.
+- An image-only paste or an image drop is handled by the shell, not by the
+  document parser. The native saver writes a uniquely named `image.*` sibling
+  with exclusive creation (so a quick second paste cannot overwrite the first),
+  and the shell inserts `![](image.png)` through the exact-source path. The
+  pasted payload is capped at 10 MB and its declared raster format is checked
+  against its magic bytes.
 - A native drag that crosses a rendered atom stays out of editor state while the
   pointer is down. Before a keyboard edit, map that guarded range back through
   the source-aware clipboard endpoints; otherwise Delete/Backspace act on a

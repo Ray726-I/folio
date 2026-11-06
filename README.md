@@ -22,6 +22,7 @@ For native prerequisites, follow Tauri's [Linux](https://v2.tauri.app/start/prer
 | Action | Shortcut |
 | --- | --- |
 | Command window (commands, themes, files) | Ctrl+Shift+P (Command+Shift+P on macOS) |
+| All documents (search open tabs) | Ctrl+Shift+A (Command+Shift+A on macOS) |
 | Open File / Open Folder | Ctrl+O / Ctrl+Shift+O |
 | Show or hide the file tree | Ctrl+B |
 | New document | Ctrl+N |
@@ -78,7 +79,7 @@ Reading text uses Inter by default, with Source Serif 4 available in document pr
 
 LaTeX and Mermaid use vendored files in `ui/vendor/` — no CDN or rendering service is used — and load on demand. Mermaid runs in a separate offline renderer with restricted native permissions; its SVG output is sanitized before display. Diagrams are re-rendered when the theme changes so their colors match Folio (including the live Omarchy palette). Mermaid diagrams that require external images are unsupported, even when remote document images are enabled; a source fallback explains the failure. Invalid Mermaid sources also show their source with an error note. KaTeX uses `throwOnError: false` and restrictive trust settings, and Mermaid uses its strict security level.
 
-Markdown images in the document's directory or its descendants are loaded locally, using relative or absolute paths (including PNG, JPEG, GIF, WebP, and SVG). Images outside that directory are not embedded automatically. Local images are limited to 10 MB each. Documents must be UTF-8 and are currently limited to 20 MB. Uniform CRLF endings and a UTF-8 BOM are preserved on save. Existing files keep their permissions; newly created files follow the process umask rather than being forced to owner-only.
+Markdown images in the document's directory or its descendants are loaded locally, using relative or absolute paths (including PNG, JPEG, GIF, WebP, and SVG). Images outside that directory are not embedded automatically. Local images are limited to 10 MB each. Pasting a screenshot or dropping an image file into a document saves it beside the Markdown file as `image.png` (or the next free `image-2.png`, `image-3.png`, and so on) and inserts a Markdown image link. Dropping an image while reading opens Edit mode for the insertion; unsaved documents, read-only documents, and images over 10 MB are rejected with a message. Documents must be UTF-8 and are currently limited to 20 MB. Uniform CRLF endings and a UTF-8 BOM are preserved on save. Existing files keep their permissions; newly created files follow the process umask rather than being forced to owner-only.
 
 Preview work is bounded independently of file size: 200,000 lines and AST nodes,
 128 levels of blockquote nesting, 64 MiB of generated HTML, 200 image occurrences,
@@ -133,7 +134,7 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 ```
 
-The Rust tests cover external-edit conflicts, metadata-based change detection, atomic save behavior, CRLF/BOM/permission preservation, new-file umask handling, HTML sanitization (including mixed-case `data-sourcepos` spoofing), remote-image privacy, syntax-highlighted Markdown, math and Mermaid source markers, wikilinks, emoji, extension elements, document anchor identifiers, edit-block source mapping, task toggling, tolerant folder scanning, local image boundaries, and theme validation. An optional UI smoke test checks keyboard controls, the command window, conditional/live Omarchy themes, theme isolation, remote-image toggling, reading-font toggling, the unified editor controls, outline navigation, unsaved-change prompts, structured save conflicts, close protection, find, on-demand vendored KaTeX/Mermaid loading, the collapsible file tree, and direct editing. Separate real-editor checks cover rich tables, tasks, math, links, images, Lock, exact source snapshots, shared undo and the complexity fallback. It mocks the native IPC layer; native filesystem and rendering behavior are covered separately by the Rust tests.
+The Rust tests cover external-edit conflicts, metadata-based change detection, atomic save behavior, CRLF/BOM/permission preservation, new-file umask handling, image paste/import naming, format and size bounds, HTML sanitization (including mixed-case `data-sourcepos` spoofing), remote-image privacy, syntax-highlighted Markdown, math and Mermaid source markers, wikilinks, emoji, extension elements, document anchor identifiers, edit-block source mapping, task toggling, tolerant folder scanning, local image boundaries, and theme validation. An optional UI smoke test checks keyboard controls, the command window, conditional/live Omarchy themes, theme isolation, remote-image toggling, reading-font toggling, the unified editor controls, outline navigation, unsaved-change prompts, structured save conflicts, close protection, find, on-demand vendored KaTeX/Mermaid loading, the collapsible file tree, and direct editing. Separate real-editor checks cover rich tables, tasks, math, links, images, Lock, exact source snapshots, shared undo and the complexity fallback. It mocks the native IPC layer; native filesystem and rendering behavior are covered separately by the Rust tests.
 
 ```sh
 npm ci

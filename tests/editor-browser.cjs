@@ -18,7 +18,7 @@ async function openEditor(source, viewport = { width: 1180, height: 900 }, optio
     return JSON.parse(execFileSync(fixture, [input, ...(args.remoteImages ? ['--allow-remote'] : [])], { encoding: 'utf8', maxBuffer: 80 * 1024 * 1024 }));
   });
   await page.addInitScript(source => {
-    window.documentSource = source; window.savedContent = null; window.calls = []; window.listeners = {};
+    window.documentSource = source; window.savedContent = null; window.calls = []; window.listeners = {}; window.imageCommandCalls = [];
      // Path-keyed deferred open gate. Default opens stay immediate; a test opts
      // in with holdOpen() to pause a native open after the app has requested it.
      // A gate can also be rejected deterministically to simulate native failure.
@@ -148,11 +148,17 @@ async function openEditor(source, viewport = { width: 1180, height: 900 }, optio
         return { html: node ? node.innerHTML : '' };
       }
       if (command === 'save_document') { window.savedContent = args.content; return { path: '/tmp/test.md', name: 'test.md' }; }
+      if (command === 'save_pasted_image' || command === 'import_document_image') {
+        window.imageCommandCalls.push({ command, args });
+        const index = window.imageCommandCalls.length;
+        const name = index === 1 ? 'image.png' : `image-${index}.png`;
+        return { path: `/tmp/test/${name}`, name };
+      }
       if (command === 'mermaid_render_request') {
         queueMicrotask(() => { for (const callback of window.listeners['mermaid-render-result'] || []) callback({ payload: { id: args.request.id, ok: true, sanitized: true, svg: '<svg xmlns="http://www.w3.org/2000/svg"><text>diagram</text></svg>' } }); });
       }
       return null;
-    } }, event: { listen: async (name, callback) => { (window.listeners[name] ??= []).push(callback); return () => {}; } }, webview: { getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) } };
+    } }, event: { listen: async (name, callback) => { (window.listeners[name] ??= []).push(callback); return () => {}; } }, webview: { getCurrentWebview: () => ({ onDragDropEvent: async handler => { window.dragDropHandler = handler; return () => {}; } }) } };
   }, source);
   if (options.bootstrap) await page.addInitScript(state => { const original=window.__TAURI__.core.invoke; window.__TAURI__.core.invoke=(command,args)=>command==='bootstrap'?Promise.resolve(state):original(command,args); }, options.bootstrap);
   await page.goto(pathToFileURL(path.resolve('ui/index.html')).href);

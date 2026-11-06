@@ -857,7 +857,9 @@ function commandRow(command, index) {
   return { command, element: button };
 }
 function buildCommandRows() {
-  const list = commandScope === 'themes' ? themeCommands() : [...allCommands(), ...themeCommands()];
+  const list = commandScope === 'themes' ? themeCommands()
+    : commandScope === 'documents' ? [...documents.values()].map(doc => ({ label: doc.name, detail: doc.path || 'Unsaved document', icon: 'file', action: () => enqueue(() => activateDocument(doc)) }))
+    : [...allCommands(), ...themeCommands()];
   commandRows = list.map(commandRow);
 }
 function updateActiveCommand() {
@@ -874,19 +876,19 @@ function filterCommands() {
   selectedCommand = Math.max(0, Math.min(selectedCommand, filteredRows.length - 1));
   $('command-list').replaceChildren(...filteredRows.map(row => row.element));
   $('command-empty').hidden = filteredRows.length > 0;
+  $('command-empty').textContent = commandScope === 'documents' ? 'No open documents' : 'No matching commands';
   $('command-scope').textContent = commandScope === 'themes' ? 'Appearance' : commandScope === 'documents' ? 'Open documents' : query ? 'Search results' : 'Commands';
   $('palette-hint').hidden = commandScope !== 'themes';
   $('command-results').scrollTop = 0;
   updateActiveCommand();
 }
 function openCommands(scope = 'commands') {
-  $('command-search').placeholder = 'Search commands or themes…';
   if ($('confirm-dialog').open) return;
   closeAllMenus();
   commandScope = scope;
   selectedCommand = 0;
   $('command-search').value = '';
-  $('command-search').placeholder = scope === 'themes' ? 'Search themes…' : 'Search commands or themes…';
+  $('command-search').placeholder = scope === 'themes' ? 'Search themes…' : scope === 'documents' ? 'Search open documents…' : 'Search commands or themes…';
   buildCommandRows();
   // Opening Appearance lands on the theme that is already applied, so the
   // checked row and the highlighted row agree.
@@ -1155,6 +1157,163 @@ function followPreviewLink(anchor) {
   else if (/^(https?:|mailto:)/i.test(href)) invoke('open_link', { url: href }).catch(toast);
   else enqueue(async () => { const path = await invoke('resolve_document_link', { documentId: current.documentId, link: href }); await openPath(path); });
 }
+// Images pasted or dropped into a document are saved beside its Markdown file
+// and inserted as a Markdown image link. Clipboard screenshots arrive either
+// as a File item or, in some webviews, as an HTML data URL; both are accepted.
+const MAX_PASTED_IMAGE_BYTES = 10 * 1024 * 1024;
+const IMAGE_PATH = /\.(?:png|jpe?g|gif|webp|svg)$/i;
+const CLIPBOARD_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp']);
+function isImagePath(path) { return IMAGE_PATH.test(String(path || '')); }
+function imageCanBeAdded() {
+  return Boolean(current.active && current.path && current.writable !== false && !documentReadOnly && !transitionLocked && editor && focusedPane !== 'companion');
+}
+function imageReadonlyMessage() {
+  if (!current.path) return 'Save the document before adding images.';
+  if (!editor) return 'This document cannot be edited here; images cannot be inserted.';
+  if (documentReadOnly) return 'Turn off read-only before adding images.';
+  return 'Filesystem permissions prevent adding images beside this document.';
+}
+function imageDropInsertion() {
+  if (documentMode === 'source') return sourceCaret($('document-source'));
+  if ($('preview').contains(document.activeElement)) return editor?.getSelection?.() || { anchor: current.content.length, head: current.content.length };
+  return { anchor: current.content.length, head: current.content.length };
+}
+function readFileBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result || ''), comma = value.indexOf(',');
+      if (comma < 0) reject(new Error('The pasted image could not be read.'));
+      else resolve(value.slice(comma + 1));
+    };
+    reader.onerror = () => reject(reader.error || new Error('The pasted image could not be read.'));
+    reader.readAsDataURL(file);
+  });
+}
+function clipboardImagePayload(event) {
+  const data = event.clipboardData;
+  if (!data) return null;
+  let text = '';
+  try { text = data.getData('text/plain'); } catch {}
+  if (text) return null;
+  const items = Array.from(data.items || []);
+  for (const item of items) {
+    if (item.kind === 'file' && CLIPBOARD_IMAGE_TYPES.has(String(item.type).toLowerCase())) {
+      const file = item.getAsFile();
+      if (file) return { file, mime: String(file.type || 'image/png').toLowerCase() };
+    }
+  }
+  for (const file of Array.from(data.files || [])) {
+    if (CLIPBOARD_IMAGE_TYPES.has(String(file.type).toLowerCase())) return { file, mime: String(file.type || 'image/png').toLowerCase() };
+  }
+  // Some native webviews expose an image copied from another app only as an
+  // HTML data URL. Keep that path narrow: the first raster image only.
+  let html = '';
+  try { html = data.getData('text/html'); } catch {}
+  const match = /<img\b[^>]*\bsrc\s*=\s*["'](data:image\/(png|jpe?g|gif|webp);base64,([^"']+))["']/i.exec(html || '');
+  if (!match) return null;
+  const mime = `image/${match[2].toLowerCase()}`;
+  return { data: match[3], mime, size: Math.floor(match[3].length * 3 / 4) };
+}
+function insertSourceImageMarkdown(markdown, selection) {
+  const input = $('document-source');
+  const length = input.value.length;
+  const anchor = Math.max(0, Math.min(Number(selection?.anchor ?? length), length));
+  const head = Math.max(0, Math.min(Number(selection?.head ?? length), length));
+  const from = Math.min(anchor, head), to = Math.max(anchor, head);
+  editor.setSourceSelection?.({ anchor: from, head: to });
+  editor.checkpoint?.();
+  input.focus();
+  input.setSelectionRange(from, to);
+  input.setRangeText(markdown, from, to, 'end');
+  input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste', data: markdown }));
+  return true;
+}
+function insertImageMarkdown(markdown, selection) {
+  if (documentMode === 'source' && editor) return insertSourceImageMarkdown(markdown, selection);
+  if (documentMode === 'reading') setDocumentMode('edit');
+  if (!editor) return false;
+  const length = current.content.length;
+  const anchor = Math.max(0, Math.min(Number(selection?.anchor ?? length), length));
+  const head = Math.max(0, Math.min(Number(selection?.head ?? length), length));
+  return Boolean(editor.insertMarkdown?.(markdown, { anchor, head }));
+}
+async function saveClipboardImage(payload, selection) {
+  const owner = current;
+  const data = payload.file ? await readFileBase64(payload.file) : payload.data;
+  const size = payload.file ? payload.file.size : payload.size;
+  if (size > MAX_PASTED_IMAGE_BYTES) throw new Error("The pasted image exceeds Folio's 10 MB image limit.");
+  const documentPath = owner.path;
+  const saved = await invoke('save_pasted_image', { documentId: owner.documentId, data, mime: payload.mime });
+  if (owner !== current || !current.active) return true;
+  if (current.path !== documentPath) throw new Error('The document moved while the image was saving, so no link was inserted.');
+  if (!saved || typeof saved.name !== 'string' || !saved.name) throw new Error('The image could not be saved beside the document.');
+  if (!insertImageMarkdown(`![](${saved.name})`, selection)) throw new Error('The image was saved, but its Markdown could not be inserted.');
+  status('Image added beside the document');
+  return true;
+}
+async function importDroppedImage(path, selection) {
+  const owner = current, documentPath = owner.path;
+  const saved = await invoke('import_document_image', { documentId: owner.documentId, path });
+  if (owner !== current || !current.active) return true;
+  if (current.path !== documentPath) throw new Error('The document moved while the image was saving, so no link was inserted.');
+  if (!saved || typeof saved.name !== 'string' || !saved.name) throw new Error('The image could not be saved beside the document.');
+  if (!insertImageMarkdown(`![](${saved.name})`, selection)) throw new Error('The image was saved, but its Markdown could not be inserted.');
+  status('Image added beside the document');
+  return true;
+}
+async function addDroppedPaths(paths) {
+  const images = [], others = [];
+  for (const path of paths || []) (isImagePath(path) ? images : others).push(path);
+  if (images.length) {
+    if (!current.active) toast('Open a Markdown document before dropping an image.');
+    else if (!imageCanBeAdded()) toast(imageReadonlyMessage());
+    else {
+      let insertion;
+      if (documentMode === 'reading') {
+        // Dropping while reading is an explicit insertion request. Edit mode
+        // restores its last caret, which may be anywhere; append the image
+        // rather than silently splicing it into an old selection.
+        setDocumentMode('edit');
+        insertion = { anchor: current.content.length, head: current.content.length };
+      } else {
+        insertion = imageDropInsertion();
+      }
+      for (const path of images) {
+        try { await importDroppedImage(path, insertion); }
+        catch (error) { toast(error); break; }
+        insertion = imageDropInsertion();
+      }
+    }
+  }
+  for (const path of others) requestOpenLocation(path);
+}
+function updateDropOverlay(paths) {
+  const imageOnly = paths.length > 0 && paths.every(isImagePath);
+  const add = imageOnly && current.active && imageCanBeAdded();
+  $('drop-overlay').querySelector('h2').textContent = add ? 'Drop to add image' : 'Drop to open';
+  $('drop-overlay').querySelector('p').textContent = add ? 'Saves beside the document and inserts a Markdown image link.' : 'One Markdown file. No setup.';
+}
+document.addEventListener('paste', event => {
+  if (event.defaultPrevented || !current.active) return;
+  const target = event.target;
+  const inSource = target === $('document-source') || target?.closest?.('#document-source');
+  const inPreview = target?.closest?.('#preview');
+  const readingSurface = documentMode === 'reading' && (target === document.body || target === document.documentElement || target?.closest?.('#reader-scroll'));
+  if (!inSource && !inPreview && !readingSurface) return;
+  const payload = clipboardImagePayload(event);
+  if (!payload) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (!imageCanBeAdded()) { toast(imageReadonlyMessage()); return; }
+  if (!CLIPBOARD_IMAGE_TYPES.has(payload.mime)) { toast('Paste a PNG, JPEG, GIF, or WebP image.'); return; }
+  const selection = inSource ? sourceCaret($('document-source'))
+    : documentMode === 'reading' ? { anchor: current.content.length, head: current.content.length }
+    : editor?.getSelection?.() || { anchor: current.content.length, head: current.content.length };
+  if (documentMode === 'reading') setDocumentMode('edit');
+  void saveClipboardImage(payload, selection).catch(toast);
+}, true);
+
 // ProseMirror's macOS keymap handles Ctrl+H as deletion before the
 // document-level Replace shortcut can run. Keep Folio's shortcut consistent
 // while the formatted editor has focus.
@@ -1169,6 +1328,7 @@ document.addEventListener('keydown', event => {
 }, true);
 document.addEventListener('keydown', event => {
   const control = event.ctrlKey || event.metaKey;
+  if (control && !event.altKey && event.shiftKey && event.key.toLowerCase() === 'a') { event.preventDefault(); openCommands('documents'); return; }
   if (control && event.shiftKey && event.key.toLowerCase() === 'p') { event.preventDefault(); $('command-dialog').open ? $('command-dialog').close() : openCommands(); return; }
   if (event.defaultPrevented) return;
   if ($('recovery-dialog').open || $('workspace-close-dialog').open || $('help-dialog').open || $('command-dialog').open || $('confirm-dialog').open || $('open-dialog').open || $('source-dialog').open || $('editor-action-dialog').open) return;
@@ -1259,7 +1419,7 @@ Your files stay yours. This sample is just a starting point.[^1]
 
 async function start() {
   initializePanes(); initializeChrome(); initializeFolderSearch();
-  $('all-documents').onclick = () => { openCommands(); commandScope = 'documents'; $('command-search').placeholder = 'Search open documents…'; $('command-search').value = ''; commandRows = [...documents.values()].map(doc => ({ label: doc.name, detail: doc.path || 'Unsaved document', icon: 'file', action: () => enqueue(() => activateDocument(doc)) })).map(commandRow); filterCommands(); };
+  $('all-documents').onclick = () => openCommands('documents');
   zoomText(0); zoomWindow(0); renderRecent(); setDocumentWidth(wideLayout, false);
   syncOpenAffordance();
   applyTheme(selectedTheme, false); applyReadingFont(readingFont, false);
@@ -1286,8 +1446,10 @@ async function start() {
   for (const path of layout.paths || []) enqueue(async () => { if ([...documents.values()].some(doc => samePath(doc.path || doc.originalPath, path))) return; await openPath(path); });
   if (layout.activePath) enqueue(async () => { const doc = [...documents.values()].find(d => samePath(d.path, layout.activePath)); if (doc) await activateDocument(doc); });
   await window.__TAURI__.webview.getCurrentWebview().onDragDropEvent(event => {
-    const type = event.payload.type; $('drop-overlay').hidden = type !== 'over' && type !== 'enter';
-    if (type === 'drop') { $('drop-overlay').hidden = true; for (const path of event.payload.paths) requestOpenLocation(path); }
+    const type = event.payload.type, paths = event.payload.paths || [];
+    if (type === 'enter') updateDropOverlay(paths);
+    $('drop-overlay').hidden = type !== 'over' && type !== 'enter';
+    if (type === 'drop') { $('drop-overlay').hidden = true; void addDroppedPaths(paths).catch(toast); }
   });
   const idle = window.requestIdleCallback || (callback => setTimeout(callback, 200));
   idle(() => {

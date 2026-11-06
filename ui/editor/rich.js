@@ -4109,6 +4109,27 @@ export function createRichEditor(parent, options) {
     setSearchHighlight,
     clearSearchHighlight,
     focus: () => view.focus(),
+    // Insert Markdown offered by the shell (for example an image saved from
+    // the clipboard or a drop) through the same exact-source path as typed
+    // input and the slash commands. The caller may pass a source selection
+    // captured before an asynchronous native save; stale offsets are refused
+    // instead of being mapped to the wrong block.
+    insertMarkdown(markdown, selection = null) {
+      if (options.isLocked()) return false;
+      let range;
+      if (selection) {
+        const anchor = Number(selection.anchor), head = Number(selection.head);
+        if (!Number.isInteger(anchor) || !Number.isInteger(head) || anchor < 0 || head < 0 || anchor > model.source.length || head > model.source.length) return false;
+        const from = Math.min(anchor, head), to = Math.max(anchor, head);
+        range = { from, to, all: false, collapsed: from === to };
+      } else {
+        range = commandSourceRange();
+      }
+      if (!range) return false;
+      const outcome = replaceLogicalSelection(markdown, 'command', range);
+      if (outcome.committed) { try { view.focus(); } catch {} return true; }
+      return false;
+    },
     command(name) {
       if (options.isLocked()) return;
       const commands = {

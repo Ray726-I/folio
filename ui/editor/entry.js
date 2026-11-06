@@ -242,6 +242,23 @@ export function create(options) {
       if (focus) this.focus();
     },
     undo,
+    // Source-mode insertion is handled by the shell because the textarea owns
+    // the caret there. In Edit mode the rich engine applies the exact splice.
+    insertMarkdown(markdown, selection = null) {
+      if (isLocked()) return false;
+      if (!sourceOnly) return Boolean(richEditor?.insertMarkdown?.(markdown, selection));
+      const anchor = Number(selection?.anchor ?? sourceSelection.anchor);
+      const head = Number(selection?.head ?? sourceSelection.head);
+      if (!Number.isInteger(anchor) || !Number.isInteger(head)) return false;
+      const from = Math.max(0, Math.min(anchor, head, content.length));
+      const to = Math.max(0, Math.min(Math.max(anchor, head), content.length));
+      const next = content.slice(0, from) + markdown + content.slice(to);
+      if (next === content) return false;
+      const after = { anchor: from + markdown.length, head: from + markdown.length };
+      record(next, after, { anchor: from, head: to }, false);
+      richStale = true;
+      return content === next;
+    },
     command(name) { if (isLocked()) return; groupTime = 0; richEditor?.command(name); groupTime = 0; },
     highlightRange(anchor, head = anchor) { richEditor?.setSearchHighlight(anchor, head); },
     clearHighlight() { richEditor?.clearSearchHighlight?.(); },

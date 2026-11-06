@@ -8,6 +8,7 @@ mod renderer;
 mod theme;
 mod workspace;
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use document::Document;
 #[cfg(target_os = "linux")]
 use gtk::{gdk::EventType, prelude::*};
@@ -1143,6 +1144,66 @@ fn save_document(
     };
     registry.sessions.insert(id, Some(saved));
     Ok(Some(payload))
+}
+
+/// Resolve the active document's folder for an image write. An unsaved
+/// document has no destination yet, so the UI asks for Save first.
+fn image_directory(
+    webview: &tauri::Webview,
+    state: &AppState,
+    document_id: Option<String>,
+) -> Result<PathBuf, CommandError> {
+    renderer::ensure_main(webview.label()).map_err(CommandError::from)?;
+    let id =
+        state
+            .documents
+            .lock()
+            .unwrap()
+            .id_for(webview.label(), document_id.as_deref(), true)?;
+    let document = state
+        .documents
+        .lock()
+        .unwrap()
+        .get_for(webview.label(), Some(&id))?;
+    let document = document.ok_or("Save the document before adding images.")?;
+    document
+        .path
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| CommandError::from("The document has no folder."))
+}
+
+#[tauri::command(async)]
+fn save_pasted_image(
+    document_id: Option<String>,
+    data: String,
+    mime: String,
+    webview: tauri::Webview,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<document::SavedImage, CommandError> {
+    let directory = image_directory(&webview, state.inner(), document_id)?;
+    let extension = document::image_extension_from_mime(&mime)
+        .ok_or("Paste a PNG, JPEG, GIF, or WebP image.")?;
+    // Bound the encoded payload before decoding it, so an oversized clipboard
+    // request cannot allocate first and fail the size check afterwards.
+    if data.len() as u64 > (document::MAX_IMAGE_BYTES / 3 + 1) * 4 {
+        return Err("The pasted image exceeds Folio's 10 MB image limit.".into());
+    }
+    let bytes = STANDARD
+        .decode(data.as_bytes())
+        .map_err(|_| "The pasted image data could not be decoded.")?;
+    document::save_image_bytes(&directory, &bytes, extension).map_err(CommandError::from)
+}
+
+#[tauri::command(async)]
+fn import_document_image(
+    document_id: Option<String>,
+    path: String,
+    webview: tauri::Webview,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<document::SavedImage, CommandError> {
+    let directory = image_directory(&webview, state.inner(), document_id)?;
+    document::import_image(&directory, Path::new(&path)).map_err(CommandError::from)
 }
 
 #[derive(Serialize)]
@@ -2739,6 +2800,8 @@ fn main() {
             set_task_checked,
             new_document,
             save_document,
+            save_pasted_image,
+            import_document_image,
             render_markdown,
             highlight_code,
             preview_check,

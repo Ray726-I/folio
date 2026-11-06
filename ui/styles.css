@@ -4398,7 +4398,7 @@ main { display:flex; flex-direction:column; }
 .document-tabs .header-end { gap:5px; }
 .document-tabs #tab-list { align-self:stretch; }
 .document-tabs .document-tab { padding-left:12px; }
-.document-tabs #all-documents[hidden] { display:none; }
+.document-tabs #all-documents { margin:0 3px; }
 @media(pointer:coarse) { .document-tabs .top-rail { height:48px; } .top-rail button { width:44px; height:44px; } }
 .document-tabs .headerbar[hidden] { display:none; }
 /* Reordering keeps a clear source marker and a floating accent-bordered tab. */
@@ -4408,3 +4408,7 @@ main { display:flex; flex-direction:column; }
 .tab-drag-preview .tab-close { display:none; }
 .tab-dragging,.tab-dragging * { cursor:grabbing!important; user-select:none!important; }
 @media(prefers-reduced-motion:reduce) { .tab-drag-preview { transition:none!important; } }
+
+/* Keep the document mode dropdown from crowding the icon cluster beside it. */
+.headerbar #document-mode-group { margin-right: 6px; }
+@media(max-width:760px) { .headerbar #document-mode-group { margin-right: 3px; } }

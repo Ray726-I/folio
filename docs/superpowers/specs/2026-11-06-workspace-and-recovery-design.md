@@ -49,7 +49,7 @@ Optional “Save files automatically” ships after recovery is dependable. Debo
 - A compact tab strip sits below the existing top chrome, aligned to the content area. Theme colors, familiar filename icons, a subtle active accent, and the existing edited dot are sufficient decoration.
 - Show close controls on hover and keyboard focus; give touch users a persistent accessible close action. Do not require dragging for any action.
 - Truncate long names and distinguish duplicates with parent-folder labels. Full paths stay in tooltips and accessible names.
-- Horizontal overflow scrolls within the strip; an “All documents” menu provides a searchable list. Focus mode can hide the strip while keyboard switching still works.
+- Horizontal overflow scrolls within the strip. An always-visible “All documents” button with its own tab/search glyph opens the same searchable list (also `Ctrl+Shift+A`). Focus mode can hide the strip while keyboard switching still works.
 - Preserve undo/redo, source/edit/read mode, user Lock, selection, find state, scroll anchor and outline state per document. Tab switches must not clear history or flush another tab's pending edits into the active document.
 - Closing an edited tab asks Save / Discard / Cancel. Closing a window with several edited files uses one review sheet with per-file choices; never a cascade of dialogs. Cancel leaves all tabs intact. Successfully completed saves remain saved if a later operation fails.
 - Reopen closed tab and restore last session are separate actions from crash recovery. Restore layout and clean files quietly if enabled; present recovered dirty buffers for review. Handle missing files without losing drafts.
