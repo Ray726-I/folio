@@ -29,7 +29,7 @@ const {openEditor}=require('./editor-browser.cjs');
   await page.locator('#reader-scroll').focus();
   assert.equal(await page.locator('#reader-scroll').evaluate(node=>getComputedStyle(node).outlineStyle),'none','document scroller never has the large focus outline');
   await page.locator('#document-mode-button').focus();
-  assert.notEqual(await page.locator('#document-mode-button').evaluate(node=>getComputedStyle(node).outlineStyle),'none','keyboard focus on controls remains visible');
+  assert.notEqual(await page.locator('#document-mode-group').evaluate(node=>getComputedStyle(node).outlineStyle),'none','keyboard focus on controls remains visible');
   assert.deepEqual(session.errors,[]);
  }finally{await session.close();}
  console.log('PASS: code/source indentation stays in the editor and document focus has no frame');

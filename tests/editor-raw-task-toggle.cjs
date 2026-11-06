@@ -79,13 +79,13 @@ const source = `# Raw task projection
     assert.ok(calloutSource.includes('> - [ ] fenced fake'), 'fenced sample untouched');
 
     // Lock disables every raw checkbox and a forced click cannot edit.
-    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
+    await page.locator('#document-mode-menu-button').click(); await page.locator('#lock-document').click();
     assert.equal(await listBoxes.nth(1).isDisabled(), true, 'lock disables the raw list');
     assert.equal(await calloutBoxes.first().isDisabled(), true, 'lock disables the callout');
     const locked = await page.evaluate(() => current.content);
     await listBoxes.nth(1).click({ force: true }).catch(() => {});
     assert.equal(await page.evaluate(() => current.content), locked, 'click under lock preserves the document');
-    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
+    await page.locator('#document-mode-menu-button').click(); await page.locator('#lock-document').click();
     assert.equal(await listBoxes.nth(1).isDisabled(), false, 'unlock restores availability');
 
     assert.deepEqual(session.errors, []);

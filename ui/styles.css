@@ -3719,7 +3719,51 @@ dialog {
 .headerbar .subtitle { display:block; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; font-size:11px; }
 .header-end { flex:none; gap:7px; }
 .mode-button { min-height:32px; padding:5px 9px; font-size:12px; border:1px solid var(--line); border-radius:8px; }
-.mode-caret { width:13px; height:13px; margin-left:3px; }
+#document-mode-group { --mode-color:var(--fg); align-items:stretch; }
+#document-mode-group[data-mode="reading"] { --mode-color:var(--green); }
+#document-mode-group[data-mode="edit"] { --mode-color:var(--accent); }
+#document-mode-group[data-mode="source"] { --mode-color:var(--yellow); }
+#document-mode-group[data-mode="readonly"] { --mode-color:var(--muted); }
+#document-mode-group .mode-button {
+  border-radius:8px 0 0 8px;
+  border-right:0;
+  padding-right:5px;
+  color:var(--mode-color);
+  background:transparent
+}
+#document-mode-group .mode-button:hover:not(:disabled) {
+  color:var(--mode-color);
+  background:var(--hover)
+}
+.mode-caret-button {
+  display:grid;
+  place-items:center;
+  align-self:stretch;
+  width:18px;
+  min-height:0;
+  margin:0;
+  padding:0;
+  border:1px solid var(--line);
+  border-left:0;
+  border-radius:0 8px 8px 0;
+  background:transparent;
+  color:var(--muted);
+  cursor:pointer
+}
+#document-mode-group:hover .mode-button:not(:disabled),
+#document-mode-group:hover .mode-caret-button { background:var(--hover); }
+.mode-caret-button:hover { color:var(--fg); }
+.mode-caret-button:disabled { opacity:.4; cursor:default; }
+.mode-menu-caret { width:13px; height:13px; transition:transform .14s ease; }
+.mode-caret-button[aria-expanded="true"] .mode-menu-caret { transform:rotate(180deg); }
+#document-mode-group:has(.mode-button:focus-visible),
+#document-mode-group:has(.mode-caret-button:focus-visible) {
+  outline:2px solid var(--focus-ring);
+  outline-offset:2px;
+  border-radius:8px;
+}
+#document-mode-group .mode-button:focus-visible,
+#document-mode-group .mode-caret-button:focus-visible { outline:none; }
 .headerbar .save-state { display:inline-flex; align-items:center; gap:6px; padding:6px 11px; border-radius:7px; background:var(--selection); color:var(--fg); font-size:12px; }
 .save-state[data-state="saved"]::before { content:'✓'; color:var(--purple); }
 .save-state[data-state="saving"]::before { content:'◌'; }
@@ -4233,6 +4277,7 @@ body.focus-mode .app-menubar { display:none; }
   .permission-state { max-width:80px; }
   .mode-button { padding:5px 7px; }
   .mode-button>.icon:first-child { display:none; }
+  .mode-caret-button { width:18px; }
 }
 @media(max-width:480px) {
   .document-emblem { display:none; }
@@ -4298,12 +4343,14 @@ body.focus-mode .app-menubar { display:none; }
 .headerbar #save[data-state="error"] { color:var(--red); opacity:1; }
 
 @container document-toolbar (max-width:600px) {
-  .headerbar #document-mode-label,.headerbar .mode-caret { display:none; }
+  .headerbar #document-mode-label { display:none; }
   .headerbar .mode-button > .icon:first-child { display:block; }
   .headerbar .mode-button { width:28px; padding:3px; justify-content:center; }
+  .headerbar .mode-caret-button { width:18px; }
 }
 @media(pointer:coarse) {
   .headerbar .mode-button { min-width:44px; }
+  .mode-caret-button { width:44px; min-width:44px; }
 }
 
 /* Folder contents search occupies the same sidebar slot as Files and Outline. */
@@ -4346,6 +4393,9 @@ button.editor-trailing-input { display: block; text-align: left; cursor: text; }
 #help-dialog:not(.shortcuts) { width:min(480px,92vw); }
 #document-mode-menu .menu-item { position:relative; padding-left:28px; }
 #document-mode-menu .menu-item > .icon { position:absolute; left:7px; width:15px; height:15px; }
+#document-mode-menu [data-document-mode="reading"][aria-checked="true"] { color:var(--green); }
+#document-mode-menu [data-document-mode="edit"][aria-checked="true"] { color:var(--accent); }
+#document-mode-menu [data-document-mode="source"][aria-checked="true"] { color:var(--yellow); }
 
 .document-tabs { display:flex; align-items:center; border-bottom:1px solid var(--line); background:var(--bg); min-height:34px; padding:0 12px; }
 .document-tabs[hidden] { display:none; }

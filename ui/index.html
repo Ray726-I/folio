@@ -99,15 +99,16 @@
     <div class="window-title"><div class="window-title-line"><span id="document-name">Folio</span><span id="dirty-dot" class="dirty-dot" aria-label="Unsaved changes" hidden></span></div><div id="document-location" class="subtitle">Markdown, one file at a time</div></div>
     <div class="header-end">
       <span id="filesystem-permission" class="permission-state" hidden>Filesystem permissions · read-only</span>
-      <div id="document-mode-group" class="menu-group document-control" hidden>
-        <button id="document-mode-button" class="button ghost mode-button" aria-haspopup="menu" aria-expanded="false" aria-controls="document-mode-menu"><svg class="icon" aria-hidden="true"><use href="#i-read"/></svg><span id="document-mode-label">Reading mode</span><svg class="icon mode-caret" aria-hidden="true"><use href="#i-caret"/></svg></button>
+      <div id="document-mode-group" class="menu-group document-control" data-mode="reading" hidden>
+        <button id="document-mode-button" class="button ghost mode-button" type="button"><svg class="icon" aria-hidden="true"><use href="#i-read"/></svg><span id="document-mode-label">Read</span></button>
+        <button id="document-mode-menu-button" class="mode-caret-button" type="button" aria-label="Choose document mode" title="Choose document mode" aria-haspopup="menu" aria-expanded="false" aria-controls="document-mode-menu"><svg class="icon mode-menu-caret" aria-hidden="true"><use href="#i-caret"/></svg></button>
         <div id="document-mode-menu" class="menu menu-right" role="menu" aria-label="Document mode" hidden>
-          <button class="menu-item" role="menuitemradio" aria-checked="true" data-document-mode="reading">Reading mode</button>
-          <button class="menu-item" role="menuitemradio" aria-checked="false" data-document-mode="edit">Edit mode</button>
-          <button class="menu-item" role="menuitemradio" aria-checked="false" data-document-mode="source">Source mode</button>
+          <button class="menu-item" role="menuitemradio" aria-checked="true" data-document-mode="reading">Read</button>
+          <button class="menu-item" role="menuitemradio" aria-checked="false" data-document-mode="edit">Edit</button>
+          <button class="menu-item" role="menuitemradio" aria-checked="false" data-document-mode="source">Source</button>
           <div class="menu-separator" role="separator"></div>
           <button id="lock-document" class="menu-item" role="menuitemcheckbox" aria-checked="false" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg><span>Open as read-only</span></button>
-          <p class="menu-description">Reading prevents accidental edits. Read-only protects the document in every mode.</p>
+          <p class="menu-description">Read prevents accidental edits. Read-only protects the document in every mode.</p>
         </div>
       </div>
       <div class="menu-group document-control" id="view-group" hidden><button id="view-menu-button" class="icon-button" title="Document preferences" aria-label="Document preferences" aria-haspopup="dialog" aria-expanded="false" aria-controls="view-menu"><svg class="icon" aria-hidden="true"><use href="#i-view"/></svg></button>

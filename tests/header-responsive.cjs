@@ -26,7 +26,7 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.equal(await page.locator('#document-mode-label').isVisible(), false, 'compact modes use icons');
     for (const mode of ['reading', 'edit', 'source']) {
       await page.evaluate(mode => setDocumentMode(mode), mode);
-      assert.match(await page.locator('#document-mode-button').getAttribute('aria-label'), new RegExp(mode === 'reading' ? 'Reading' : mode === 'edit' ? 'Edit' : 'Source'));
+      assert.match(await page.locator('#document-mode-button').getAttribute('aria-label'), new RegExp(mode === 'reading' ? 'Read' : mode === 'edit' ? 'Edit' : 'Source'));
       assert.equal(await page.locator('#document-mode-button > svg').first().isVisible(), true);
     }
     await page.evaluate(() => { toggleDocumentReadOnly(); });

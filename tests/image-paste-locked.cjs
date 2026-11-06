@@ -8,7 +8,7 @@ const PNG = [...Buffer.from('89504e470d0a1a0a0000000d494844520000000100000001080
   try {
     const { page, errors } = session;
     await page.evaluate(() => setDocumentMode('edit'));
-    await page.locator('#document-mode-button').click();
+    await page.locator('#document-mode-menu-button').click();
     await page.locator('#lock-document').click();
     await page.waitForFunction(() => documentReadOnly === true && editor.isLocked());
     await page.evaluate(data => {

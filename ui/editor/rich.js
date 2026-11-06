@@ -3380,6 +3380,60 @@ export function createRichEditor(parent, options) {
     if (!guard) return -1;
     return target;
   }
+  // Live row/column reordering: keep the document untouched, but shift the
+  // actual cells aside under a transition so the insertion gap follows the
+  // pointer before the drop commits. The rules live in a scoped style element
+  // and the table carries the scope class; TableView ignores attributes on the
+  // table itself, so this cannot trigger an editor DOM repair mid-drag.
+  let liveReorderSerial = 0;
+  function resetLiveReorder(drag) {
+    drag?.liveStyle?.remove();
+    drag?.liveTable?.classList.remove(drag.liveClass);
+    if (drag) { drag.liveStyle = null; drag.liveTable = null; drag.liveClass = null; }
+  }
+  function paintLiveReorder(drag, target) {
+    if (!drag?.info?.wrapper?.isConnected) return;
+    if (!drag.liveStyle) {
+      const table = drag.info.wrapper.querySelector('table');
+      if (!table) return;
+      drag.liveClass = `folio-table-live-${++liveReorderSerial}`;
+      drag.liveTable = table;
+      table.classList.add(drag.liveClass);
+      drag.liveStyle = document.createElement('style');
+      drag.liveStyle.setAttribute('data-folio-table-live', '');
+      document.head.append(drag.liveStyle);
+    }
+    const base = `.${drag.liveClass} tbody > tr > * { transition:transform .16s cubic-bezier(.2,.7,.3,1); will-change:transform }\n`
+      + `@media(prefers-reduced-motion:reduce) { .${drag.liveClass} tbody > tr > * { transition:none } }`;
+    if (drag.outline) drag.outline.hidden = target >= 0;
+    if (target < 0) { drag.liveStyle.textContent = base; return; }
+    const stops = [drag.kind === 'row' ? drag.edges.top : drag.edges.left]
+      .concat(drag.kind === 'row' ? drag.edges.rows : drag.edges.cols);
+    const sourceSize = stops[drag.from + 1] - stops[drag.from];
+    const movingDown = drag.slot > drag.from + 1;
+    const movingUp = drag.slot < drag.from;
+    const rules = [base];
+    const count = drag.kind === 'row' ? drag.info.height : drag.info.width;
+    for (let index = 0; index < count; index++) {
+      let shift = 0;
+      if (drag.kind === 'row') {
+        if (movingDown && index > drag.from && index < drag.slot) shift = -sourceSize;
+        else if (movingUp && index >= drag.slot && index < drag.from) shift = sourceSize;
+      } else {
+        if (movingDown && index > drag.from && index < drag.slot) shift = -sourceSize;
+        else if (movingUp && index >= drag.slot && index < drag.from) shift = sourceSize;
+      }
+      if (!shift && index !== drag.from) continue;
+      const declarations = [];
+      if (shift) declarations.push(drag.kind === 'row' ? `transform:translateY(${shift}px)` : `transform:translateX(${shift}px)`);
+      if (index === drag.from) declarations.push('visibility:hidden');
+      const selector = drag.kind === 'row'
+        ? `.${drag.liveClass} tbody > tr:nth-child(${index + 1}) > *`
+        : `.${drag.liveClass} tbody > tr > *:nth-child(${index + 1})`;
+      rules.push(`${selector} { ${declarations.join(';')} }`);
+    }
+    drag.liveStyle.textContent = rules.join('\n');
+  }
   function paintDropHandle(target) {
     try {
       for (const btn of handlesLayer.querySelectorAll('.folio-table-handle')) {
@@ -3416,7 +3470,7 @@ export function createRichEditor(parent, options) {
     const edge = drag.kind === 'row' ? drag.edges.top : drag.edges.left;
     drag.slot = slotFromCoord(boundaries, edge, coord);
     const target = moveTargetFor(drag);
-    if (target < 0 || !drag.info.wrapper.isConnected) { dropLine.hidden = true; paintDropHandle(-1); return; }
+    if (target < 0 || !drag.info.wrapper.isConnected) { dropLine.hidden = true; paintDropHandle(-1); paintLiveReorder(drag, -1); return; }
     const wrapRect = drag.edges;
     if (drag.kind === 'row') {
       const stops = [drag.edges.top].concat(drag.edges.rows);
@@ -3437,11 +3491,13 @@ export function createRichEditor(parent, options) {
     }
     dropLine.hidden = false;
     paintDropHandle(target);
+    paintLiveReorder(drag, target);
   }
   function endHandleDrag(commit) {
     const drag = handleDrag;
     if (drag?.frame) cancelAnimationFrame(drag.frame);
     if (commit && drag?.pending) paintHandleDrag(drag.pending);
+    resetLiveReorder(drag);
     handleDrag = null;
     dropLine.hidden = true;
     paintDropHandle(-1);

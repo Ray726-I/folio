@@ -57,7 +57,7 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.match(await page.evaluate(() => current.content), /\| x \| y \|\n\nAfter table/);
     await page.keyboard.press('Control+z');
     await page.waitForFunction(text => current.content === text, original);
-    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
+    await page.locator('#document-mode-menu-button').click(); await page.locator('#lock-document').click();
     assert.equal(await page.locator('.editor-trailing-input').isDisabled(), true, 'the trailing input respects document lock');
     assert.deepEqual(session.errors, []);
   } finally { await session.close(); }

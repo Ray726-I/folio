@@ -5,7 +5,7 @@ const { openEditor } = require('./editor-browser.cjs');
   const session = await openEditor('# H\n\ntext\n');
   try {
     const { page } = session;
-    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
+    await page.locator('#document-mode-menu-button').click(); await page.locator('#lock-document').click();
     assert.equal(await page.locator('#editor-lock-note').isHidden(), false);
     await page.evaluate(() => openFolderPath('/tmp/empty-folder'));
     assert.equal(await page.locator('#editor-lock-note').isHidden(), true);

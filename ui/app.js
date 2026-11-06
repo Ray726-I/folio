@@ -1414,7 +1414,7 @@ async function requestClose() { return enqueue(async () => {
 
 const SAMPLE = `# A quiet place for your words
 
-Folio opens **individual Markdown files**. Read comfortably, edit directly, and save right back to disk. Use the document dropdown to choose **Reading mode**, **Edit mode**, or **Source mode**. Turn on **Open as read-only** to protect the file in every mode.
+Folio opens **individual Markdown files**. Read comfortably, edit directly, and save right back to disk. Use the document dropdown to choose **Read**, **Edit**, or **Source**. Turn on **Open as read-only** to protect the file in every mode.
 
 ## Make yourself at home
 

@@ -25,7 +25,7 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
     await page.keyboard.press('Enter');
     assert.match(await markdown.textContent(), /Inline/);
     await page.keyboard.press('Escape');
-    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
+    await page.locator('#document-mode-menu-button').click(); await page.locator('#lock-document').click();
     assert.equal(await page.locator('.math-inline .math-formula').first().getAttribute('aria-disabled'), 'true');
     assert.deepEqual(session.errors, []);
     console.log('PASS: formula source edits locally in the formatted editor with exact source and undo.');

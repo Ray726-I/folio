@@ -34,11 +34,15 @@ function syncDocumentMode() {
   if (documentMode === 'source' && editor?.isSource?.()) restoreSourceCaret();
   $('document-source').hidden = !current.active || documentMode !== 'source';
   $('preview').hidden = current.active && documentMode === 'source';
-  $('document-mode-label').textContent = documentReadOnly ? 'Read-only' : { reading: 'Reading mode', edit: 'Edit mode', source: 'Source mode' }[documentMode];
+  const modeButton = $('document-mode-button');
+  $('document-mode-label').textContent = documentReadOnly ? 'Read-only' : { reading: 'Read', edit: 'Edit', source: 'Source' }[documentMode];
   const modeLabel = $('document-mode-label').textContent;
-  $('document-mode-button').setAttribute('aria-label', `${modeLabel} — Switch document mode`);
-  $('document-mode-button').title = `${modeLabel} — Switch document mode`;
-  $('document-mode-button').querySelector('use').setAttribute('href', protectedFile || documentReadOnly ? '#i-lock' : documentMode === 'reading' ? '#i-read' : documentMode === 'source' ? '#i-code' : '#i-edit');
+  const nextLabel = { reading: 'Read', edit: 'Edit', source: 'Source' }[nextDocumentMode()];
+  $('document-mode-group').dataset.mode = documentReadOnly ? 'readonly' : documentMode;
+  modeButton.disabled = documentReadOnly;
+  modeButton.setAttribute('aria-label', documentReadOnly ? 'Read-only — choose a mode from the menu' : `${modeLabel} — switch to ${nextLabel}`);
+  modeButton.title = documentReadOnly ? 'Read-only — choose a mode from the menu' : `${modeLabel} — switch to ${nextLabel}`;
+  modeButton.querySelector('use').setAttribute('href', protectedFile || documentReadOnly ? '#i-lock' : documentMode === 'reading' ? '#i-read' : documentMode === 'source' ? '#i-code' : '#i-edit');
   $('filesystem-permission').hidden = !current.active || !protectedFile;
   for (const button of document.querySelectorAll('[data-document-mode]')) {
     button.setAttribute('aria-checked', String(button.dataset.documentMode === documentMode));
@@ -63,6 +67,12 @@ function syncDocumentMode() {
     if (action === 'forward') button.disabled = documentNavigationIndex >= documentNavigation.length - 1;
   });
 }
+function nextDocumentMode() {
+  const modes = current.writable === false ? ['reading', 'source'] : ['reading', 'edit', 'source'];
+  const index = modes.indexOf(documentMode);
+  return modes[(index + 1) % modes.length] || 'edit';
+}
+function cycleDocumentMode() { setDocumentMode(nextDocumentMode()); }
 function setDocumentMode(next) {
   if (focusedPane === 'companion') return;
   if (!current.active || transitionLocked || !['reading', 'edit', 'source'].includes(next)) return;
@@ -431,7 +441,8 @@ async function renameDocument() {
 }
 function initializeChrome() {
   for (const id of ['file', 'edit', 'view', 'go', 'help']) setupMenu('menu-' + id + '-button', id === 'file' ? 'open-menu' : id === 'view' ? 'application-view-menu' : id + '-menu');
-  setupMenu('document-mode-button', 'document-mode-menu'); setupMenu('document-more-button', 'document-more-menu');
+  $('document-mode-button').onclick = cycleDocumentMode;
+  setupMenu('document-mode-menu-button', 'document-mode-menu'); setupMenu('document-more-button', 'document-more-menu');
   $('lock-document').onclick = toggleDocumentReadOnly;
   document.querySelectorAll('[data-document-mode]').forEach(button => button.onclick = () => setDocumentMode(button.dataset.documentMode));
   document.querySelectorAll('[data-app-action]').forEach(button => button.onclick = () => runAppAction(button.dataset.appAction));

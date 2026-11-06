@@ -260,7 +260,7 @@ function pastePlainText(page, text, html = null) {
       const { page, errors } = session;
       const from = source.indexOf('Prose A');
       await selectSource(page, from, from + 'Prose A'.length);
-      await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
+      await page.locator('#document-mode-menu-button').click(); await page.locator('#lock-document').click();
       await page.waitForFunction(() => editor.isLocked());
       await pastePlainText(page, 'BLOCKED');
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
@@ -268,7 +268,7 @@ function pastePlainText(page, text, html = null) {
       await page.keyboard.type('X');
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
       assert.equal(await content(page), source, 'Lock must reject source-first typing');
-      await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
+      await page.locator('#document-mode-menu-button').click(); await page.locator('#lock-document').click();
       await page.waitForFunction(() => !editor.isLocked());
       assert.deepEqual(errors, []);
       console.log('PASS: Lock blocks logical source-first mutations.');

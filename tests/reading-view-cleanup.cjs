@@ -272,7 +272,7 @@ async function geometry(page) {
     assert.ok(await page.evaluate(() => document.querySelector('.extension-preview')?.textContent.includes('Use')), 'projection re-renders after the round trip');
 
     // 6. Read-only mode keeps the same reading selection behavior.
-    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
+    await page.locator('#document-mode-menu-button').click(); await page.locator('#lock-document').click();
     assert.equal(await page.evaluate(() => document.querySelector('.extension-edit').disabled), true, 'edit action is disabled while locked');
     const lockedPoints = await geometry(page);
     await page.mouse.move(lockedPoints.from.x, lockedPoints.from.y);
@@ -284,7 +284,7 @@ async function geometry(page) {
     assert.ok(lockedSelection.includes('Before word here.') && lockedSelection.includes('Press Use to run and stop here.'),
       `locked cross selection still spans rendered text, got ${JSON.stringify(lockedSelection.slice(0, 80))}`);
     assert.equal(await page.evaluate(() => current.content), source, 'locked reading selection never mutates the document');
-    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
+    await page.locator('#document-mode-menu-button').click(); await page.locator('#lock-document').click();
     assert.equal(await page.evaluate(() => document.querySelector('.extension-edit').disabled), false, 'edit action returns after unlock');
 
     assert.deepEqual(session.errors, []);

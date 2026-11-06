@@ -6,7 +6,7 @@ const { openEditor } = require('./editor-browser.cjs');
   try {
     const { page, errors } = session;
     const gap = await page.evaluate(() => {
-      const mode = document.querySelector('#document-mode-button').getBoundingClientRect();
+      const mode = document.querySelector('#document-mode-group').getBoundingClientRect();
       const view = document.querySelector('#view-menu-button').getBoundingClientRect();
       return view.left - mode.right;
     });

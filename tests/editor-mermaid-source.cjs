@@ -29,7 +29,7 @@ const { openEditor } = require('./editor-browser.cjs');
   await page.keyboard.press('Escape');
   await page.locator('.mermaid-host svg').waitFor();
   assert.equal(await page.locator('.mermaid-host summary').count(), 0);
-  await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
+  await page.locator('#document-mode-menu-button').click(); await page.locator('#lock-document').click();
   await page.locator('.mermaid-host svg').click();
   assert.equal(await page.locator('.folio-source-edit').count(), 0, 'lock keeps diagrams rendered');
   assert.equal(await page.evaluate(()=>current.content), source);

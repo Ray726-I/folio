@@ -20,7 +20,7 @@ const { openEditor } = require('./editor-browser.cjs');
     await info.fill('javascript');
     await page.locator('#preview .code-surface').click();
     await page.waitForFunction(() => current.content.startsWith('```javascript\n'), null, { timeout: 3000 });
-    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
+    await page.locator('#document-mode-menu-button').click(); await page.locator('#lock-document').click();
     assert.equal(await page.getByRole('textbox', { name: 'Code fence info' }).isDisabled(), true);
     assert.deepEqual(session.errors, []);
     console.log('PASS: fence info is editable in place and preserves source, undo and lock.');
