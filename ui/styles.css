@@ -54,6 +54,7 @@
   --muted:color-mix(in srgb,var(--fg) 70%,var(--bg));
   --line:color-mix(in srgb,var(--fg) 13%,var(--bg));
   --hover:color-mix(in srgb,var(--fg) 7%,var(--bg));
+  --focus-ring:color-mix(in srgb,var(--fg) 42%,transparent);
   --text-size:19px;
   --gutter:clamp(16px,4vw,56px);
   --reading-width:min(calc(720px + var(--text-size)*9),calc(68ch + var(--gutter) + var(--gutter)));
@@ -80,7 +81,7 @@
 .folio-table-add { position:fixed; inset:auto; z-index:29; display:grid; place-items:center; width:28px; height:28px; margin:0; padding:0; border:0; border-radius:4px; background:transparent; color:var(--muted); cursor:pointer; user-select:none; -webkit-user-select:none; font:500 20px/1 var(--font-ui); opacity:.8; }
 .folio-table-add[hidden] { display:none; }
 .folio-table-add:hover:not(:disabled),.folio-table-add:focus-visible { opacity:1; color:var(--fg); }
-.folio-table-add:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.folio-table-add:focus-visible { outline:2px solid var(--focus-ring); outline-offset:2px; }
 .folio-table-add:disabled { opacity:.35; cursor:default; }
 .folio-table-handles { position:fixed; inset:0; z-index:28; margin:0; padding:0; pointer-events:none; }
 .folio-table-handles[hidden] { display:none; }
@@ -89,7 +90,7 @@
 .folio-table-handle.drop-target { opacity:1; color:var(--accent-ink,#fff); background:var(--accent); border-color:transparent; }
 .folio-table-handles:hover .folio-table-handle,.folio-table-handle:hover,.folio-table-handle:focus-visible,.folio-table-handle.dragging { opacity:1; }
 .folio-table-handle:hover { color:var(--fg); background:var(--hover); }
-.folio-table-handle:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.folio-table-handle:focus-visible { outline:2px solid var(--focus-ring); outline-offset:2px; }
 .folio-table-handle:disabled { opacity:0; cursor:default; }
 .folio-table-grip { display:block; font:500 15px/1 var(--font-ui); pointer-events:none; }
 .folio-table-drop-line { position:fixed; inset:auto; z-index:31; margin:0; padding:0; border:0; border-radius:2px; background:var(--accent); pointer-events:none; }
@@ -105,7 +106,7 @@
 .folio-table-menu:focus { outline:none; }
 .folio-table-menu button { display:flex; align-items:center; gap:12px; width:100%; min-height:32px; box-sizing:border-box; padding:6px 10px; border:0; border-radius:4px; background:transparent; color:var(--fg); font:500 12.5px/1.4 var(--font-ui); text-align:left; white-space:nowrap; cursor:pointer; }
 .folio-table-menu button:hover:not(:disabled) { background:var(--hover); }
-.folio-table-menu button:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; background:var(--hover); }
+.folio-table-menu button:focus-visible { outline:2px solid var(--focus-ring); outline-offset:-2px; background:var(--hover); }
 .folio-table-menu button:disabled { opacity:.4; cursor:default; }
 .folio-document-menu hr { margin:4px 6px; border:0; border-top:1px solid var(--line); }
 .folio-table-menu button[data-table-menu-danger="true"] { color:var(--red); }
@@ -140,7 +141,7 @@
 .folio-heading-source { display:inline-block; box-sizing:content-box; width:auto; max-width:100%; margin:0 .45em 0 0; padding:1px 6px; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--muted); font:500 .72em/1.5 var(--font-mono); vertical-align:baseline; cursor:text; }
 .folio-heading-source:hover { border-color:var(--line); color:var(--fg); background:var(--hover); }
 .folio-heading-source:focus { outline:none; border-color:var(--accent); color:var(--accent); background:color-mix(in srgb,var(--accent) 9%,var(--bg)); }
-.folio-heading-source:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+.folio-heading-source:focus-visible { outline:2px solid var(--focus-ring); outline-offset:1px; }
 .folio-heading-source:disabled { opacity:.45; cursor:default; }
 /* While the inline source input is open, the rendered heading text it
    mirrors is hidden so the line reads exactly once, as pure Markdown.
@@ -170,7 +171,7 @@
 .folio-slash-row { display:flex; align-items:center; gap:9px; width:100%; box-sizing:border-box; min-height:30px; margin:0; padding:4px 8px; border:0; border-radius:7px; background:transparent; color:var(--fg); font:500 12.5px/1.25 var(--font-ui); text-align:left; white-space:nowrap; cursor:pointer; transition:background-color .1s ease,color .1s ease; }
 .folio-slash-row:hover { background:color-mix(in srgb,var(--fg) 5%,transparent); }
 .folio-slash-row[aria-selected="true"],.folio-slash-row[aria-expanded="true"] { background:var(--slash-wash); }
-.folio-slash-row:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+.folio-slash-row:focus-visible { outline:2px solid var(--focus-ring); outline-offset:-2px; }
 .folio-slash-empty { padding:12px 14px; color:var(--muted); font-size:12px; }
 .folio-slash-icon { display:grid; place-items:center; flex:none; width:22px; height:22px; color:var(--muted); }
 .folio-slash-icon svg { width:16px; height:16px; }
@@ -196,7 +197,7 @@
 .folio-slash-subtitle { padding-left:4px; color:var(--muted); font:600 10.5px/1.2 var(--font-ui); letter-spacing:.01em; }
 .folio-slash-back { display:grid; place-items:center; flex:none; width:22px; height:22px; margin:0; padding:0; border:0; border-radius:6px; background:transparent; color:var(--muted); cursor:pointer; }
 .folio-slash-back:hover { background:color-mix(in srgb,var(--fg) 6%,transparent); color:var(--fg); }
-.folio-slash-back:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+.folio-slash-back:focus-visible { outline:2px solid var(--focus-ring); outline-offset:1px; }
 .folio-slash-back svg { width:15px; height:15px; }
 .folio-slash-back[hidden] { display:none; }
 /* Narrow windows: a flyout would leave the viewport, so the submenu takes
@@ -288,7 +289,7 @@
 }
 
 .markdown .task-item:has(>input:focus-visible)::before {
-  outline:2px solid var(--accent);
+  outline:2px solid var(--focus-ring);
   outline-offset:2px
 }
 
@@ -404,13 +405,13 @@
 .math-error,.source-inline { color:var(--red); }
 .code-container { position:relative; }
 .code-markdown-source { display:block; box-sizing:border-box; width:100%; min-height:5em; resize:vertical; padding:12px; border:0; background:var(--surface); color:var(--fg); font:inherit; font-family:var(--font-mono); line-height:1.6; }
-.code-markdown-source:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.code-markdown-source:focus-visible { outline:2px solid var(--focus-ring); outline-offset:2px; }
 .inline-markdown-source { box-sizing:border-box; width:min(100%,50ch); min-height:2em; padding:3px 4px; border:0; resize:vertical; background:var(--surface); color:var(--fg); font:inherit; font-family:var(--font-mono); }
-.inline-markdown-source:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.inline-markdown-source:focus-visible { outline:2px solid var(--focus-ring); outline-offset:2px; }
 .link-markdown-source { position:fixed; z-index:40; width:min(50ch,calc(100vw - 32px)); }
 .code-fence-info { position:absolute; z-index:2; top:8px; right:10px; width:12ch; max-width:40%; padding:2px 4px; border:1px solid transparent; border-radius:3px; background:transparent; color:var(--muted); text-align:right; font:500 11px/1.4 var(--font-mono); }
 .code-fence-info:hover { background:var(--hover); color:var(--fg); }
-.code-fence-info:focus-visible { outline:2px solid var(--accent); outline-offset:1px; background:var(--panel); color:var(--fg); }
+.code-fence-info:focus-visible { outline:2px solid var(--focus-ring); outline-offset:1px; background:var(--panel); color:var(--fg); }
 .code-container>.code-highlight { position:absolute; inset:0; z-index:0; margin:0; overflow:hidden; pointer-events:none; user-select:none; }
 .code-container>.code-surface { position:relative; z-index:1; }
 /* Only hide the editable glyphs once a sanitized token layer is ready. Until
@@ -578,7 +579,7 @@ button:disabled {
 }
 
 button:focus-visible,input:focus-visible {
-  outline:2px solid var(--accent);
+  outline:2px solid var(--focus-ring);
   outline-offset:2px
 }
 
@@ -998,7 +999,7 @@ kbd {
   text-underline-offset:3px
 }
 .markdown a:focus-visible {
-  outline:2px solid var(--accent);
+  outline:2px solid var(--focus-ring);
   outline-offset:2px;
   border-radius:2px
 }
@@ -1076,10 +1077,10 @@ kbd {
 .markdown blockquote {
   margin:1.4em 0;
   border-left:3px solid var(--accent);
-  padding:8px 18px;
+  padding:10px 18px;
   color:var(--muted);
   background:var(--hover);
-  border-radius:0 8px 8px 0
+  border-radius:10px
 }
 
 .markdown blockquote>:last-child {
@@ -1406,7 +1407,7 @@ dialog::backdrop {
 }
 
 .command-item:focus-visible {
-  outline:2px solid var(--accent);
+  outline:2px solid var(--focus-ring);
   outline-offset:-2px
 }
 
@@ -1517,7 +1518,7 @@ dialog::backdrop {
 }
 
 .palette-back:focus-visible {
-  outline:2px solid var(--accent);
+  outline:2px solid var(--focus-ring);
   outline-offset:2px
 }
 
@@ -1799,7 +1800,7 @@ body.focus-mode #file-browser,body.focus-mode .sidebar-resizer {
 }
 
 .markdown .preview-editable:hover,.markdown .preview-editable:focus-visible {
-  outline-color:color-mix(in srgb,var(--accent) 70%,transparent)
+  outline-color:var(--focus-ring)
 }
 
 .file-dialog {
@@ -1906,7 +1907,7 @@ body.focus-mode #file-browser,body.focus-mode .sidebar-resizer {
 
 .markdown .math-block {
   margin:1.3em 0;
-  padding:14px 18px;
+  padding:10px 18px;
   border:1px solid var(--line);
   background:color-mix(in srgb,var(--surface) 55%,var(--bg));
   border-radius:10px;
@@ -1919,7 +1920,7 @@ body.focus-mode #file-browser,body.focus-mode .sidebar-resizer {
 
 .markdown .mermaid-host {
   margin:1.4em 0;
-  padding:8px 0;
+  padding:10px 0 14px;
   border:0;
   background:transparent;
   overflow-x:auto
@@ -2025,7 +2026,7 @@ body.focus-mode #file-browser,body.focus-mode .sidebar-resizer {
 
 .markdown .markdown-alert {
   border-left:3px solid var(--accent);
-  border-radius:0 8px 8px 0;
+  border-radius:10px;
   background:var(--hover)
 }
 
@@ -2579,6 +2580,14 @@ body {
   color:var(--fg)
 }
 
+/* Small icon controls keep a keyboard focus cue without a colored frame that
+   would remain around a control after it was used. */
+.icon-button:focus-visible {
+  outline:none;
+  background:color-mix(in srgb,var(--accent) 16%,transparent);
+  color:var(--fg)
+}
+
 .icon-button[aria-pressed="true"] {
   color:var(--accent);
   background:color-mix(in srgb,var(--accent) 12%,var(--surface))
@@ -2739,8 +2748,9 @@ body {
 }
 
 .navigation-rail button:focus-visible {
-  outline:2px solid var(--accent);
-  outline-offset:2px
+  outline:none;
+  background:color-mix(in srgb,var(--accent) 16%,transparent);
+  color:var(--fg)
 }
 
 body.focus-mode .navigation-rail { display:none; }
@@ -2867,8 +2877,15 @@ body.focus-mode .navigation-rail { display:none; }
 }
 
 .outline-link:focus-visible {
-  outline:2px solid var(--accent);
+  outline:2px solid var(--focus-ring);
   outline-offset:-2px
+}
+
+/* The active row already carries the accent wash; a second outline around it
+   reads as a heavy border around "where I was" rather than useful focus. */
+.outline-row .outline-link.active:focus-visible,
+.outline-row .outline-link.active-ancestor:focus-visible {
+  outline:none
 }
 
 /* Keep outline rows steady while long titles truncate with an ellipsis. */
@@ -2986,7 +3003,7 @@ body.focus-mode .navigation-rail { display:none; }
 }
 
 .folder-entry:focus-visible {
-  outline:2px solid var(--accent);
+  outline:2px solid var(--focus-ring);
   outline-offset:-2px
 }
 
@@ -3691,7 +3708,7 @@ dialog {
 .app-menubar .menu-item:hover:not(:disabled),
 .app-menubar .menu-item:focus-visible,
 .app-menubar .menu-item[aria-expanded="true"] { background:var(--hover); }
-.app-menubar .menu-item:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+.app-menubar .menu-item:focus-visible { outline:2px solid var(--focus-ring); outline-offset:-2px; }
 .app-menubar .menu-separator { margin:4px 6px; }
 .app-menubar .menu-item .submenu-chevron { position:static; width:12px; height:12px; margin-left:auto; }
 .headerbar { min-height:62px; display:flex; padding:8px 22px; gap:12px; z-index:30; }
@@ -3878,9 +3895,9 @@ dialog {
 }
 
 .preference-select select:focus-visible {
-  outline:2px solid var(--accent);
-  outline-offset:1px;
-  border-color:transparent
+  outline:none;
+  border-color:color-mix(in srgb,var(--fg) 36%,transparent);
+  background:var(--preference-hover)
 }
 
 .preference-chevron {
@@ -3941,7 +3958,7 @@ dialog {
 }
 
 .preference-slider input[type="range"]:focus-visible {
-  outline:2px solid var(--accent);
+  outline:2px solid var(--focus-ring);
   outline-offset:3px;
   border-radius:99px
 }
@@ -4000,7 +4017,7 @@ dialog {
 }
 
 .preference-switch:focus-visible {
-  outline:2px solid var(--accent);
+  outline:2px solid var(--focus-ring);
   outline-offset:2px
 }
 
@@ -4030,7 +4047,7 @@ dialog {
 }
 
 .preference-disclosure summary:focus-visible {
-  outline:2px solid var(--accent);
+  outline:2px solid var(--focus-ring);
   outline-offset:-2px;
   border-radius:6px
 }
@@ -4075,7 +4092,7 @@ dialog {
 }
 
 .preference-action:focus-visible {
-  outline:2px solid var(--accent);
+  outline:2px solid var(--focus-ring);
   outline-offset:-2px
 }
 
@@ -4140,7 +4157,7 @@ dialog {
 }
 
 .preference-foot-action:focus-visible {
-  outline:2px solid var(--accent);
+  outline:2px solid var(--focus-ring);
   outline-offset:-2px
 }
 
@@ -4348,7 +4365,7 @@ button.editor-trailing-input { display: block; text-align: left; cursor: text; }
 .focus-mode .document-tabs { display:none; }
 @media (hover:none) { .tab-close { opacity:1; } }
 
-.document-tab:focus-visible { outline:2px solid var(--accent); outline-offset:-3px; }
+.document-tab:focus-visible { outline:2px solid var(--focus-ring); outline-offset:-3px; }
 main { display:flex; flex-direction:column; }
 .document-view { flex:1; min-height:0; height:auto; }
 .document-tabs,#recovery-warning { flex-shrink:0; }
@@ -4359,7 +4376,7 @@ main { display:flex; flex-direction:column; }
 .tree-name-form { display:grid; gap:5px; padding:8px 10px; font-size:12px; }
 .tree-name-form label { color:var(--muted); }
 .tree-name-form input,.tree-move-body input { width:100%; box-sizing:border-box; padding:6px 8px; border:1px solid var(--line); border-radius:5px; background:var(--bg); color:var(--fg); font:inherit; }
-.tree-name-form input:focus-visible,.tree-move-body input:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+.tree-name-form input:focus-visible,.tree-move-body input:focus-visible { outline:2px solid var(--focus-ring); outline-offset:1px; }
 #tree-name-error,#tree-move-error { color:var(--red); margin:0; font-size:12px; }
 #tree-name-error:empty,#tree-move-error:empty { display:none; }
 .tree-move-dialog { max-width:min(480px,calc(100vw - 32px)); }
@@ -4391,7 +4408,7 @@ main { display:flex; flex-direction:column; }
 .document-tabs .top-rail { width:44px; height:40px; flex:none; display:grid; place-items:center; background:var(--surface); border-right:1px solid var(--line); }
 .top-rail button { width:34px; height:34px; display:grid; place-items:center; border:0; border-radius:6px; background:transparent; color:var(--muted); cursor:pointer; }
 .top-rail button:hover { background:var(--hover); color:var(--fg); }
-.top-rail button:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+.top-rail button:focus-visible { outline:none; background:color-mix(in srgb,var(--accent) 16%,transparent); color:var(--fg); }
 .top-rail .icon { width:18px; height:18px; }
 .document-tabs .headerbar { container-type:normal; flex:none; min-height:40px; padding:0 10px; border:0; background:transparent; }
 .document-tabs .header-start,.document-tabs .window-title { display:none; }

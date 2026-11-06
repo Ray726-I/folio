@@ -21,6 +21,8 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.mouse.move(0, 0);
     await expand.focus();
     assert.equal(await expand.evaluate(button => getComputedStyle(button).opacity), '1', 'keyboard focus reveals the action');
+    assert.equal(await expand.evaluate(button => getComputedStyle(button).outlineStyle), 'none', 'the expand control does not draw a colored frame');
+    assert.notEqual(await expand.evaluate(button => getComputedStyle(button).backgroundColor), 'rgba(0, 0, 0, 0)', 'focus keeps a quiet fill');
 
     // The editor deliberately retains an old SVG during a pending re-render.
     // Only the successful current projection may be expanded.
@@ -53,6 +55,8 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.equal(await dialog.locator('svg').evaluate(svg => svg.getAttribute('aria-labelledby') === svg.querySelector('title').id), true, 'accessible name references follow the cloned IDs');
     assert.equal(await dialog.locator('path[marker-end]').evaluate(node => node.getAttribute('marker-end') === `url(#${node.closest('svg').querySelector('marker').id})`), true, 'SVG fragment references follow cloned IDs');
     assert.equal(await dialog.getByRole('button', { name: 'Close diagram' }).evaluate(node => node === document.activeElement), true);
+    assert.equal(await dialog.getByRole('button', { name: 'Close diagram' }).evaluate(node => getComputedStyle(node).outlineStyle), 'none', 'the viewer close button does not draw a colored frame');
+    assert.notEqual(await dialog.getByRole('button', { name: 'Close diagram' }).evaluate(node => getComputedStyle(node).backgroundColor), 'rgba(0, 0, 0, 0)', 'the focused viewer button keeps a quiet fill');
     assert.equal(await page.evaluate(() => calls.filter(call => call.command === 'mermaid_render_request').length), renders, 'opening does not render again');
     const viewport = dialog.getByRole('region', { name: 'Diagram. Use arrow keys to scroll.' });
     assert.equal(await dialog.locator('.diagram-viewer-zoom').textContent(), '100%', 'large diagrams open at a readable size');

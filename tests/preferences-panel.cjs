@@ -16,6 +16,12 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.equal(await page.getByRole('dialog', { name: 'Document preferences' }).count(), 1);
     assert.equal(await page.locator('#view-menu-button').getAttribute('aria-expanded'), 'true');
     assert.equal(await page.evaluate(() => document.activeElement.id), 'preference-font', 'opening focuses the first preference');
+    const fontFocus = await page.evaluate(() => {
+      const style = getComputedStyle(document.getElementById('preference-font'));
+      return { outline: style.outlineStyle, border: style.borderTopColor };
+    });
+    assert.equal(fontFocus.outline, 'none', 'the focused preference field does not draw a colored frame');
+    assert.notEqual(fontFocus.border, 'rgba(0, 0, 0, 0)', 'the focused field keeps a neutral edge');
     assert.equal(await page.evaluate(() => document.querySelectorAll('#preferences-title').length), 1);
 
     // Look: interface typography, mono readouts, real elevation, no platform
