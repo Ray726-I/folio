@@ -121,7 +121,7 @@ function mermaidThemeCSS() {
   // Mermaid 11 derives ER attribute rows from the primary colour's lightness
   // minus 5% and 10%, so dark themes paint near-black bands inside a themed
   // entity. The rows carry no class, only that inline hsl() fill.
-  return `.node[id*="-entity-"] path[fill^="hsl("] { fill: ${cardSoft} !important; }`;
+  return `[id^="entity-"] path[fill^="hsl("] { fill: ${cardSoft} !important; }`;
 }
 function mermaidThemeVariables() {
   const { background, dark, card, cardSoft } = diagramSurface();
