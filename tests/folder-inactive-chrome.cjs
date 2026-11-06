@@ -8,7 +8,6 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
     assert.equal(await page.locator('#editor-lock-note').isHidden(), false);
     await page.evaluate(() => openFolderPath('/tmp/empty-folder'));
-    assert.equal(await page.locator('#format-tools').isHidden(), true);
     assert.equal(await page.locator('#editor-lock-note').isHidden(), true);
     assert.equal(await page.locator('#editor-notice').isHidden(), true);
     // Without a document the rail keeps Contents and search out of reach and shows Files.
@@ -20,11 +19,9 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.waitForFunction(() => current.active && editor);
     assert.equal(await page.getByRole('button', { name: 'Contents', exact: true }).isEnabled(), true);
     assert.equal(await page.locator('[data-rail-action="find"]').isEnabled(), true);
-    assert.equal(await page.locator('#format-tools').isHidden(), false, 'reopened documents begin in Edit mode');
     await page.evaluate(() => setDocumentMode('edit'));
-    assert.equal(await page.locator('#format-tools').isHidden(), false);
     assert.equal(await page.evaluate(() => editor.isLocked()), false, 'new document retains existing per-document lock policy');
     assert.deepEqual(session.errors, []);
-    console.log('PASS: empty-folder chrome clears stale lock and restores formatting for a reopened document.');
+    console.log('PASS: empty-folder chrome clears stale lock and restores controls for a reopened document.');
   } finally { await session.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

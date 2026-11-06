@@ -52,7 +52,6 @@ function syncDocumentMode() {
   $('lock-document').title = 'Prevent modifications in every mode';
   $('editor-lock-note').hidden = !current.active || !documentReadOnly || protectedFile;
   $('editor-lock-note').textContent = 'Read-only · You can select, copy, follow links and inspect the source. Turn off read-only to make changes.';
-  $('format-tools').hidden = !formatToolbarVisible || !current.active || documentMode !== 'edit';
   $('replace-one').disabled = $('replace-all').disabled = !documentWritable() || documentMode === 'reading' || !editor;
   document.querySelectorAll('[data-app-action]').forEach(button => {
     const action = button.dataset.appAction;
@@ -307,7 +306,7 @@ function initializePreferencesPanel() {
   $('preferences-reset').onclick = () => {
     for (const key of ['openInEditMode', 'lineHeight', 'paragraphSpacing', 'contentWidth', 'headingStyle', 'render-tasks', 'render-tables', 'render-code']) preferences.set(key, null);
     zoomText(0, true); setTouchpadZoom(false, false); applyReadingFont('sans'); applyTheme('system');
-    setDocumentWidth(false); setFormatToolbarVisible(true); applyDocumentPreferences();
+    setDocumentWidth(false); applyDocumentPreferences();
   };
 }
 

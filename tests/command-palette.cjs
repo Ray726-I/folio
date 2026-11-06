@@ -58,7 +58,7 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.locator('#palette-hint').focus();
     await page.keyboard.press('Enter');
     assert.equal(await page.locator('#command-scope').textContent(), 'Commands');
-    assert.equal(await page.locator('#command-list .command-item').count(), 43);
+    assert.equal(await page.locator('#command-list .command-item').count(), 42);
     await page.locator('#command-search').fill('theme');
     await page.keyboard.press('Enter');
     await page.locator('#palette-hint').click();

@@ -6,25 +6,18 @@ async function drawerState(page) {
     const drawer = document.getElementById('outline');
     const head = drawer.querySelector('.sidebar-head');
     const header = document.querySelector('.headerbar');
-    const toolbar = document.getElementById('format-tools');
     const drawerRect = drawer.hidden ? null : drawer.getBoundingClientRect();
     const headerRect = header.getBoundingClientRect();
-    const toolbarRect = toolbar.hidden ? null : toolbar.getBoundingClientRect();
     return {
       hidden: drawer.hidden,
       top: drawerRect?.top ?? null,
       headerBottom: headerRect.bottom,
-      toolbarBottom: toolbarRect?.bottom ?? headerRect.bottom,
       headTop: head.getBoundingClientRect().top,
       closeVisible: (() => {
         const close = document.getElementById('outline-close');
         const rect = close.getBoundingClientRect();
         const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
         return Boolean(hit && hit.closest('#outline'));
-      })(),
-      toolbarRows: (() => {
-        const tops = [...toolbar.querySelectorAll('[data-editor-command]')].filter(button => button.getBoundingClientRect().width > 0).map(button => Math.round(button.getBoundingClientRect().top));
-        return new Set(tops).size;
       })(),
     };
   });
@@ -40,13 +33,11 @@ async function drawerState(page) {
       await page.waitForTimeout(300);
       const closed = await drawerState(page);
       assert.equal(closed.hidden, true, `${width}px starts with the dock closed`);
-      assert.equal(closed.toolbarRows, 1, `${width}px keeps the formatting toolbar on one row`);
       await page.evaluate(() => document.querySelector('[data-dock-tab="outline"]').click());
       await page.waitForTimeout(250);
       const open = await drawerState(page);
       assert.equal(open.hidden, false, `${width}px opens the dock on demand`);
       assert.ok(open.top >= open.headerBottom - 1, `${width}px drawer starts below the header`);
-      assert.ok(open.top >= open.toolbarBottom - 1, `${width}px drawer starts below the toolbar`);
       assert.equal(open.closeVisible, true, `${width}px drawer close control is reachable`);
       assert.deepEqual(errors, []);
     } finally { await session.close(); }
@@ -60,7 +51,6 @@ async function drawerState(page) {
       await page.waitForTimeout(300);
       const state = await drawerState(page);
       assert.equal(state.hidden, false, 'the wide layout shows the outline');
-      assert.equal(state.toolbarRows, 1, 'the wide toolbar stays on one row');
     } finally { await session.close(); }
   }
 

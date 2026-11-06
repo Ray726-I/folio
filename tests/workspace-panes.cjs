@@ -22,7 +22,6 @@ const { openEditor } = require('./editor-browser.cjs');
   assert.equal(renderedDuringBurst,true,'continuous updates have a bounded preview delay');
   await page.evaluate(() => editor.replaceContent('# Changed\n'));
   await page.locator('#companion-scroll').focus();
-  assert.equal(await page.locator('#format-tools [data-editor-command]').first().isDisabled(),true,'companion focus disables main formatting');
   await page.evaluate(() => { const before=current.content; undoRedo(); window.companionUndoPreserved=current.content===before; });
   assert.equal(await page.evaluate(() => window.companionUndoPreserved),true,'companion undo cannot edit the main document');
   await page.locator('#reader-scroll').focus();

@@ -8,14 +8,13 @@ const REPO_ROOT = path.resolve(__dirname, '..');
 
 // Coarse-pointer touch targets for the audited editor controls.
 //
-// Oracle audit (confirmed): on fine pointers the formatting buttons measure
-// 30x32 (bold) / 25x32 (italic), task checkboxes 16x16, math edit buttons
+// On fine pointers, task checkboxes measure 16x16, math edit buttons
 // ~34x28, and the Open split controls 40x32 high. ui/styles.css keeps those
 // compact desktop visuals and grows each hit box to at least 44x44 only
 // under @media(pointer:coarse), with the checkbox glyph staying 16px inside
 // a transparent 44px native box.
 //
-// This check renders the production chrome (same header/toolbar/article
+// This check renders the production chrome (same header/article
 // class names as ui/index.html and the editor widgets) against the real
 // stylesheet, then measures the actual clickable boxes: >=44x44 under a
 // coarse pointer, compact under a fine pointer, non-overlapping at 1120px
@@ -50,11 +49,6 @@ const FIXTURE = `<!doctype html>
   <div class="window-title"><div class="window-title-line"><span>Folio</span></div></div>
   <div class="header-end"><button id="home" class="icon-button" aria-label="Go to welcome screen"><svg class="icon" aria-hidden="true"></svg></button></div>
 </header>
-<div id="format-tools" class="editor-toolbar" role="toolbar" aria-label="Document formatting">
-  <button class="button small ghost" data-editor-command="bold" aria-label="Bold"><strong>B</strong></button>
-  <button class="button small ghost" data-editor-command="italic" aria-label="Italic"><em>I</em></button>
-  <button class="button small ghost" data-editor-command="code">Code</button>
-</div>
 <main id="workspace">
   <div class="reader-scroll">
     <article class="markdown" id="preview">
@@ -108,8 +102,6 @@ function startServer() {
 }
 
 const SELECTORS = [
-  '#format-tools [data-editor-command="bold"]',
-  '#format-tools [data-editor-command="italic"]',
   '#t1',
   '#t2',
   '#t3',
@@ -243,7 +235,7 @@ async function assertNoOverlaps(rects) {
       await context.close();
     }
 
-    console.log('PASS: formatting, task checkbox, math edit, and Open controls reach 44x44 hit boxes on coarse pointers, stay compact on desktop, never overlap, and tasks keep toggling.');
+    console.log('PASS: task checkbox, math edit, and Open controls reach 44x44 hit boxes on coarse pointers, stay compact on desktop, never overlap, and tasks keep toggling.');
   } finally {
     await browser.close();
     server.close();

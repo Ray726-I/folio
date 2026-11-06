@@ -16,7 +16,10 @@ async function insertCommand(source, keys, typed = '') {
     for (const key of keys) await page.keyboard.type(key, { delay: 5 });
     await page.keyboard.press('Enter');
     await page.waitForTimeout(120);
-    if (typed) {
+    if (['image', 'math', 'mermaid'].includes(keys[0])) {
+      if (typed) await page.locator('#editor-action-value').fill(typed);
+      await page.locator('#editor-action-form button[type=submit]').click();
+    } else if (typed) {
       await page.keyboard.type(typed);
       await page.waitForTimeout(120);
     }
@@ -135,8 +138,7 @@ async function insertCommand(source, keys, typed = '') {
   // 4. The missing block types insert exact Markdown and stay editable.
   const insertions = [
     [['task'], '', 'Body.\n\n- [ ] '],
-    [['code'], 'x', 'Body.\n\n```\nx\n```'],
-    [['image'], 'Pic', 'Body.\n\n![Pic](image.png)'],
+    [['image'], 'picture.png', 'Body.\n\n![image](picture.png)'],
     [['math'], 'a^2', 'Body.\n\n$$\na^2\n$$'],
     [['mermaid'], '', 'Body.\n\n```mermaid\ngraph TD\n  A[Start] --> B[End]\n```'],
     [['table'], 'Name', 'Body.\n\n| Name | Column 2 |\n| --- | --- |\n|  |  |']
@@ -145,6 +147,18 @@ async function insertCommand(source, keys, typed = '') {
     const content = await insertCommand('Body.\n', keys, typed);
     assert.equal(content, expected, `insertion ${keys[0]} writes exact Markdown`);
   }
+
+  session = await openEditor('Body.\n', { width: 1100, height: 800 });
+  try {
+    const { page, errors } = session;
+    await openSlash(page); await page.keyboard.type('code'); await page.keyboard.press('Enter');
+    const language = page.getByRole('textbox', { name: 'Code fence info' });
+    await language.waitFor({ state: 'visible', timeout: 3000 });
+    assert.equal(await language.evaluate(element => document.activeElement === element), true, 'new code blocks focus their language field');
+    await page.keyboard.type('javascript'); await page.keyboard.press('Enter'); await page.keyboard.type('const x = 1;');
+    await page.waitForFunction(() => current.content === 'Body.\n\n```javascript\nconst x = 1;\n```', null, { timeout: 3000 });
+    assert.deepEqual(errors, []);
+  } finally { await session.close(); }
 
   console.log('PASS: slash picker is grouped, anchored, empty-line guarded, and covers the missing block types.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

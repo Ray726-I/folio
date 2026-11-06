@@ -207,13 +207,13 @@ pub(crate) fn account_images(html: &str, limits: &RenderLimits) -> Result<(), Pr
 }
 
 /// Resolve a Markdown image destination to a canonical local path inside the
-/// document directory and its media type. Returns `None` for absolute paths,
-/// URL-like values, escapes, or unsupported extensions.
+/// document directory and its media type. Relative and absolute paths are
+/// accepted only when their canonical target is within that directory.
 pub(crate) fn resolve_local_path(
     destination: &str,
     base: Option<&Path>,
 ) -> Option<(PathBuf, &'static str)> {
-    if destination.contains(':') || destination.starts_with('/') {
+    if destination.contains(':') && !Path::new(destination).is_absolute() {
         return None;
     }
     let base = base?;

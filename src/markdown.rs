@@ -1080,6 +1080,20 @@ mod tests {
         assert!(local_image("image.png", Some(&base), false)
             .unwrap()
             .starts_with("data:image/png;base64,"));
+        let absolute_image = base.join("image.png");
+        let absolute = absolute_image.to_string_lossy();
+        assert!(local_image(&absolute, Some(&base), false)
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
+        let (rendered, _) =
+            render_with_blocks(&format!("![image](<{absolute}>)"), Some(&base), false);
+        assert!(rendered.contains("data:image/png;base64,"), "{rendered}");
+        assert!(local_image(
+            &directory.path().join("secret.png").to_string_lossy(),
+            Some(&base),
+            false
+        )
+        .is_none());
         assert!(local_image("../secret.png", Some(&base), false).is_none());
         assert!(local_image("%2e%2e/secret.png", Some(&base), false).is_none());
         assert_eq!(

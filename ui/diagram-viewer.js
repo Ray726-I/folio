@@ -1,9 +1,9 @@
 (() => {
   const preview = document.getElementById('preview');
   if (!preview) return;
-  let dialog, viewport, canvas, zoomStatus, zoomIn, zoomOut;
-  let origin = null, returnFocus = null, drawing = null, size = null;
-  let scale = 1, fitting = true, sequence = 0;
+  let dialog, viewport, canvas, zoomStatus, zoomIn, zoomOut, title, fitButton, closeButton;
+  let origin = null, returnFocus = null, drawing = null, size = null, originalImage = null, originalImageSrc = null;
+  let scale = 1, fitting = true, sequence = 0, viewerKind = 'diagram', mathFontSize = 16;
   const MIN_SCALE = .05, MAX_SCALE = 4, GUTTER = 48;
 
   function renderedSvg(host) {
@@ -11,16 +11,30 @@
     if (host.dataset.diagramState && host.dataset.diagramState !== 'rendered') return null;
     return host.querySelector('svg');
   }
+  function renderedImage(host) {
+    if (!host?.matches('.image-widget') || !host.isConnected) return null;
+    const image = host.querySelector('img');
+    return image?.complete && image.naturalWidth > 0 ? image : null;
+  }
+  const hostSelector = '.mermaid-host, .image-widget, .math-block, .tableWrapper';
+  function renderedContent(host) {
+    if (!host?.isConnected) return null;
+    if (host.matches('.math-block')) return host.matches('.math-formula') ? host : host.querySelector('.math-formula');
+    if (host.matches('.tableWrapper')) return host.querySelector('table');
+    return null;
+  }
 
   function enhance(host) {
-    if (!host?.matches('.mermaid-host')) return;
+    if (!host?.matches(hostSelector)) return;
+    const image = host.matches('.image-widget');
+    const kind = image ? 'image' : host.matches('.math-block') ? 'math' : host.matches('.tableWrapper') ? 'table' : 'diagram';
     const action = host.querySelector(':scope > .diagram-expand');
-    if (!renderedSvg(host)) { action?.remove(); return; }
+    if (!(image ? renderedImage(host) : kind === 'diagram' ? renderedSvg(host) : renderedContent(host))) { action?.remove(); return; }
     if (action) return;
     const button = document.createElement('button');
     button.type = 'button'; button.className = 'diagram-expand';
-    button.contentEditable = 'false'; button.title = 'Expand diagram';
-    button.setAttribute('aria-label', 'Expand diagram');
+    button.contentEditable = 'false'; button.title = `Expand ${kind}`;
+    button.setAttribute('aria-label', button.title);
     button.setAttribute('aria-haspopup', 'dialog');
     host.append(button);
   }
@@ -33,6 +47,12 @@
     scale = fit ? nextScale : Math.min(MAX_SCALE, Math.max(MIN_SCALE, nextScale));
     drawing.style.width = `${size.width * scale}px`;
     drawing.style.height = `${size.height * scale}px`;
+    const scaledContent = drawing.querySelector(':scope > .diagram-viewer-scaled');
+    if (scaledContent && viewerKind === 'math') {
+      scaledContent.style.transform = '';
+      scaledContent.style.width = `${size.width * scale}px`;
+      scaledContent.style.fontSize = `${mathFontSize * scale}px`;
+    } else if (scaledContent) scaledContent.style.transform = `scale(${scale})`;
     canvas.style.width = `${size.width * scale + GUTTER}px`;
     canvas.style.height = `${size.height * scale + GUTTER}px`;
     zoomStatus.textContent = `${Math.round(scale * 100)}%`;
@@ -43,8 +63,15 @@
 
   function fit() {
     if (!drawing) return;
-    applyScale(Math.min(1, Math.max(1, viewport.clientWidth - GUTTER) / size.width,
-      Math.max(1, viewport.clientHeight - GUTTER) / size.height), true);
+    const maxFit = viewerKind === 'math' || viewerKind === 'diagram' ? 2 : 1;
+    const widthFit = Math.max(1, viewport.clientWidth - GUTTER) / size.width;
+    const heightFit = Math.max(1, viewport.clientHeight - GUTTER) / size.height;
+    applyScale(Math.min(maxFit, widthFit, viewerKind === 'table' ? Infinity : heightFit), true);
+  }
+  function openAtReadableSize() {
+    fit();
+    const minimum = viewerKind === 'math' ? 1.5 : viewerKind === 'diagram' ? 1 : 0;
+    if (scale < minimum) applyScale(minimum);
   }
 
   function createViewer() {
@@ -53,7 +80,7 @@
     dialog.setAttribute('aria-label', 'Expanded diagram');
     dialog.setAttribute('aria-modal', 'true');
     const toolbar = document.createElement('div'); toolbar.className = 'diagram-viewer-toolbar';
-    const title = document.createElement('h2'); title.textContent = 'Diagram';
+    title = document.createElement('h2'); title.textContent = 'Diagram';
     const controls = document.createElement('div'); controls.className = 'diagram-viewer-controls';
     const button = (label, text, action) => {
       const control = document.createElement('button'); control.type = 'button';
@@ -65,8 +92,9 @@
     zoomStatus.setAttribute('aria-label', 'Diagram zoom'); zoomStatus.setAttribute('aria-live', 'polite');
     zoomOut = button('Zoom out', '−', () => applyScale(scale / 1.25));
     zoomIn = button('Zoom in', '+', () => applyScale(scale * 1.25));
-    const closeButton = button('Close diagram', 'Close', close); closeButton.autofocus = true;
-    controls.append(button('Fit diagram', 'Fit', fit), button('Actual size', '100%', () => applyScale(1)),
+    closeButton = button('Close diagram', 'Close', close); closeButton.autofocus = true;
+    fitButton = button('Fit diagram', 'Fit', fit);
+    controls.append(fitButton, button('Actual size', '100%', () => applyScale(1)),
       zoomOut, zoomStatus, zoomIn, closeButton);
     toolbar.append(title, controls);
     viewport = document.createElement('div'); viewport.className = 'diagram-viewer-viewport'; viewport.tabIndex = 0;
@@ -76,7 +104,7 @@
     dialog.addEventListener('close', () => {
       // Native close events are queued. A newer open already owns this state.
       if (dialog.open) return;
-      canvas.replaceChildren(); drawing = null; size = null; origin = null;
+      canvas.replaceChildren(); drawing = null; size = null; origin = null; originalImage = null; originalImageSrc = null;
       const previous = returnFocus; returnFocus = null;
       if (previous?.isConnected) previous.focus({ preventScroll: true });
     });
@@ -113,9 +141,58 @@
   }
 
   function open(host, button) {
-    const svg = renderedSvg(host);
-    if (!svg) return;
+    const svg = renderedSvg(host), image = renderedImage(host), content = renderedContent(host), source = svg || image || content;
+    if (!source) return;
     if (!dialog) createViewer();
+    const kind = image ? 'image' : host.matches('.math-block') ? 'math' : host.matches('.tableWrapper') ? 'table' : 'diagram';
+    viewerKind = kind;
+    const label = kind[0].toUpperCase() + kind.slice(1);
+    dialog.setAttribute('aria-label', `Expanded ${kind}`); title.textContent = label;
+    fitButton.setAttribute('aria-label', `Fit ${kind}`); fitButton.title = `Fit ${kind}`;
+    closeButton.setAttribute('aria-label', `Close ${kind}`); closeButton.title = `Close ${kind}`;
+    zoomStatus.setAttribute('aria-label', `${label} zoom`);
+    viewport.setAttribute('aria-label', `${label}. Use arrow keys to scroll.`);
+    if (image) {
+      size = { width: image.naturalWidth, height: image.naturalHeight };
+      drawing = image.cloneNode(false); drawing.style.maxWidth = 'none'; drawing.style.maxHeight = 'none';
+      originalImage = image; originalImageSrc = image.currentSrc || image.src;
+      origin = host; returnFocus = button; canvas.replaceChildren(drawing);
+      dialog.showModal(); openAtReadableSize(); return;
+    }
+    originalImage = null; originalImageSrc = null;
+    if (content) {
+      if (kind === 'math') mathFontSize = parseFloat(getComputedStyle(content).fontSize) || 16;
+      const rect = content.getBoundingClientRect();
+      const math = kind === 'math' ? content.querySelector('.katex-html') : null;
+      const mathRect = math?.getBoundingClientRect();
+      const parts = math ? [...math.querySelectorAll(':scope > .katex-base')].map(node => node.getBoundingClientRect()).filter(box => box.width > 0) : [];
+      const bounds = parts.reduce((acc, box) => ({ left: Math.min(acc.left, box.left), right: Math.max(acc.right, box.right) }), { left: Infinity, right: -Infinity });
+      const formulaWidth = parts.length ? bounds.right - bounds.left : 0;
+      size = mathRect && mathRect.width > 0
+        ? { width: Math.max(1, formulaWidth || math.scrollWidth), height: Math.max(math.scrollHeight, mathRect.height) }
+        : { width: Math.max(1, content.scrollWidth, rect.width), height: Math.max(1, content.scrollHeight, rect.height) };
+      const copy = content.cloneNode(true);
+      for (const element of [copy, ...copy.querySelectorAll('*')]) {
+        element.removeAttribute('id'); element.removeAttribute('contenteditable'); element.removeAttribute('tabindex');
+        element.classList.remove('selectedCell');
+        if (element.matches('input, button, select, textarea')) element.disabled = true;
+      }
+      copy.querySelectorAll('.diagram-expand').forEach(element => element.remove());
+      drawing = document.createElement('div'); drawing.className = 'markdown diagram-viewer-content';
+      const inner = document.createElement('div'); inner.className = 'diagram-viewer-scaled';
+      inner.style.width = `${size.width}px`; inner.append(copy); drawing.append(inner);
+      origin = host; returnFocus = button; canvas.replaceChildren(drawing);
+      dialog.showModal();
+      if (kind === 'table') {
+        size.width = Math.max(size.width, viewport.clientWidth - GUTTER);
+        inner.style.width = `${size.width}px`;
+        drawing.style.width = `${size.width}px`;
+        size.width = Math.max(size.width, copy.scrollWidth);
+        inner.style.width = `${size.width}px`;
+        size.height = Math.max(1, copy.getBoundingClientRect().height);
+      }
+      openAtReadableSize(); return;
+    }
     const viewBox = svg.viewBox?.baseVal, rect = svg.getBoundingClientRect();
     size = { width: viewBox?.width || svg.width?.baseVal?.value || rect.width || 300,
       height: viewBox?.height || svg.height?.baseVal?.value || rect.height || 150 };
@@ -157,7 +234,7 @@
     drawing.removeAttribute('tabindex');
     for (const node of drawing.querySelectorAll('a, [tabindex]')) node.setAttribute('tabindex', '-1');
     origin = host; returnFocus = button; canvas.replaceChildren(drawing);
-    dialog.showModal(); fit();
+    dialog.showModal(); openAtReadableSize();
   }
 
   // Capture the action before ProseMirror can turn the click into a document
@@ -171,22 +248,26 @@
   preview.addEventListener('click', event => {
     const button = event.target.closest('.diagram-expand');
     if (!button) return;
-    event.preventDefault(); event.stopPropagation(); open(button.closest('.mermaid-host'), button);
+    event.preventDefault(); event.stopPropagation(); open(button.closest(hostSelector), button);
+  }, true);
+
+  for (const eventName of ['load', 'error']) preview.addEventListener(eventName, event => {
+    if (event.target instanceof HTMLImageElement) enhance(event.target.closest('.image-widget'));
   }, true);
 
   // Inspect only changed diagram hosts and newly inserted subtrees. Typing in
   // an unrelated paragraph never scans or rebuilds the document's diagrams.
   new MutationObserver(mutations => {
-    if (origin && !origin.isConnected) close();
+    if (origin && (!origin.isConnected || (originalImage && (!originalImage.isConnected || (originalImage.currentSrc || originalImage.src) !== originalImageSrc)))) close();
     const changed = new Set();
     for (const mutation of mutations) {
       const target = mutation.target.nodeType === Node.ELEMENT_NODE ? mutation.target : mutation.target.parentElement;
-      const host = target?.closest('.mermaid-host');
+      const host = target?.closest(hostSelector);
       if (host) changed.add(host);
       for (const node of mutation.addedNodes) {
         if (node.nodeType !== Node.ELEMENT_NODE) continue;
-        if (node.matches('.mermaid-host')) changed.add(node);
-        for (const child of node.querySelectorAll('.mermaid-host')) changed.add(child);
+        if (node.matches(hostSelector)) changed.add(node);
+        for (const child of node.querySelectorAll(hostSelector)) changed.add(child);
       }
       // A code node can change its language and cease being a diagram.
       if (mutation.type === 'attributes' && target?.querySelector(':scope > .diagram-expand') && !host) {
@@ -194,6 +275,6 @@
       }
     }
     for (const host of changed) enhance(host);
-  }).observe(preview, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-diagram-state', 'class'] });
-  for (const host of preview.querySelectorAll('.mermaid-host')) enhance(host);
+  }).observe(preview, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-diagram-state', 'class', 'src'] });
+  for (const host of preview.querySelectorAll(hostSelector)) enhance(host);
 })();

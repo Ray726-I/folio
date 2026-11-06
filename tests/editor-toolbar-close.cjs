@@ -1,24 +1,17 @@
 const assert = require('node:assert/strict');
 const { openEditor } = require('./editor-browser.cjs');
-
 (async () => {
-  const session = await openEditor('# Heading\n');
+  const session = await openEditor('# Heading\n\nSome text\n');
   try {
-    const { page } = session;
-    const toolbar = page.locator('#format-tools');
-    const close = page.getByRole('button', { name: 'Hide formatting toolbar', exact: true }).last();
-    assert.equal(await toolbar.isVisible(), true);
-    await close.click();
-    assert.equal(await toolbar.isHidden(), true, 'close hides the toolbar');
-    assert.equal(await page.locator('#format-toggle').getAttribute('aria-expanded'), 'false');
-    assert.equal(await page.evaluate(() => document.activeElement.id), 'view-menu-button', 'focus returns to the view menu');
+    const { page, errors } = session;
+    assert.equal(await page.locator('#format-tools, #format-toggle').count(), 0, 'formatting toolbar and its setting are absent');
     await page.locator('#view-menu-button').click();
-    await page.getByRole('button', { name: 'Show formatting toolbar' }).click();
-    assert.equal(await toolbar.isVisible(), true, 'the view menu restores the toolbar');
-    await page.locator('#document-mode-button').click(); await page.locator('#lock-document').click();
-    await page.locator('#format-toolbar-close').click();
-    assert.equal(await toolbar.isHidden(), true, 'the close control remains available while locked');
-    assert.deepEqual(session.errors, []);
-    console.log('PASS: formatting toolbar closes, can be reopened, and remains closable under Lock.');
+    assert.equal(await page.getByText('Formatting toolbar', { exact: true }).count(), 0);
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => { const at = current.content.indexOf('Some text'); editor.selectRange(at, at + 9, true); });
+    await page.keyboard.press('Control+b');
+    await page.waitForFunction(() => current.content.includes('**Some text**'));
+    assert.deepEqual(errors, []);
+    console.log('PASS: formatting toolbar is absent and keyboard formatting works');
   } finally { await session.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

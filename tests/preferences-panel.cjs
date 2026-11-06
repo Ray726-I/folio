@@ -142,9 +142,6 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.equal(await page.evaluate(() => !document.getElementById('view-menu').hidden), true, 'toggling width keeps the panel open');
     await page.locator('#width-toggle').click();
     assert.equal(await page.locator('#width-toggle').getAttribute('aria-pressed'), 'false');
-    await page.locator('#format-toggle').click();
-    assert.equal(await page.locator('#format-tools').isHidden(), true, 'the toolbar hides from the panel');
-    assert.equal(await page.evaluate(() => !document.getElementById('view-menu').hidden), true, 'toggling the toolbar keeps the panel open');
 
     // Keyboard: Tab stays inside the panel and wraps, Escape dismisses and
     // returns focus to the trigger.
@@ -176,7 +173,6 @@ const { openEditor } = require('./editor-browser.cjs');
       theme: document.getElementById('preference-theme').value,
       font: document.getElementById('preference-font').value,
       storedWidth: localStorage.getItem('folio.contentWidth'),
-      toolbar: !document.getElementById('format-tools').hidden,
       open: !document.getElementById('view-menu').hidden
     }));
     assert.equal(reset.width, '900');
@@ -186,7 +182,6 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.equal(reset.theme, 'system');
     assert.equal(reset.font, 'sans');
     assert.equal(reset.storedWidth, 'null');
-    assert.equal(reset.toolbar, true, 'reset restores the formatting toolbar');
     assert.equal(reset.open, true, 'reset does not dismiss the panel');
 
     // The panel never leaves the window: a narrow, short viewport would place

@@ -15,23 +15,6 @@ function setTransitionLocked(next) {
 }
 function changeContent(content) { if (editor) editor.replaceContent(content); else { current.content = content; documentEdited(); updateTitle(); scheduleStats(); } }
 function undoRedo(redo = false) { return editor?.undo(redo) || false; }
-function updateFormatToolbar(context) {
-  const tools = $('format-tools');
-  if (!tools) return;
-  const locked = editor?.isLocked?.() ?? false;
-  const editable = current.active && documentMode === 'edit' && !locked;
-  const blockDisabled = !editable || Boolean(context?.table || context?.code);
-  for (const command of ['heading', 'bullet', 'numbered', 'quote', 'table']) {
-    const control = tools.querySelector(`[data-editor-command="${command}"]`);
-    if (control) control.disabled = blockDisabled;
-  }
-  for (const [command, mark] of [['bold', 'strong'], ['italic', 'em'], ['code', 'code']]) {
-    const control = tools.querySelector(`[data-editor-command="${command}"]`);
-    if (!control) continue;
-    control.disabled = !editable;
-    control.setAttribute('aria-pressed', String(editable && (context?.marks || []).includes(mark)));
-  }
-}
 function editorPresentation(_show, locked, fallback) {
   // One editing surface: the document is always the formatted editor.
   mode = 'read'; root.dataset.mode = mode;
@@ -44,8 +27,6 @@ function editorPresentation(_show, locked, fallback) {
   $('editor-lock-note').hidden = !locked;
   $('editor-notice').hidden = !fallback;
 
-  $('format-tools').querySelectorAll('button:not(#format-toolbar-close),select,input').forEach(control => { control.disabled = locked; });
-  if (!locked) updateFormatToolbar(editor?.context?.() ?? null);
 }
 // Kept for blocks whose exact byte range the ledger cannot prove. Atoms with a
 // provable range open their own in-place editor instead of reaching this.
@@ -161,11 +142,12 @@ function refreshEditorOutline() {
 // A single in-place value editor backed by the existing action dialog. Used
 // for link and image destinations so they no longer require switching the
 // document to a Markdown presentation.
-function editValue({ title, value }) {
+function editValue({ title, value, placeholder = '' }) {
   const dialog = $('editor-action-dialog'), form = $('editor-action-form');
   const input = $('editor-action-value'), openButton = $('editor-action-open');
   $('editor-action-title').textContent = title || 'Edit';
   input.value = value || '';
+  input.placeholder = placeholder;
   openButton.hidden = true;
   return new Promise(resolve => {
     let settled = false;
@@ -247,7 +229,7 @@ async function mountUnifiedEditor() {
   const editorOptions = {
     content: current.content, transitionLocked, richParent: $('preview'), scroller: $('reader-scroll'),
     onChange(content) { if (current !== documentAtOpen) return; outlineRevision++; current.content = content; documentEdited(); previewSnapshot = null; updateTitle(); scheduleStats(); scheduleEditorOutline(); if (!$('find-bar').hidden) scheduleFindRefresh(); },
-    onPresentation: editorPresentation, onContext: updateFormatToolbar, message: toast, loadKatex, remoteImages: () => remoteImages, themeRevision: () => diagramThemeRevision,
+    onPresentation: editorPresentation, message: toast, loadKatex, remoteImages: () => remoteImages, themeRevision: () => diagramThemeRevision,
     revealSource: (from, to) => revealSourceForEdit(from, to), editValue, editClipboard,
     openLink(href) { const anchor = document.createElement('a'); anchor.setAttribute('href', href); followPreviewLink(anchor); },
     async renderExtension(source) {
@@ -368,5 +350,3 @@ $('source-snapshot-copy').onclick = async () => {
 $('source-dialog').addEventListener('cancel', event => {
   event.preventDefault(); $('source-dialog').close(); editor?.focus();
 });
-$('format-tools').addEventListener('mousedown', event => { if (event.target.closest('button')) event.preventDefault(); });
-$('format-tools').addEventListener('click', event => { const command = event.target.closest('[data-editor-command]')?.dataset.editorCommand; if (command) editor?.command(command); });

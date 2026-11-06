@@ -27,9 +27,10 @@ function registerDocument(doc) {
 }
 async function activateDocument(doc, capture = true) {
   if (doc === current) return true;
+  let activated = false;
   try {
-  setTransitionLocked(true);
   if (capture) rememberDocument();
+  setTransitionLocked(true);
   await invoke('activate_document', { documentId: doc.documentId });
   ++renderGeneration; previewSnapshot = null; current = doc;
   documentMode = doc.view?.mode || (doc.writable === false ? 'reading' : 'edit');
@@ -38,12 +39,16 @@ async function activateDocument(doc, capture = true) {
   saveStatus = doc.view?.saveStatus || null;
   await refreshEditorSurface();
   for (const entry of outlineEntries) if (doc.view?.outline?.includes(entry.offset)) toggleOutlineEntry(entry, false);
-  $('reader-scroll').scrollTop = doc.view?.scroll || 0;
-  $('document-source').scrollTop = doc.view?.sourceScroll || 0;
   $('find-input').value = doc.view?.find || ''; $('find-bar').hidden = !doc.view?.findOpen;
   if (doc.view?.findOpen) { updateFind(); findIndex = doc.view.findIndex; }
-  focusPane('main'); updateTitle(); renderTabs(); persistWorkspace(); scheduleCompanionRender(); return true;
-  } finally { setTransitionLocked(false); }
+  focusPane('main'); updateTitle();
+  renderTabs(); persistWorkspace(); scheduleCompanionRender(); activated = true; return true;
+  } finally {
+    setTransitionLocked(false);
+    if (activated && current === doc) for (const [element, top] of [[$('reader-scroll'), doc.view?.scroll || 0], [$('document-source'), doc.view?.sourceScroll || 0]]) {
+      const behavior = element.style.scrollBehavior; element.style.scrollBehavior = 'auto'; element.scrollTop = top; element.style.scrollBehavior = behavior;
+    }
+  }
 }
 function persistWorkspace() {
   const layout = { paths: [...documents.values()].filter(d => d.path && d.content === d.saved).map(d => d.path), activePath: current.path };
@@ -63,25 +68,102 @@ function syncTabOverflow() {
   button.hidden = list.scrollWidth <= available + 1;
 }
 new ResizeObserver(syncTabOverflow).observe($('tab-list'));
-let renderedTabs = '';
+let renderedTabs = '', tabDrag = null, suppressTabClick = false;
 function renderTabs() {
   const strip = $('document-tabs'); if (!strip) return;
+  if (tabDrag?.dragging) { tabDrag.needsRender = true; return; }
   strip.hidden = !documents.size && !current.active && !activeFolder; const signature = [...documents.values()].map(d => [d.documentId, d.path, d.name, d.content !== d.saved, d === current]).join('|'); if (signature === renderedTabs) return; renderedTabs = signature; const list = $('tab-list'); list.replaceChildren();
   requestAnimationFrame(syncTabOverflow);
   for (const doc of documents.values()) {
     const tab = document.createElement('button'); tab.className = 'document-tab'; tab.type = 'button'; tab.role = 'tab';
-    tab.id = `tab-${doc.documentId}`; tab.setAttribute('aria-controls', 'document-view'); tab.setAttribute('aria-selected', String(doc === current)); tab.tabIndex = doc === current ? 0 : -1;
+    tab.dataset.documentId = doc.documentId; tab.id = `tab-${doc.documentId}`; tab.setAttribute('aria-controls', 'document-view'); tab.setAttribute('aria-selected', String(doc === current)); tab.tabIndex = doc === current ? 0 : -1;
     tab.title = doc.path || doc.originalPath || doc.name; tab.setAttribute('aria-label', `${doc.name}${doc.content !== doc.saved ? ', unsaved changes' : ''}, ${doc.path || 'unsaved document'}`);
     tab.append(fileIcon(doc.path || doc.name)); const label = document.createElement('span');
     const duplicates = [...documents.values()].filter(d => d.name === doc.name).length > 1;
     label.textContent = doc.name + (duplicates && doc.path ? ` — ${basename(dirname(doc.path))}` : '') + (doc.content !== doc.saved ? ' •' : ''); tab.append(label);
-    tab.onclick = () => enqueue(() => activateDocument(doc));
+    tab.onclick = event => { if (suppressTabClick) { suppressTabClick = false; event.preventDefault(); return; } enqueue(() => activateDocument(doc)); };
+    tab.addEventListener('pointerdown', event => beginTabDrag(event, item, doc));
     tab.oncontextmenu = event => { event.preventDefault(); const menu=$('tab-context-menu') || document.body.appendChild(Object.assign(document.createElement('div'),{id:'tab-context-menu',className:'menu'})); menu.replaceChildren(); menu.role='menu'; menu.style.cssText=`position:fixed;left:${Math.min(event.clientX,innerWidth-240)}px;top:${event.clientY}px;z-index:1000`; for (const [label,action] of [['Open beside',()=>showReadingCompanion(doc,false)],['Move tab to new window',()=>enqueue(()=>moveDocumentToNewWindow(doc))]]) { const button=document.createElement('button');button.className='menu-item';button.role='menuitem';button.textContent=label;button.onclick=()=>{menu.hidden=true;action();};menu.append(button); } menu.hidden=false;menu.firstChild.focus(); };
-    tab.onkeydown = event => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const tabs = [...documents.values()]; const i = tabs.indexOf(doc); const next = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs.at(-1) : tabs[(i + (event.key === 'ArrowLeft' ? -1 : 1) + tabs.length) % tabs.length]; enqueue(async () => { await activateDocument(next); $( `tab-${next.documentId}`).focus(); }); } };
+    tab.onkeydown = event => { if (event.altKey && event.shiftKey && ['ArrowLeft','ArrowRight'].includes(event.key)) { event.preventDefault(); const sibling = event.key === 'ArrowLeft' ? item.previousElementSibling : item.nextElementSibling; if (sibling) { const boxes = new Map([...list.children].map(child => [child, child.getBoundingClientRect()])); if (event.key === 'ArrowLeft') list.insertBefore(item, sibling); else list.insertBefore(item, sibling.nextElementSibling); animateTabPositions(boxes, list); commitTabOrder(list); tab.focus({preventScroll:true}); } return; } if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const tabs = [...documents.values()]; const i = tabs.indexOf(doc); const next = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs.at(-1) : tabs[(i + (event.key === 'ArrowLeft' ? -1 : 1) + tabs.length) % tabs.length]; enqueue(async () => { await activateDocument(next); $( `tab-${next.documentId}`).focus(); }); } };
     const close = document.createElement('button'); close.type = 'button'; close.className = 'tab-close icon-button'; close.title = `Close ${doc.name}`; close.setAttribute('aria-label', close.title); close.append(icon('close')); close.onclick = () => enqueue(() => closeWorkspaceDocument(doc));
-    const item = document.createElement('div'); item.className = 'tab-item'; item.append(tab, close); list.append(item); if (doc === current) requestAnimationFrame(() => tab.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+    const item = document.createElement('div'); item.className = 'tab-item'; item.append(tab, close); list.append(item); if (doc === current) requestAnimationFrame(() => {
+      if (!tab.isConnected) return;
+      const bounds = list.getBoundingClientRect(), selected = tab.getBoundingClientRect();
+      if (selected.left < bounds.left) list.scrollLeft += selected.left - bounds.left;
+      else if (selected.right > bounds.right) list.scrollLeft += selected.right - bounds.right;
+    });
   }
 }
+function animateTabPositions(before, list) {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  for (const child of list.children) {
+    const previous = before.get(child), now = child.getBoundingClientRect();
+    if (previous && previous.left !== now.left && typeof child.animate === 'function') child.animate([{transform:`translateX(${previous.left-now.left}px)`},{transform:'translateX(0)'}], {duration:160,easing:'ease-out'});
+  }
+}
+function commitTabOrder(list) {
+  const ordered = [...list.querySelectorAll('.document-tab')].map(tab => documents.get(tab.dataset.documentId)).filter(Boolean);
+  if (ordered.length !== documents.size) return;
+  documents.clear(); for (const doc of ordered) documents.set(doc.documentId, doc);
+  persistWorkspace();
+}
+function beginTabDrag(event, item, doc) {
+  if (event.button !== 0 || tabDrag || event.target.closest('.tab-close')) return;
+  const list = $('tab-list'), initial = item.getBoundingClientRect();
+  const state = { item, doc, list, startX:event.clientX, startY:event.clientY, rect:initial, dragging:false, frame:0, lastX:event.clientX, lastY:event.clientY };
+  tabDrag = state;
+  const move = e => {
+    if (e.pointerId !== event.pointerId) return;
+    state.lastX=e.clientX; state.lastY=e.clientY;
+    if (!state.dragging && Math.hypot(e.clientX-state.startX,e.clientY-state.startY) < 6) return;
+    if (!state.dragging) {
+      state.dragging=true; item.classList.add('tab-drag-origin');
+      const ghost=item.cloneNode(true); ghost.className='tab-drag-preview'; ghost.setAttribute('aria-hidden','true'); for (const node of ghost.querySelectorAll('[id]')) node.removeAttribute('id'); for (const button of ghost.querySelectorAll('button')) button.tabIndex=-1;
+      Object.assign(ghost.style,{left:`${initial.left}px`,top:`${initial.top}px`,width:`${initial.width}px`,height:`${initial.height}px`});
+      document.body.append(ghost); state.ghost=ghost; document.documentElement.classList.add('tab-dragging');
+    }
+    e.preventDefault();
+    if (state.frame) return;
+    state.frame=requestAnimationFrame(updateDrag);
+  };
+  const updateDrag = () => {
+      state.frame=0; if (!state.dragging) return;
+      state.ghost.style.transform=`translate(${state.lastX-state.startX}px, ${state.lastY-state.startY}px)`;
+      const bounds=list.getBoundingClientRect();
+      const direction=state.lastY >= bounds.top-12 && state.lastY <= bounds.bottom+12 ? (state.lastX < bounds.left+24 ? -1 : state.lastX > bounds.right-24 ? 1 : 0) : 0;
+      const oldScroll=list.scrollLeft;
+      if (direction) list.scrollLeft += direction * 10;
+      if (direction && list.scrollLeft !== oldScroll && !state.finishing) state.frame=requestAnimationFrame(updateDrag);
+      const others=[...list.children].filter(child => child !== item);
+      const before=others.find(child => state.lastX < child.getBoundingClientRect().left + child.getBoundingClientRect().width/2) || null;
+      if (before !== item.nextElementSibling && !(before===null && item===list.lastElementChild)) {
+        const boxes=new Map([...list.children].map(child=>[child,child.getBoundingClientRect()]));
+        list.insertBefore(item,before); animateTabPositions(boxes,list);
+      }
+  };
+  const finish = e => {
+    if (e.pointerId !== event.pointerId) return;
+    window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',finish); window.removeEventListener('pointercancel',cancel); window.removeEventListener('keydown',escape); window.removeEventListener('blur',blur);
+    state.finishing=true;
+    if (state.frame) { cancelAnimationFrame(state.frame); state.frame=0; if (!state.canceled) updateDrag(); }
+    if (state.dragging) {
+      suppressTabClick=true; setTimeout(()=>{suppressTabClick=false;},0);
+      item.classList.remove('tab-drag-origin'); document.documentElement.classList.remove('tab-dragging');
+      commitTabOrder(list);
+      const target=item.getBoundingClientRect(), ghost=state.ghost;
+      if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches && ghost.animate) {
+        const animation=ghost.animate([{transform:ghost.style.transform},{transform:`translate(${target.left-initial.left}px, ${target.top-initial.top}px)`}],{duration:160,easing:'ease-out'});
+        animation.onfinish=()=>ghost.remove(); animation.oncancel=()=>ghost.remove();
+      } else ghost.remove();
+    }
+    tabDrag=null; if (state.needsRender) { renderedTabs=''; renderTabs(); }
+  };
+  const cancel = e => { if (e.pointerId!==event.pointerId) return; state.canceled=true; if (state.dragging) { const ordered=[...documents.keys()]; const children=[...list.children]; children.sort((a,b)=>ordered.indexOf(a.querySelector('.document-tab').dataset.documentId)-ordered.indexOf(b.querySelector('.document-tab').dataset.documentId)); children.forEach(child=>list.append(child)); } finish(e); };
+  const escape = e => { if (e.key === 'Escape') { e.preventDefault(); cancel({pointerId:event.pointerId}); } };
+  const blur = () => cancel({pointerId:event.pointerId});
+  window.addEventListener('pointermove',move,{passive:false}); window.addEventListener('pointerup',finish); window.addEventListener('pointercancel',cancel); window.addEventListener('keydown',escape); window.addEventListener('blur',blur);
+}
+
 async function closeWorkspaceDocument(doc = current) {
   if (doc === current) rememberDocument();
   await documentSaves.get(doc.documentId);

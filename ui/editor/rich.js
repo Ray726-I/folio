@@ -55,7 +55,7 @@ const SLASH_BLOCKS = [
   { id: 'table', label: 'Table', icon: 'table', keywords: 'grid rows columns cells', meta: '2×2', snippet: '| Column 1 | Column 2 |\n| --- | --- |\n|  |  |', select: [2, 10] },
   { id: 'more', label: 'More', icon: 'more', title: 'More blocks', children: [
     { id: 'divider', label: 'Divider', icon: 'divider', keywords: 'horizontal rule line hr separator', meta: '---', snippet: '---' },
-    { id: 'image', label: 'Image', icon: 'image', keywords: 'picture photo media', meta: '![]()', snippet: '![alt](image.png)', select: [2, 5] },
+    { id: 'image', label: 'Image', icon: 'image', keywords: 'picture photo media', meta: '![]()', snippet: '![alt](image.png)', select: [7, 16] },
     { id: 'math', label: 'Math block', icon: 'math', keywords: 'formula latex equation tex katex', meta: '$$', snippet: '$$\nx\n$$', select: [3, 4] },
     { id: 'mermaid', label: 'Mermaid diagram', icon: 'mermaid', keywords: 'chart graph flow diagram mermaid', meta: 'mermaid', snippet: `\`\`\`mermaid\n${SLASH_MERMAID_BODY}\n\`\`\`` }
   ] }
@@ -271,6 +271,12 @@ export function createRichEditor(parent, options) {
   }, { root: parent.closest('.reader-scroll'), rootMargin: '60px' }) : null;
   function tableView(node) {
     const table = new TableView(node, 80);
+    const ignoreMutation = table.ignoreMutation.bind(table);
+    table.ignoreMutation = mutation => {
+      if (mutation.target === table.dom && mutation.type === 'childList' && [...mutation.addedNodes, ...mutation.removedNodes].every(node => node.nodeType === 1 && node.classList.contains('diagram-expand'))) return true;
+      if (mutation.target instanceof Element && mutation.target.closest('.diagram-expand')) return true;
+      return ignoreMutation(mutation);
+    };
     tableObserver?.observe(table.dom);
     table.destroy = () => { tableObserver?.unobserve(table.dom); nearbyTables.delete(table.dom); };
     return table;
@@ -712,34 +718,58 @@ export function createRichEditor(parent, options) {
         try { ledger = model.ledger = buildLedger(model.source, model.doc, { segments: model.segments }); } catch { return null; }
       }
       const owner = ledger?.owners?.find(entry => entry.pmFrom === pos && entry.type === 'code_block');
-      if (!owner || owner.confidence !== 'exact' || owner.supported === false) return null;
-      const lineEnd = model.source.indexOf('\n', owner.sourceFrom);
-      const end = lineEnd < 0 ? owner.sourceTo : Math.min(lineEnd, owner.sourceTo);
-      const line = model.source.slice(owner.sourceFrom, end).replace(/\r$/, '');
+      let sourceFrom, sourceTo;
+      if (owner?.confidence === 'exact' && owner.supported !== false) ({ sourceFrom, sourceTo } = owner);
+      else {
+        // Empty fenced blocks may not yet have a ledger owner. Their parsed
+        // top-level segment still supplies exact source boundaries.
+        let offset = 0;
+        const segment = model.segments.find(entry => { const match = offset === pos && entry.node.type === schema.nodes.code_block; offset += entry.node.nodeSize; return match; });
+        if (!segment || model.source.slice(segment.from, segment.to) !== segment.raw) return null;
+        sourceFrom = segment.from; sourceTo = segment.to;
+      }
+      const lineEnd = model.source.indexOf('\n', sourceFrom);
+      const end = lineEnd < 0 ? sourceTo : Math.min(lineEnd, sourceTo);
+      const line = model.source.slice(sourceFrom, end).replace(/\r$/, '');
       const match = /^( {0,3})(`{3,}|~{3,})([^\r\n]*)$/.exec(line);
       if (!match) return null;
-      const from = owner.sourceFrom + match[1].length + match[2].length;
-      return { from, to: owner.sourceFrom + line.length, value: match[3], fence: match[2] };
+      const from = sourceFrom + match[1].length + match[2].length;
+      return { from, to: sourceFrom + line.length, value: match[3], fence: match[2] };
     }
     function syncFenceInfo() {
       const range = fenceRange();
       fenceInfo.hidden = !range; fenceInfo.disabled = options.isLocked();
       if (range && document.activeElement !== fenceInfo) fenceInfo.value = range.value;
     }
-    function commitFenceInfo() {
+    function commitFenceInfo(focusEditor = true) {
       const range = fenceRange();
       if (!range || options.isLocked()) return;
       const value = fenceInfo.value;
       if (range.fence[0] === '`' && value.includes('`')) { options.message('Backticks are not allowed in a backtick fence info string.'); fenceInfo.value = range.value; return; }
-      if (value !== range.value) replaceLogicalSelection(value, 'command', { from: range.from, to: range.to, all: false, collapsed: false });
-      try { view.focus(); } catch {}
+      if (value !== range.value) replaceLogicalSelection(value, 'command', { from: range.from, to: range.to, all: false, collapsed: false }, { anchor: value.length + 1, head: value.length + 1 });
+      if (focusEditor) {
+        // Source offsets at an empty fence boundary can map to the following
+        // paragraph. Place the visible caret inside the code node explicitly.
+        let position = 0;
+        const segment = model.segments.find(entry => {
+          const match = entry.from <= range.from && range.from < entry.to && entry.node.type === schema.nodes.code_block;
+          if (!match) position += entry.node.nodeSize;
+          return match;
+        });
+        if (segment) {
+          const body = model.source.indexOf('\n', range.from) + 1;
+          view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, position + 1)));
+          if (body > 0) setBookmark(body, body, view.state);
+        }
+        try { view.focus(); } catch {}
+      }
     }
     fenceInfo.addEventListener('keydown', event => {
       event.stopPropagation();
       if (event.key === 'Enter') { event.preventDefault(); commitFenceInfo(); }
       else if (event.key === 'Escape') { event.preventDefault(); const range = fenceRange(); if (range) fenceInfo.value = range.value; try { view.focus(); } catch {} }
     });
-    fenceInfo.addEventListener('blur', () => { const range = fenceRange(); if (range) fenceInfo.value = range.value; });
+    fenceInfo.addEventListener('blur', () => commitFenceInfo(false));
     const drawing = document.createElement('div');
     // The native renderer already owns a safe, sanitized syntax highlighter.
     // Keep its tokens in a non-editable backing layer and leave the real
@@ -880,6 +910,7 @@ export function createRichEditor(parent, options) {
       codeHighlightObserver.observe(dom);
     }
     render(); refreshers.add(render);
+    requestAnimationFrame(() => { if (dom.isConnected) syncFenceInfo(); });
     return { dom, contentDOM: code, update(next) { if (next.type !== node.type) return false; if (next.sameMarkup(node) && next.textContent === node.textContent) { node = next; return true; } node = next; render(); return true; }, stopEvent: event => event.target === fenceInfo || event.target.classList?.contains('code-markdown-source'), ignoreMutation: mutation => mutation.type === 'attributes' || !pre.contains(mutation.target), destroy() { generation++; clearTimeout(renderTimer); clearTimeout(highlightTimer); highlightGeneration++; abortController?.abort(); codeHighlightObserver?.unobserve(dom); codeHighlights.delete(dom); refreshers.delete(render); } };
   }
   // Reading selections may start, cross and end inside a rendered projection
@@ -2153,18 +2184,41 @@ export function createRichEditor(parent, options) {
       mark.innerHTML = `<svg ${SLASH_ICON_SVG}><path d="m9 6 6 6-6 6"/></svg>`;
       return mark;
     }
-    function choose(item) {
+    async function choose(item) {
       const context = slashContext();
       if (!context) { closePopup(); return; }
-      const snippet = item.snippet || '';
-      const next = item.select
-        ? { anchor: item.select[0], head: item.select[1] }
+      let snippet = item.snippet || '';
+      let select = item.select;
+      if (['image', 'math', 'mermaid'].includes(item.id) && options.editValue) {
+        const original = model.source;
+        closePopup();
+        const value = await options.editValue(item.id === 'image'
+          ? { title: 'Insert image', value: '', placeholder: 'Paste an image link or enter a file path' }
+          : item.id === 'math'
+            ? { title: 'Insert math block', value: '', placeholder: 'Enter a LaTeX formula, for example a^2 + b^2' }
+            : { title: 'Insert Mermaid diagram', value: SLASH_MERMAID_BODY, placeholder: 'Enter a Mermaid diagram' });
+        if (value === null || options.isLocked() || model.source !== original || view.isDestroyed) { if (!view.isDestroyed) view.focus(); return; }
+        if (item.id === 'image') {
+          const destination = value.trim().replace(/\\/g, '\\\\');
+          const escaped = /\s/.test(destination) ? `<${destination.replace(/>/g, '\\>')}>` : destination.replace(/[()]/g, '\\$&');
+          snippet = `![image](${escaped})`;
+        } else if (item.id === 'math') snippet = `$$\n${value.trim()}\n$$`;
+        else snippet = `\`\`\`mermaid\n${value.trim()}\n\`\`\``;
+        select = null;
+      }
+      const next = select
+        ? { anchor: select[0], head: select[1] }
         : { anchor: snippet.length, head: snippet.length };
       closePopup();
       const outcome = replaceLogicalSelection(snippet, 'command',
         { from: start, to: context.head, all: false, collapsed: context.head === start + 1 }, next);
       if (!outcome.committed) options.message?.('This block could not be inserted into the Markdown source.');
       try { view.focus(); } catch {}
+      if (outcome.committed && item.id === 'code') {
+        const dom = view.domAtPos(view.state.selection.head).node;
+        const container = (dom instanceof Element ? dom : dom.parentElement)?.closest('.code-container');
+        requestAnimationFrame(() => container?.querySelector('.code-fence-info:not([hidden])')?.focus());
+      }
     }
     function rowFor(item, index, isSub) {
       const row = document.createElement('button');

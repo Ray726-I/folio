@@ -13,7 +13,6 @@ const legacyOutline = preferences.get('outline', null);
 if (preferences.get('outlineWidth', null) === null && typeof legacyOutline === 'number') preferences.set('outlineWidth', legacyOutline);
 let outlineVisible = preferences.get('outlineVisible', typeof legacyOutline === 'boolean' ? legacyOutline : true), toastTimer;
 let wideLayout = preferences.get('wideLayout', false);
-let formatToolbarVisible = preferences.get('formatToolbarVisible', true);
 function filePicker() { const value = preferences.get('filePicker', 'folio'); return value === 'native' ? 'native' : 'folio'; }
 function syncOpenAffordance() {
   const native = filePicker() === 'native';
@@ -151,7 +150,6 @@ function showDocument() {
   $('welcome').hidden = true; document.querySelector('.headerbar').hidden = false; $('document-tabs').hidden = false; $('document-view').hidden = false; $('statusbar').hidden = false;
   $('home').disabled = false;
   document.querySelectorAll('.document-control').forEach(control => { control.hidden = !current.active; });
-  setFormatToolbarVisible(formatToolbarVisible, false);
   if (!current.active) editorPresentation(false, false, false);
   $('disk-banner').hidden = true; saveStatus = current.saveStatus || null; updateTitle(); updateStats();
   // Opening a file keeps whichever dock mode is open, so picking from the tree
@@ -173,7 +171,7 @@ function showWelcome() {
   $('folder-search').hidden = true; $('search-divider').hidden = true; ++grepEpoch;
   document.body.classList.remove('focus-mode');
   document.querySelectorAll('.document-control').forEach(control => { control.hidden = true; });
-  setFormatToolbarVisible(formatToolbarVisible, false); editorPresentation(false, false, false);
+  editorPresentation(false, false, false);
   saveStatus = null; updateTitle(); updateStats();
 }
 function goHome() {
@@ -442,8 +440,8 @@ async function openPath(path, confirmed = false) {
   // the outgoing document must become immutable before the call starts. Keep
   // the guard through replacement and new-editor mounting, and always release.
   try {
-    setTransitionLocked(true);
     rememberDocument();
+    setTransitionLocked(true);
     const document = await invoke('open_document', { path, reuseExisting: !confirmed });
     if (!confirmed && document.documentId && documents.has(document.documentId)) return activateDocument(documents.get(document.documentId), false);
     ++renderGeneration;
@@ -733,8 +731,9 @@ function newDocument(sample = false) {
     // native reset resolves, so reject edits to the outgoing document now and
     // release the temporary guard after the new editor is in place or fails.
     try {
+      rememberDocument();
       setTransitionLocked(true);
-      rememberDocument(); const nativeDocument = await invoke('new_document'); ++renderGeneration;
+      const nativeDocument = await invoke('new_document'); ++renderGeneration;
       previewSnapshot = null;
       const content = sample ? SAMPLE : '';
       current = { ...nativeDocument, path: null, name: sample ? 'Welcome.md' : nativeDocument?.documentId ? `Untitled ${++unnamedNumber}.md` : 'Untitled.md', content, saved: sample && nativeDocument?.documentId ? '' : content, writable: true, active: true };
@@ -792,7 +791,6 @@ function allCommands() {
     { label: 'Toggle outline', icon: 'outline', action: () => setOutline(!outlineVisible) },
     { label: 'Toggle focus mode', icon: 'focus', action: toggleFocus },
     { label: wideLayout ? 'Use centered document width' : 'Use full document width', icon: wideLayout ? 'width-contract' : 'width-expand', action: toggleDocumentWidth },
-    { label: formatToolbarVisible ? 'Hide formatting toolbar' : 'Show formatting toolbar', icon: 'format', action: () => setFormatToolbarVisible(!formatToolbarVisible) },
     { label: 'Zoom in', icon: 'plus', shortcut: 'Ctrl+=', action: () => zoomWindow(.1) },
     { label: 'Zoom out', icon: 'minus', shortcut: 'Ctrl+-', action: () => zoomWindow(-.1) },
     { label: 'Reset window zoom', icon: 'refresh', shortcut: 'Ctrl+0', action: () => zoomWindow(0, true) },
@@ -1050,21 +1048,8 @@ function setDocumentWidth(full, persist = true) {
   if (persist) preferences.set('wideLayout', wideLayout);
 }
 function toggleDocumentWidth() { setDocumentWidth(!wideLayout); }
-function setFormatToolbarVisible(visible, persist = true) {
-  formatToolbarVisible = visible !== false;
-  $('format-tools').hidden = !formatToolbarVisible || !current.active || documentMode !== 'edit';
-  syncDocumentChrome();
-  const button = $('format-toggle');
-  button.setAttribute('aria-pressed', String(formatToolbarVisible));
-  button.setAttribute('aria-expanded', String(formatToolbarVisible));
-  const label = formatToolbarVisible ? 'Hide formatting toolbar' : 'Show formatting toolbar';
-  button.setAttribute('aria-label', label);
-  button.title = label;
-  if (persist) preferences.set('formatToolbarVisible', formatToolbarVisible);
-}
-
 function closeAllMenus(returnFocus = false) {
-  for (const id of ['open-menu', 'view-menu', 'format-menu', 'folio-menu', 'edit-menu', 'application-view-menu', 'go-menu', 'help-menu', 'document-mode-menu', 'document-more-menu', 'open-recent-menu', 'tree-menu']) {
+  for (const id of ['open-menu', 'view-menu', 'folio-menu', 'edit-menu', 'application-view-menu', 'go-menu', 'help-menu', 'document-mode-menu', 'document-more-menu', 'open-recent-menu', 'tree-menu']) {
     const menu = $(id);
     if (menu && !menu.hidden) {
       menu.hidden = true;
@@ -1119,7 +1104,6 @@ document.addEventListener('pointerdown', event => {
 
 // The document preferences panel owns its own open/close behaviour; every
 // other popup is still a menu.
-setupMenu('format-more', 'format-menu');
 
 $('home').onclick = goHome;
 $('open-file').onclick = $('welcome-open').onclick = openEntry;
@@ -1156,11 +1140,6 @@ $('new').onclick = () => newDocument(); $('sample').onclick = () => newDocument(
 $('save').onclick = () => requestSave();
 $('outline-close').onclick = () => setOutline(false);
 $('width-toggle').onclick = toggleDocumentWidth;
-$('format-toggle').onclick = () => setFormatToolbarVisible(!formatToolbarVisible);
-$('format-toolbar-close').onclick = () => {
-  setFormatToolbarVisible(false);
-  $('view-menu-button').focus();
-};
 $('zoom-in').onclick = () => zoomWindow(.1); $('zoom-out').onclick = () => zoomWindow(-.1); $('zoom-reset').onclick = () => zoomWindow(0, true);
 $('reload').onclick = () => { const owner = current; return enqueue(async () => { if (owner !== current || !owner.path || !(await allowDiscard())) return false; return openPath(owner.path, true); }); }; $('dismiss-disk').onclick = () => { $('disk-banner').hidden = true; };
 $('find-input').oninput = updateFind; $('find-next').onclick = () => nextFind(1); $('find-previous').onclick = () => nextFind(-1); $('find-close').onclick = closeFind;
@@ -1281,7 +1260,7 @@ Your files stay yours. This sample is just a starting point.[^1]
 async function start() {
   initializePanes(); initializeChrome(); initializeFolderSearch();
   $('all-documents').onclick = () => { openCommands(); commandScope = 'documents'; $('command-search').placeholder = 'Search open documents…'; $('command-search').value = ''; commandRows = [...documents.values()].map(doc => ({ label: doc.name, detail: doc.path || 'Unsaved document', icon: 'file', action: () => enqueue(() => activateDocument(doc)) })).map(commandRow); filterCommands(); };
-  zoomText(0); zoomWindow(0); renderRecent(); setDocumentWidth(wideLayout, false); setFormatToolbarVisible(formatToolbarVisible, false);
+  zoomText(0); zoomWindow(0); renderRecent(); setDocumentWidth(wideLayout, false);
   syncOpenAffordance();
   applyTheme(selectedTheme, false); applyReadingFont(readingFont, false);
   if (!window.__TAURI__) { toast('Open Folio from your app menu to enable file access.'); return; }

@@ -54,7 +54,6 @@
     <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
     <symbol id="i-unlock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 7.6-2"/></symbol>
     <symbol id="i-code" viewBox="0 0 24 24"><path d="m9 8-4 4 4 4M15 8l4 4-4 4"/></symbol>
-    <symbol id="i-format" viewBox="0 0 24 24"><path d="M6 16 10 6l4 10M7.5 13h5M5 20h14"/></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.35 5.65M20 5v6h-6"/></symbol>
     <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
     <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></symbol>
@@ -141,7 +140,6 @@
             <section class="preference-group">
               <h3 class="preference-heading">Layout</h3>
               <button id="width-toggle" class="preference-action" type="button" aria-pressed="false" aria-label="Use full document width" title="Use full document width"><svg class="icon preference-action-icon" aria-hidden="true"><use href="#i-width-expand"/></svg><span class="menu-text">Full document width</span><svg class="icon preference-check" aria-hidden="true"><use href="#i-check"/></svg></button>
-              <button id="format-toggle" class="preference-action" type="button" aria-pressed="true" aria-expanded="true" aria-controls="format-tools" aria-label="Hide formatting toolbar" title="Hide formatting toolbar"><svg class="icon preference-action-icon" aria-hidden="true"><use href="#i-format"/></svg><span class="menu-text">Formatting toolbar</span><svg class="icon preference-check" aria-hidden="true"><use href="#i-check"/></svg></button>
             </section>
           </div>
           <footer class="preferences-foot">
@@ -223,27 +221,6 @@
           <button id="find-close" class="icon-button" aria-label="Close search"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
         </div>
         <div id="replace-bar" class="find-bar" hidden><input id="replace-input" placeholder="Replace with…" aria-label="Replace with"><button id="replace-one" class="button small">Replace</button><button id="replace-all" class="button small">Replace all</button></div>
-        <div id="format-tools" class="editor-toolbar" role="toolbar" aria-label="Document formatting">
-          <button class="button small ghost" data-editor-command="bold" aria-label="Bold" title="Bold (Ctrl+B)"><strong>B</strong></button>
-          <button class="button small ghost" data-editor-command="italic" aria-label="Italic" title="Italic (Ctrl+I)"><em>I</em></button>
-          <button class="button small ghost" data-editor-command="code">Code</button>
-          <button class="button small ghost" data-editor-command="heading">Heading</button>
-          <button class="button small ghost" data-editor-command="bullet">Bullet</button>
-          <button class="button small ghost" data-editor-command="numbered">Numbered</button>
-          <button class="button small ghost" data-editor-command="quote">Quote</button>
-          <div class="menu-group format-menu-group">
-            <button id="format-more" class="button small ghost" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="format-menu">Insert<svg class="icon format-more-caret" aria-hidden="true"><use href="#i-caret"/></svg></button>
-            <div id="format-menu" class="menu" role="menu" hidden>
-              <button class="menu-item" role="menuitem" data-editor-command="link">Link</button>
-              <button class="menu-item" role="menuitem" data-editor-command="image">Image</button>
-              <button class="menu-item" role="menuitem" data-editor-command="math">Math</button>
-              <button class="menu-item" role="menuitem" data-editor-command="table">Table</button>
-            </div>
-          </div>
-          <button id="format-toolbar-close" class="icon-button" type="button" title="Hide formatting toolbar" aria-label="Hide formatting toolbar">
-            <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
-          </button>
-        </div>
         <div id="editor-lock-note" class="editor-note" role="status" hidden>Locked · You can select, copy, follow links and load images. Unlock to make changes.</div>
         <div id="editor-notice" class="editor-note" role="status" hidden>This document is too large or complex to format. Its complete Markdown is shown below, read-only; saving still writes the file unchanged.</div>
         <div id="reader-scroll" class="reader-scroll" tabindex="0" aria-label="Markdown document">

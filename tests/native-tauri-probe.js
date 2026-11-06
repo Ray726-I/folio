@@ -527,8 +527,6 @@
       const lockedText = instance.getText();
       const lockedEditable = lockedRoot.getAttribute('contenteditable');
       const lockNoteVisible = !document.getElementById('editor-lock-note').hidden;
-      const toolbarDisabled = [...document.querySelectorAll('#format-tools button:not(#format-toolbar-close)')]
-        .every(button => button.disabled);
       const mutationErrors = [];
       try {
         instance.replaceContent(lockedText + '\n\nLOCKED BY REPLACE\n');
@@ -555,7 +553,6 @@
         lockedEditable,
         unlockedEditable,
         lockNoteVisible,
-        toolbarDisabled,
         undoWhileLocked,
         lockedUnchanged,
         lockedDomClean,
@@ -563,7 +560,6 @@
         pass: lockedEditable === 'false' &&
           unlockedEditable === 'true' &&
           lockNoteVisible &&
-          toolbarDisabled &&
           undoWhileLocked === false &&
           lockedUnchanged &&
           lockedDomClean
