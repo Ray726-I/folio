@@ -92,60 +92,7 @@
     </section>
 
     <div id="recovery-warning" role="alert" hidden></div>
-    <div id="document-tabs" class="document-tabs" hidden><div id="tab-list" role="tablist" aria-label="Open documents"></div><button id="all-documents" class="icon-button" aria-label="All documents" title="All documents"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></button></div>
-    <div id="document-view" class="document-view" hidden>
-      <nav class="navigation-rail" aria-label="Sidebar">
-        <div class="rail-dock">
-          <button type="button" data-rail-action="find" aria-label="Search document" aria-controls="find-bar" aria-pressed="false" title="Search folder contents (Ctrl+Shift+F); find in document without a folder"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></button>
-          <span class="rail-separator" aria-hidden="true"></span>
-          <button type="button" data-dock-tab="outline" aria-label="Contents" aria-controls="outline" aria-pressed="false" title="Contents — click again to close"><svg class="icon" aria-hidden="true"><use href="#i-outline"/></svg></button>
-          <button type="button" data-dock-tab="files" aria-label="Files" aria-controls="file-browser" aria-pressed="false" title="Files — click again to close"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg></button>
-        </div>
-      </nav>
-      <aside id="folder-search" class="sidebar" aria-label="Search in folder" hidden>
-        <div class="sidebar-head"><div class="sidebar-heading"><h2>Search</h2><p id="folder-search-root" class="sidebar-meta"></p></div><button id="folder-search-close" class="icon-button tiny" aria-label="Close folder search"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div>
-        <div class="folder-search-query"><input id="folder-search-input" type="search" aria-label="Search folder contents" placeholder="Search in files…" spellcheck="false"></div>
-        <p id="folder-search-status" class="folder-search-status" role="status" aria-live="polite">Type to search folder contents.</p>
-        <div id="folder-search-results" class="sidebar-scroll" aria-label="Folder content matches"></div>
-      </aside>
-      <div id="search-divider" class="sidebar-resizer" role="separator" aria-label="Resize search sidebar" aria-orientation="vertical" tabindex="0" hidden></div>
-      <aside id="outline" class="sidebar" hidden aria-label="Document contents">
-        <div class="sidebar-head">
-          <div class="sidebar-heading">
-            <h2>Outline</h2>
-            <p id="outline-count" class="sidebar-meta" role="status" aria-live="polite" aria-atomic="true">No headings</p>
-          </div>
-          <div class="sidebar-actions"><button id="outline-close" class="icon-button tiny" title="Close contents" aria-label="Close contents">
-            <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
-          </button></div>
-        </div>
-        <nav id="outline-items" class="sidebar-scroll" aria-label="Document outline"></nav>
-      </aside>
-      <div id="outline-divider" class="sidebar-resizer" role="separator" aria-label="Resize contents sidebar" aria-orientation="vertical" tabindex="0" hidden></div>
-
-      <aside id="file-browser" class="sidebar" aria-label="File tree" hidden>
-        <div class="sidebar-head">
-          <div class="sidebar-heading">
-            <h2>Files</h2>
-            <p id="folder-name" class="sidebar-meta"></p>
-          </div>
-          <div class="sidebar-actions">
-            <button id="folder-new" class="button tree-new-button" aria-label="New file or folder" aria-haspopup="menu" aria-expanded="false" aria-controls="tree-menu">New</button>
-            <button id="folder-refresh" class="icon-button tiny" title="Refresh file tree" aria-label="Refresh file tree">
-              <svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>
-            </button>
-            <button id="folder-close" class="icon-button tiny" title="Close file tree" aria-label="Close file tree">
-              <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
-            </button>
-          </div>
-        </div>
-        <nav id="folder-items" class="sidebar-scroll" aria-label="Markdown files in folder"></nav>
-        <button id="dock-open-folder" class="button ghost" hidden>Open folder</button>
-      </aside>
-      <div id="folder-divider" class="sidebar-resizer" role="separator" aria-label="Resize folder sidebar" aria-orientation="vertical" tabindex="0" hidden></div>
-
-      <div class="document-body">
-  <header class="headerbar">
+    <div id="document-tabs" class="document-tabs" hidden><div class="top-rail"><button type="button" data-rail-action="find" aria-label="Search document" aria-controls="find-bar" aria-pressed="false" title="Search folder contents (Ctrl+Shift+F); find in document without a folder"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></button></div><div id="tab-list" role="tablist" aria-label="Open documents"></div><button id="all-documents" class="icon-button" aria-label="All documents" title="All documents" hidden><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></button><header class="headerbar">
     <div class="header-start"><svg class="icon document-emblem" aria-hidden="true"><use href="#i-file"/></svg></div>
     <div class="window-title"><div class="window-title-line"><span id="document-name">Folio</span><span id="dirty-dot" class="dirty-dot" aria-label="Unsaved changes" hidden></span></div><div id="document-location" class="subtitle">Markdown, one file at a time</div></div>
     <div class="header-end">
@@ -208,7 +155,60 @@
       <button id="save" class="icon-button document-control" title="Save (Ctrl+S)" aria-label="Save" hidden><svg class="icon" aria-hidden="true"><use href="#i-save"/></svg></button>
       <div class="menu-group document-control" id="document-more-group" hidden><button id="document-more-button" class="icon-button" aria-label="Additional document actions" aria-haspopup="menu" aria-expanded="false" aria-controls="document-more-menu"><svg class="icon" aria-hidden="true"><use href="#i-more"/></svg></button><div id="document-more-menu" class="menu menu-right" role="menu" aria-label="Document actions" hidden><button class="menu-item" role="menuitem" data-app-action="find"><span class="menu-text">Find in document</span><span class="menu-hint">Ctrl+F</span></button><div class="menu-separator" role="separator"></div><button  class="menu-item" role="menuitem" data-app-action="copy-path"><span class="menu-text">Copy document path</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="reveal"><span class="menu-text">Reveal in file manager</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="rename"><span class="menu-text">Rename…</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="duplicate"><span class="menu-text">Duplicate…</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="pdf"><span class="menu-text">Export as PDF…</span><span class="menu-hint"></span></button><button  class="menu-item" role="menuitem" data-app-action="html"><span class="menu-text">Export as HTML…</span><span class="menu-hint"></span></button><button class="menu-item" role="menuitem" data-app-action="recovery"><span class="menu-text">Recover documents…</span></button><button  class="menu-item" role="menuitem" data-app-action="close"><span class="menu-text">Close document</span><span class="menu-hint"></span></button></div></div>
     </div>
-  </header>
+  </header></div>
+    <div id="document-view" class="document-view" hidden>
+      <nav class="navigation-rail" aria-label="Sidebar">
+        <div class="rail-dock">
+
+
+          <button type="button" data-dock-tab="outline" aria-label="Contents" aria-controls="outline" aria-pressed="false" title="Contents — click again to close"><svg class="icon" aria-hidden="true"><use href="#i-outline"/></svg></button>
+          <button type="button" data-dock-tab="files" aria-label="Files" aria-controls="file-browser" aria-pressed="false" title="Files — click again to close"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg></button>
+        </div>
+      </nav>
+      <aside id="folder-search" class="sidebar" aria-label="Search in folder" hidden>
+        <div class="sidebar-head"><div class="sidebar-heading"><h2>Search</h2><p id="folder-search-root" class="sidebar-meta"></p></div><button id="folder-search-close" class="icon-button tiny" aria-label="Close folder search"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div>
+        <div class="folder-search-query"><input id="folder-search-input" type="search" aria-label="Search folder contents" placeholder="Search in files…" spellcheck="false"></div>
+        <p id="folder-search-status" class="folder-search-status" role="status" aria-live="polite">Type to search folder contents.</p>
+        <div id="folder-search-results" class="sidebar-scroll" aria-label="Folder content matches"></div>
+      </aside>
+      <div id="search-divider" class="sidebar-resizer" role="separator" aria-label="Resize search sidebar" aria-orientation="vertical" tabindex="0" hidden></div>
+      <aside id="outline" class="sidebar" hidden aria-label="Document contents">
+        <div class="sidebar-head">
+          <div class="sidebar-heading">
+            <h2>Outline</h2>
+            <p id="outline-count" class="sidebar-meta" role="status" aria-live="polite" aria-atomic="true">No headings</p>
+          </div>
+          <div class="sidebar-actions"><button id="outline-close" class="icon-button tiny" title="Close contents" aria-label="Close contents">
+            <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+          </button></div>
+        </div>
+        <nav id="outline-items" class="sidebar-scroll" aria-label="Document outline"></nav>
+      </aside>
+      <div id="outline-divider" class="sidebar-resizer" role="separator" aria-label="Resize contents sidebar" aria-orientation="vertical" tabindex="0" hidden></div>
+
+      <aside id="file-browser" class="sidebar" aria-label="File tree" hidden>
+        <div class="sidebar-head">
+          <div class="sidebar-heading">
+            <h2>Files</h2>
+            <p id="folder-name" class="sidebar-meta"></p>
+          </div>
+          <div class="sidebar-actions">
+            <button id="folder-new" class="icon-button tiny" aria-label="New file or folder" title="New file or folder" aria-haspopup="menu" aria-expanded="false" aria-controls="tree-menu"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg></button>
+            <button id="folder-refresh" class="icon-button tiny" title="Refresh file tree" aria-label="Refresh file tree">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>
+            </button>
+            <button id="folder-close" class="icon-button tiny" title="Close file tree" aria-label="Close file tree">
+              <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+            </button>
+          </div>
+        </div>
+        <nav id="folder-items" class="sidebar-scroll" aria-label="Markdown files in folder"></nav>
+        <button id="dock-open-folder" class="button ghost" hidden>Open folder</button>
+      </aside>
+      <div id="folder-divider" class="sidebar-resizer" role="separator" aria-label="Resize folder sidebar" aria-orientation="vertical" tabindex="0" hidden></div>
+
+      <div class="document-body">
+
         <div id="disk-banner" class="disk-banner" role="status" hidden>
           <span>This file changed on disk.</span>
           <button id="reload" class="button small">Reload</button>

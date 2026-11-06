@@ -48,6 +48,8 @@ const { openEditor } = require('./editor-browser.cjs');
   await page.evaluate(() => window.failOperation = null); await page.keyboard.press('Enter');
   await page.waitForSelector('.folder-entry[data-path="/work/renamed.md"]');
   assert.equal(await page.evaluate(() => current.path),'/work/a.md');
+  assert.equal(await page.locator('#folder-new use').getAttribute('href'), '#i-plus');
+  assert.equal(await page.locator('#folder-new').getAttribute('aria-label'), 'New file or folder');
   await page.click('#folder-new'); await page.locator('#tree-menu').getByRole('menuitem',{name:'New file',exact:true}).click();
   assert.deepEqual(await page.locator('#tree-name-input').evaluate(e => [e.selectionStart,e.selectionEnd]), [0,8], 'new files select the stem');
   await page.fill('#tree-name-input','new note'); await page.keyboard.press('Enter');

@@ -22,7 +22,7 @@
     "bench:editor": "node scripts/bench-editor.cjs",
     "test:native-ime": "bash tests/native-editor-ime.sh",
     "bench:interactions": "node scripts/bench-interactions.cjs",
-    "test:workspace": "node tests/workspace-recovery.cjs && node tests/workspace-browser.cjs && node tests/workspace-failures.cjs && node tests/file-tree-operations.cjs && node tests/workspace-panes.cjs"
+    "test:workspace": "node tests/workspace-recovery.cjs && node tests/workspace-browser.cjs && node tests/workspace-failures.cjs && node tests/file-tree-operations.cjs && node tests/workspace-panes.cjs && node tests/two-row-header.cjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.12.4",

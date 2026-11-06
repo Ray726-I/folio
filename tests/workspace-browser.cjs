@@ -48,6 +48,8 @@ const { openEditor } = require('./editor-browser.cjs');
   });
   assert.equal(saved.baseline, 'snapshot A'); assert.equal(saved.content, 'later A');
   assert.equal(saved.state, null, 'inactive save cannot change the active tab save indicator');
+  await page.evaluate(() => { $('tab-list').style.flex = '0 0 100px'; syncTabOverflow(); });
+  await page.waitForSelector('#all-documents:not([hidden])');
   await page.click('#all-documents');
   await page.fill('#command-search', 'a.md');
   assert.equal(await page.locator('#command-list button').count(), 1, 'all documents is searchable');

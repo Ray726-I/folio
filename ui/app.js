@@ -148,7 +148,7 @@ function setLineEnding(lineEnding) {
   $('line-ending').textContent = lineEnding ? ` · ${lineEnding}` : '';
 }
 function showDocument() {
-  $('welcome').hidden = true; $('document-view').hidden = false; $('statusbar').hidden = false;
+  $('welcome').hidden = true; document.querySelector('.headerbar').hidden = false; $('document-tabs').hidden = false; $('document-view').hidden = false; $('statusbar').hidden = false;
   $('home').disabled = false;
   document.querySelectorAll('.document-control').forEach(control => { control.hidden = !current.active; });
   setFormatToolbarVisible(formatToolbarVisible, false);
@@ -164,7 +164,7 @@ function showDocument() {
 }
 function showWelcome() {
   editor?.destroy(); editor = null; editorDocument = null; cancelMermaidPending();
-  $('welcome').hidden = false; $('document-view').hidden = true; $('statusbar').hidden = true;
+  $('welcome').hidden = false; document.querySelector('.headerbar').hidden = true; $('document-view').hidden = true; $('statusbar').hidden = true;
   $('home').disabled = true;
   $('preview').replaceChildren(); $('folder-empty').hidden = true;
   $('disk-banner').hidden = true; $('find-bar').hidden = true;
@@ -876,12 +876,13 @@ function filterCommands() {
   selectedCommand = Math.max(0, Math.min(selectedCommand, filteredRows.length - 1));
   $('command-list').replaceChildren(...filteredRows.map(row => row.element));
   $('command-empty').hidden = filteredRows.length > 0;
-  $('command-scope').textContent = commandScope === 'themes' ? 'Appearance' : query ? 'Search results' : 'Commands';
+  $('command-scope').textContent = commandScope === 'themes' ? 'Appearance' : commandScope === 'documents' ? 'Open documents' : query ? 'Search results' : 'Commands';
   $('palette-hint').hidden = commandScope !== 'themes';
   $('command-results').scrollTop = 0;
   updateActiveCommand();
 }
 function openCommands(scope = 'commands') {
+  $('command-search').placeholder = 'Search commands or themes…';
   if ($('confirm-dialog').open) return;
   closeAllMenus();
   commandScope = scope;
@@ -1279,7 +1280,7 @@ Your files stay yours. This sample is just a starting point.[^1]
 
 async function start() {
   initializePanes(); initializeChrome(); initializeFolderSearch();
-  $('all-documents').onclick = () => { openCommands(); $('command-search').value = ''; commandRows = [...documents.values()].map(doc => ({ label: doc.name, detail: doc.path || 'Unsaved document', icon: 'file', action: () => enqueue(() => activateDocument(doc)) })).map(commandRow); filterCommands(); };
+  $('all-documents').onclick = () => { openCommands(); commandScope = 'documents'; $('command-search').placeholder = 'Search open documents…'; $('command-search').value = ''; commandRows = [...documents.values()].map(doc => ({ label: doc.name, detail: doc.path || 'Unsaved document', icon: 'file', action: () => enqueue(() => activateDocument(doc)) })).map(commandRow); filterCommands(); };
   zoomText(0); zoomWindow(0); renderRecent(); setDocumentWidth(wideLayout, false); setFormatToolbarVisible(formatToolbarVisible, false);
   syncOpenAffordance();
   applyTheme(selectedTheme, false); applyReadingFont(readingFont, false);

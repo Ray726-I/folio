@@ -4413,3 +4413,19 @@ main { display:flex; flex-direction:column; }
 .pane-narrow #pane-divider { display:none; }
 
 .companion-reader-scroll { flex:1; min-height:0; overflow:auto; scrollbar-gutter:stable; }
+
+/* Compact document chrome: search, tabs and document actions share one row. */
+.document-tabs { padding:0; min-height:40px; container:document-toolbar / inline-size; }
+.document-tabs .top-rail { width:44px; height:40px; flex:none; display:grid; place-items:center; background:var(--surface); border-right:1px solid var(--line); }
+.top-rail button { width:34px; height:34px; display:grid; place-items:center; border:0; border-radius:6px; background:transparent; color:var(--muted); cursor:pointer; }
+.top-rail button:hover { background:var(--hover); color:var(--fg); }
+.top-rail button:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+.top-rail .icon { width:18px; height:18px; }
+.document-tabs .headerbar { container-type:normal; flex:none; min-height:40px; padding:0 10px; border:0; background:transparent; }
+.document-tabs .header-start,.document-tabs .window-title { display:none; }
+.document-tabs .header-end { gap:5px; }
+.document-tabs #tab-list { align-self:stretch; }
+.document-tabs .document-tab { padding-left:12px; }
+.document-tabs #all-documents[hidden] { display:none; }
+@media(pointer:coarse) { .document-tabs .top-rail { height:48px; } .top-rail button { width:44px; height:44px; } }
+.document-tabs .headerbar[hidden] { display:none; }
