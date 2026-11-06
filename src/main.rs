@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod document;
+mod file_operations;
 mod markdown;
 mod recovery;
 mod renderer;
@@ -35,6 +36,7 @@ struct AppState {
     documents: Mutex<workspace::Registry>,
     recovery: Mutex<Option<recovery::Store>>,
     folder: Mutex<Option<PathBuf>>,
+    folder_scope: Mutex<Option<Arc<file_operations::Scope>>>,
     pending: Mutex<Vec<String>>,
     picker_active: Mutex<bool>,
     renderer: Mutex<Transport>,
@@ -299,6 +301,7 @@ fn bootstrap(
 #[tauri::command(async)]
 fn open_document(
     path: String,
+    reuse_existing: Option<bool>,
     webview: tauri::Webview,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<Document, String> {
@@ -306,7 +309,11 @@ fn open_document(
     if *state.picker_active.lock().unwrap() {
         return Err("Finish choosing a file or folder first.".into());
     }
-    let (_, data) = state.documents.lock().unwrap().open(Path::new(&path))?;
+    let (_, data) = state
+        .documents
+        .lock()
+        .unwrap()
+        .open_with_reuse(Path::new(&path), reuse_existing.unwrap_or(false))?;
     Ok(data)
 }
 
@@ -327,6 +334,7 @@ fn open_folder(
         return Err("Choose a folder to open.".into());
     }
     let (entries, truncated, skipped) = scan_folder(&path)?;
+    *state.folder_scope.lock().unwrap() = Some(Arc::new(file_operations::Scope::new(&path)?));
     *state.folder.lock().unwrap() = Some(path.clone());
     Ok(FolderListing {
         name: path
@@ -339,6 +347,136 @@ fn open_folder(
         truncated,
         skipped,
     })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileSessionChange {
+    document_id: String,
+    path: Option<String>,
+    name: String,
+}
+#[derive(Serialize)]
+struct FileOperationResult {
+    #[serde(flatten)]
+    outcome: file_operations::Outcome,
+    documents: Vec<FileSessionChange>,
+}
+#[tauri::command(async)]
+fn file_operation(
+    action: String,
+    path: String,
+    destination: Option<String>,
+    content: Option<String>,
+    webview: tauri::Webview,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<FileOperationResult, String> {
+    renderer::ensure_main(webview.label())?;
+    let folder = state
+        .folder_scope
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("Open a workspace folder first.")?;
+    let mut registry = state.documents.lock().unwrap();
+    perform_workspace_operation(
+        &mut registry,
+        &folder,
+        &action,
+        Path::new(&path),
+        destination.as_deref().map(Path::new),
+        content.as_deref(),
+    )
+}
+fn perform_workspace_operation(
+    registry: &mut workspace::Registry,
+    folder: &file_operations::Scope,
+    action: &str,
+    path: &Path,
+    destination: Option<&Path>,
+    content: Option<&str>,
+) -> Result<FileOperationResult, String> {
+    let normalized;
+    let path = if ["move", "rename", "trash"].contains(&action) {
+        normalized = folder.validated_source(path)?;
+        normalized.as_path()
+    } else {
+        path
+    };
+    let source_directory = path.is_dir();
+    let mut affected = Vec::new();
+    if ["move", "rename", "trash"].contains(&action) {
+        for (id, document) in &registry.sessions {
+            let Some(document) = document else {
+                continue;
+            };
+            let ancestor = document.path.ancestors().find(|ancestor| {
+                *ancestor == path
+                    || (source_directory
+                        && same_file::is_same_file(ancestor, path).unwrap_or(false))
+            });
+            if let Some(ancestor) = ancestor {
+                if document::changed_exact(document) {
+                    return Err("An affected open file changed on disk. Reload it before moving or trashing it.".into());
+                }
+                affected.push((
+                    id.clone(),
+                    document.clone(),
+                    document.path.strip_prefix(ancestor).unwrap().to_path_buf(),
+                ));
+            }
+        }
+    }
+    let outcome = folder.perform(action, path, destination, content)?;
+    let mut documents = Vec::new();
+    if outcome.old_path.is_some() {
+        for (id, mut document, suffix) in affected {
+            match &outcome.path {
+                Some(path) => {
+                    document.path = if suffix.as_os_str().is_empty() {
+                        PathBuf::from(path)
+                    } else {
+                        Path::new(path).join(suffix)
+                    };
+                    documents.push(FileSessionChange {
+                        document_id: id.clone(),
+                        path: Some(document.path.to_string_lossy().into()),
+                        name: document
+                            .path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into(),
+                    });
+                    registry.sessions.insert(id, Some(document));
+                }
+                None => {
+                    documents.push(FileSessionChange {
+                        document_id: id.clone(),
+                        path: None,
+                        name: document
+                            .path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into(),
+                    });
+                    registry.recovery_origins.insert(
+                        id.clone(),
+                        (
+                            Some(document.path.to_string_lossy().into()),
+                            Some(document.fingerprint.clone()),
+                        ),
+                    );
+                    registry
+                        .encoding
+                        .insert(id.clone(), (document.bom, document.crlf));
+                    registry.sessions.insert(id, None);
+                }
+            }
+        }
+    }
+    Ok(FileOperationResult { outcome, documents })
 }
 
 #[tauri::command]
@@ -2143,6 +2281,7 @@ fn main() {
             bootstrap,
             open_document,
             open_folder,
+            file_operation,
             browse_directory,
             path_is_directory,
             set_task_checked,
@@ -2261,5 +2400,68 @@ mod document_action_tests {
                 .unwrap()
                 .truncated
         );
+    }
+}
+
+#[cfg(test)]
+mod file_operation_tests {
+    use super::*;
+    #[test]
+    fn renamed_open_file_can_save_to_its_new_path() {
+        let root = tempfile::tempdir().unwrap();
+        let old = root.path().join("a.md");
+        let new = root.path().join("b.md");
+        fs::write(&old, "original").unwrap();
+        let mut registry = workspace::Registry::default();
+        let (id, _) = registry.open(&old).unwrap();
+        perform_workspace_operation(
+            &mut registry,
+            &file_operations::Scope::new(root.path()).unwrap(),
+            "rename",
+            &old,
+            Some(&new),
+            None,
+        )
+        .unwrap();
+        let moved = registry.get(Some(&id)).unwrap().unwrap();
+        assert_eq!(fs::read_to_string(&moved.path).unwrap(), "original");
+        let saved = registry.save(&id, &moved.path, "edited", false).unwrap();
+        assert_eq!(saved.path, new.canonicalize().unwrap());
+        assert!(!old.exists());
+    }
+    #[test]
+    fn moving_directory_updates_all_open_descendants_and_rejects_changed_files() {
+        let root = tempfile::tempdir().unwrap();
+        let old = root.path().join("notes");
+        fs::create_dir(&old).unwrap();
+        let file = old.join("a.md");
+        fs::write(&file, "original").unwrap();
+        let mut registry = workspace::Registry::default();
+        let (id, _) = registry.open(&file).unwrap();
+        let new = root.path().join("moved");
+        fs::write(&file, "external").unwrap();
+        assert!(perform_workspace_operation(
+            &mut registry,
+            &file_operations::Scope::new(root.path()).unwrap(),
+            "move",
+            &old,
+            Some(&new),
+            None
+        )
+        .is_err());
+        assert!(old.exists());
+        assert!(!new.exists());
+        registry.open(&file).unwrap();
+        perform_workspace_operation(
+            &mut registry,
+            &file_operations::Scope::new(root.path()).unwrap(),
+            "move",
+            &old,
+            Some(&new),
+            None,
+        )
+        .unwrap();
+        let moved = registry.get(Some(&id)).unwrap().unwrap();
+        assert_eq!(fs::read_to_string(moved.path).unwrap(), "external");
     }
 }

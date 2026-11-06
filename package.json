@@ -21,7 +21,8 @@
     "bench:keystrokes": "node scripts/bench-keystrokes.cjs",
     "bench:editor": "node scripts/bench-editor.cjs",
     "test:native-ime": "bash tests/native-editor-ime.sh",
-    "bench:interactions": "node scripts/bench-interactions.cjs"
+    "bench:interactions": "node scripts/bench-interactions.cjs",
+    "test:workspace": "node tests/workspace-recovery.cjs && node tests/workspace-browser.cjs && node tests/workspace-failures.cjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.12.4",

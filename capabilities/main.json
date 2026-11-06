@@ -24,6 +24,7 @@
       "allow-bootstrap",
       "allow-open-document",
       "allow-open-folder",
+      "allow-file-operation",
       "allow-browse-directory",
       "allow-path-is-directory",
       "allow-set-task-checked",

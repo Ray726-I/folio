@@ -184,7 +184,7 @@ pub fn changed(document: &OpenDocument) -> bool {
 /// external edit can preserve both the file length and its mtime (`touch -r`,
 /// coarse timestamp filesystems, editors that restore timestamps), and silently
 /// overwriting it would lose data.
-fn changed_exact(document: &OpenDocument) -> bool {
+pub(crate) fn changed_exact(document: &OpenDocument) -> bool {
     read_bytes(&document.path)
         .map(|(bytes, _)| fingerprint(&bytes) != document.fingerprint)
         .unwrap_or(true)

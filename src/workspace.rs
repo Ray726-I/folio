@@ -50,7 +50,15 @@ impl Registry {
             _ => Ok(self.sessions[&self.id(id)?].clone()),
         }
     }
+    #[cfg(test)]
     pub fn open(&mut self, path: &Path) -> Result<(String, Document), String> {
+        self.open_with_reuse(path, false)
+    }
+    pub fn open_with_reuse(
+        &mut self,
+        path: &Path,
+        reuse: bool,
+    ) -> Result<(String, Document), String> {
         let (document, mut data) = document::load(path)?;
         let id = self
             .sessions
@@ -58,7 +66,9 @@ impl Registry {
             .find(|(_, item)| item.as_ref().is_some_and(|item| item.path == document.path))
             .map(|(id, _)| id.clone())
             .unwrap_or_else(fresh_id);
-        self.sessions.insert(id.clone(), Some(document));
+        if !reuse || !self.sessions.contains_key(&id) {
+            self.sessions.insert(id.clone(), Some(document));
+        }
         self.active = Some(id.clone());
         data.document_id = id.clone();
         Ok((id, data))
@@ -139,6 +149,17 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reusing_an_open_tab_does_not_refresh_its_save_baseline() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.md");
+        std::fs::write(&path, "old").unwrap();
+        let mut registry = Registry::default();
+        let (id, _) = registry.open(&path).unwrap();
+        std::fs::write(&path, "external").unwrap();
+        assert_eq!(registry.open_with_reuse(&path, true).unwrap().0, id);
+        assert!(registry.save(&id, &path, "edited", false).is_err());
+    }
     #[test]
     fn reopening_refreshes_the_disk_baseline() {
         let dir = tempfile::tempdir().unwrap();

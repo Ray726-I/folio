@@ -188,6 +188,7 @@ function scheduleDocumentPreferences() {
 }
 function applyDocumentPreferences() {
   if (preferenceFrame) { cancelAnimationFrame(preferenceFrame); preferenceFrame = 0; }
+  $('preference-restore-session').checked = preferences.get('restoreSession', true) !== false;
   $('preference-open-edit').checked = preferences.get('openInEditMode', true) !== false;
   $('preference-touchpad-zoom-row').hidden = nativePlatform !== 'linux';
   $('preference-touchpad-zoom').checked = touchpadZoom;
@@ -284,6 +285,7 @@ function initializePreferencesPanel() {
       applyDocumentPreferences();
     });
   }
+  $('preference-restore-session').onchange = event => preferences.set('restoreSession', event.target.checked);
   $('preference-open-edit').onchange = event => preferences.set('openInEditMode', event.target.checked);
   $('preference-touchpad-zoom').onchange = event => setTouchpadZoom(event.target.checked);
   for (const name of ['tasks', 'tables', 'code']) $('preference-' + name).onchange = event => { preferences.set('render-' + name, event.target.checked); applyDocumentPreferences(); };
@@ -371,7 +373,7 @@ function runAppAction(action) {
   closeAllMenus();
   const actions = {
     open: openEntry, folder: openFolderEntry, new: () => newDocument(), home: goHome,
-    commands: openCommands, save: () => requestSave(), 'save-as': () => requestSave(true), close: closeDocument, quit: requestClose,
+    recovery: reviewRecovery, commands: openCommands, save: () => requestSave(), 'save-as': () => requestSave(true), close: closeDocument, quit: requestClose,
     undo: () => { undoRedo(); syncDocumentMode(); }, redo: () => { undoRedo(true); syncDocumentMode(); },
     cut: () => editClipboard('cut'), copy: () => editClipboard('copy'), paste: () => editClipboard('paste'), 'select-all': () => editClipboard('select-all'),
     find: openFind, 'folder-search': openFolderSearch, replace: openReplace, files: () => toggleDock('files'), outline: () => toggleDock('outline'),
@@ -384,14 +386,15 @@ function runAppAction(action) {
     documentation: () => invoke('open_link', { url: 'https://github.com/Ray726-I/folio#readme' }),
     issue: () => invoke('open_link', { url: 'https://github.com/Ray726-I/folio/issues' }),
     'copy-path': () => navigator.clipboard.writeText(current.path).then(() => status('Document path copied')),
-    reveal: () => invoke('reveal_document'), rename: renameDocument,
-    duplicate: () => enqueue(async () => { const path = await invoke('duplicate_document', { content: current.content }); if (path) status(`Duplicated to ${path}`); }),
-    html: () => enqueue(async () => { const path = await invoke('export_html', { content: current.content }); if (path) status(`Exported to ${path}`); }),
+    reveal: () => invoke('reveal_document', { documentId: current.documentId }), rename: renameDocument,
+    duplicate: () => enqueue(async () => { const path = await invoke('duplicate_document', { documentId: current.documentId, content: current.content }); if (path) status(`Duplicated to ${path}`); }),
+    html: () => enqueue(async () => { const path = await invoke('export_html', { documentId: current.documentId, content: current.content }); if (path) status(`Exported to ${path}`); }),
     pdf: () => { status('Choose a PDF destination in the print dialog'); window.print(); }
   };
   try { Promise.resolve(actions[action]?.()).catch(toast); } catch (error) { toast(error); }
 }
 function closeDocument() {
+  if (current.documentId) return enqueue(() => closeWorkspaceDocument());
   return enqueue(async () => {
     if (!current.active || !(await allowDiscard())) return false;
     try {
@@ -409,7 +412,7 @@ async function renameDocument() {
   if (name === null || name === current.name || owner !== current) return;
   return enqueue(async () => {
     if (owner !== current) return;
-    const saved = await invoke('rename_document', { name });
+    const saved = await invoke('rename_document', { documentId: current.documentId, name });
     if (!saved) return;
     const oldPath = current.path; current.path = saved.path; current.name = saved.name;
     documentNavigation = documentNavigation.map(path => samePath(path, oldPath) ? saved.path : path);

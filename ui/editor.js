@@ -13,7 +13,7 @@ function setTransitionLocked(next) {
   editor?.setTransitionLocked(transitionLocked);
   if (typeof current !== 'undefined') syncDocumentMode();
 }
-function changeContent(content) { if (editor) editor.replaceContent(content); else { current.content = content; updateTitle(); scheduleStats(); } }
+function changeContent(content) { if (editor) editor.replaceContent(content); else { current.content = content; documentEdited(); updateTitle(); scheduleStats(); } }
 function undoRedo(redo = false) { return editor?.undo(redo) || false; }
 function updateFormatToolbar(context) {
   const tools = $('format-tools');
@@ -245,7 +245,7 @@ async function mountUnifiedEditor() {
   fallbackCheckedContent = current.content;
   const editorOptions = {
     content: current.content, transitionLocked, richParent: $('preview'), scroller: $('reader-scroll'),
-    onChange(content) { if (current !== documentAtOpen) return; outlineRevision++; current.content = content; previewSnapshot = null; updateTitle(); scheduleStats(); scheduleEditorOutline(); if (!$('find-bar').hidden) scheduleFindRefresh(); },
+    onChange(content) { if (current !== documentAtOpen) return; outlineRevision++; current.content = content; documentEdited(); previewSnapshot = null; updateTitle(); scheduleStats(); scheduleEditorOutline(); if (!$('find-bar').hidden) scheduleFindRefresh(); },
     onPresentation: editorPresentation, onContext: updateFormatToolbar, message: toast, loadKatex, remoteImages: () => remoteImages, themeRevision: () => diagramThemeRevision,
     revealSource: (from, to) => revealSourceForEdit(from, to), editValue, editClipboard,
     openLink(href) { const anchor = document.createElement('a'); anchor.setAttribute('href', href); followPreviewLink(anchor); },
@@ -256,7 +256,7 @@ async function mountUnifiedEditor() {
       if (extensionContent !== snapshot || extensionRemote !== allowedRemote) {
         extensionContent = snapshot;
         extensionRemote = allowedRemote;
-        extensionCache = invoke('render_markdown', { content: snapshot, remoteImages: allowedRemote }).then(result => {
+        extensionCache = invoke('render_markdown', { documentId: documentAtOpen.documentId, content: snapshot, remoteImages: allowedRemote }).then(result => {
           const parsed = new DOMParser().parseFromString(typeof result === 'string' ? result : result.html || '', 'text/html');
           const byLine = new Map();
           for (const element of parsed.body.querySelectorAll('[data-sourcepos]')) {
@@ -279,7 +279,7 @@ async function mountUnifiedEditor() {
         // trusting any author-provided marker; remote images follow the user's
         // explicit preference and stay blocked otherwise.
         try {
-          const fallback = await invoke('render_markdown', { content: source, remoteImages: allowedRemote });
+          const fallback = await invoke('render_markdown', { documentId: documentAtOpen.documentId, content: source, remoteImages: allowedRemote });
           if (current !== documentAtOpen || (remoteImages === true) !== allowedRemote) throw new Error('Extension render expired');
           if (current.content !== snapshot) return editorOptions.renderExtension(source);
           const fallbackParsed = new DOMParser().parseFromString(typeof fallback === 'string' ? fallback : fallback.html || '', 'text/html');
@@ -328,7 +328,7 @@ async function mountUnifiedEditor() {
       // Reuse the native renderer's canonical, document-relative resolver and
       // per-file budgets. Never introduce an arbitrary-file-read command.
       const escaped = String(destination).replace(/\\/g, '/').replace(/</g, '%3C').replace(/>/g, '%3E').replace(/\n|\r/g, '');
-      const result = await invoke('render_markdown', { content: `![image](<${escaped}>)`, remoteImages: allowRemote });
+      const result = await invoke('render_markdown', { documentId: documentAtOpen.documentId, content: `![image](<${escaped}>)`, remoteImages: allowRemote });
       if (current !== documentAtOpen) return { error: 'Image request expired' };
       const html = typeof result === 'string' ? result : result.html;
       const parsed = new DOMParser().parseFromString(html || '', 'text/html');
@@ -339,6 +339,7 @@ async function mountUnifiedEditor() {
   };
   try {
     editor = window.FolioEditor.create(editorOptions);
+    editor.restoreSession?.(current.view?.editor);
   } catch {
     // There is no second engine to retry into. Show the complete Markdown
     // read-only so the document is still inspectable and Save stays exact.

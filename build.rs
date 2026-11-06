@@ -23,6 +23,7 @@ fn main() {
             "bootstrap",
             "open_document",
             "open_folder",
+            "file_operation",
             "browse_directory",
             "path_is_directory",
             "set_task_checked",

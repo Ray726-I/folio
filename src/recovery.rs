@@ -144,6 +144,7 @@ impl Store {
         self.initialize()?;
         let mut warnings = Vec::new();
         let mut ids = std::collections::BTreeSet::new();
+        let mut damaged_ids = std::collections::BTreeSet::new();
         for entry in fs::read_dir(&self.root).map_err(|e| e.to_string())? {
             let name = entry
                 .map_err(|e| e.to_string())?
@@ -151,7 +152,11 @@ impl Store {
                 .to_string_lossy()
                 .into_owned();
             if let Some((id, kind)) = name.rsplit_once('.') {
-                if ["current", "previous", "floor"].contains(&kind) {
+                if kind.starts_with("damaged-") {
+                    damaged_ids.insert(id.to_string());
+                }
+                if ["current", "previous", "floor"].contains(&kind) || kind.starts_with("damaged-")
+                {
                     ids.insert(id.to_string());
                 }
             }
@@ -164,7 +169,7 @@ impl Store {
                 self.path(&id, kind).is_ok_and(|path| path.exists())
                     && self.generation(&id, kind).is_err()
             }) || self.floor(&id).is_err();
-            if damaged {
+            if damaged || damaged_ids.contains(&id) {
                 warnings.push(Warning{document_id:id,message:"A damaged or unsupported recovery record was retained in the recovery-v1 app-data directory for manual investigation.".into()});
             }
         }
@@ -226,6 +231,22 @@ impl Store {
         )
     }
     fn write_generation(&self, id: &str, kind: &str, record: Record) -> Result<(), String> {
+        let original = self.path(id, kind)?;
+        if original.exists() && self.generation(id, kind).is_err() {
+            let size = fs::metadata(&original).map_err(|e| e.to_string())?.len();
+            self.check_budget(size)?;
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            let quarantine = self.root.join(format!("{id}.damaged-{kind}-{nonce}"));
+            fs::hard_link(&original, &quarantine)
+                .map_err(|e| format!("Could not preserve damaged recovery data: {e}"))?;
+            #[cfg(unix)]
+            fs::File::open(&self.root)
+                .and_then(|file| file.sync_all())
+                .map_err(|e| e.to_string())?;
+        }
         let checksum = fingerprint(&serde_json::to_vec(&record).map_err(|e| e.to_string())?);
         self.atomic(
             &self.path(id, kind)?,
@@ -301,6 +322,18 @@ mod tests {
         assert!(restarted.write(record(1)).is_err());
         assert!(restarted.write(record(2)).is_err());
         restarted.write(record(3)).unwrap();
+        let quarantined: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".damaged-"))
+            .collect();
+        assert_eq!(
+            quarantined.len(),
+            1,
+            "damaged bytes must survive subsequent snapshots for manual recovery"
+        );
+        assert_eq!(fs::read_to_string(quarantined[0].path()).unwrap(), "broken");
+        assert_eq!(restarted.warnings().unwrap().len(), 1);
     }
     #[test]
     fn discard_blocks_late_writes_and_saved_allows_newer_revisions() {

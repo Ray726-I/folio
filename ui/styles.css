@@ -4357,3 +4357,26 @@ button.editor-trailing-input { display: block; text-align: left; cursor: text; }
 #help-dialog:not(.shortcuts) { width:min(480px,92vw); }
 #document-mode-menu .menu-item { position:relative; padding-left:28px; }
 #document-mode-menu .menu-item > .icon { position:absolute; left:7px; width:15px; height:15px; }
+
+.document-tabs { display:flex; align-items:center; border-bottom:1px solid var(--line); background:var(--bg); min-height:34px; padding:0 12px; }
+.document-tabs[hidden] { display:none; }
+#tab-list { display:flex; flex:1; overflow-x:auto; scrollbar-width:thin; min-width:0; }
+.tab-item { display:flex; flex:none; align-items:center; position:relative; border-right:1px solid var(--line); }
+.document-tab { display:flex; gap:7px; align-items:center; min-width:90px; max-width:240px; border:0; padding:8px 30px 8px 10px; background:transparent; color:var(--muted); font:inherit; font-size:12px; cursor:pointer; }
+.document-tab span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.document-tab[aria-selected=true] { color:var(--fg); box-shadow:inset 0 -2px var(--accent); }
+.tab-close { position:absolute; right:3px; width:24px; height:24px; opacity:0; }
+.tab-item:hover .tab-close,.tab-item:focus-within .tab-close { opacity:1; }
+.tab-close .icon,.document-tab .icon { width:14px; height:14px; flex-shrink:0; }
+.workspace-review { max-height:45vh; overflow:auto; display:grid; gap:12px; margin:18px 0; }
+.workspace-review label { display:flex; gap:12px; align-items:center; justify-content:space-between; }
+.workspace-review span { white-space:pre-line; overflow-wrap:anywhere; flex:1; font-size:13px; }
+.workspace-actions { display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; }
+#recovery-warning { padding:8px 18px; color:var(--fg); background:var(--hover); border-bottom:1px solid var(--line); font-size:12px; }
+.focus-mode .document-tabs { display:none; }
+@media (hover:none) { .tab-close { opacity:1; } }
+
+.document-tab:focus-visible { outline:2px solid var(--accent); outline-offset:-3px; }
+main { display:flex; flex-direction:column; }
+.document-view { flex:1; min-height:0; height:auto; }
+.document-tabs,#recovery-warning { flex-shrink:0; }

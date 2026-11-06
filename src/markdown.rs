@@ -1304,7 +1304,10 @@ mod tests {
             "event handlers must stay dropped: {rendered}"
         );
 
-        let rejected = render("Bad: <progress value=\"oops\" max=\"100\">x</progress>", None);
+        let rejected = render(
+            "Bad: <progress value=\"oops\" max=\"100\">x</progress>",
+            None,
+        );
         assert!(
             !rejected.contains("value=\"oops\""),
             "a non-numeric value must be dropped: {rejected}"

@@ -151,7 +151,7 @@ function showDocument() {
   document.querySelectorAll('.document-control').forEach(control => { control.hidden = !current.active; });
   setFormatToolbarVisible(formatToolbarVisible, false);
   if (!current.active) editorPresentation(false, false, false);
-  $('disk-banner').hidden = true; saveStatus = null; updateTitle(); updateStats();
+  $('disk-banner').hidden = true; saveStatus = current.saveStatus || null; updateTitle(); updateStats();
   // Opening a file keeps whichever dock mode is open, so picking from the tree
   // does not yank the tree away from under the pointer.
   if (!current.active && activeFolder) setFolderVisible(true);
@@ -177,6 +177,7 @@ function showWelcome() {
 function goHome() {
   return enqueue(async () => {
     if ($('document-view').hidden) return;
+    if (documents.size) { rememberDocument(); current = { path: null, name: 'Untitled.md', content: '', saved: '', active: false }; showWelcome(); renderTabs(); return; }
     if (!(await allowDiscard())) return;
     // Native new_document resets backend state before it resolves, so the
     // outgoing document must be immutable as soon as departure is approved.
@@ -437,19 +438,26 @@ function enqueue(action) {
   return queue;
 }
 async function openPath(path, confirmed = false) {
-  if (!confirmed && !(await allowDiscard())) return false;
+  const existing = !confirmed && [...documents.values()].find(doc => samePath(doc.path, path));
+  if (existing) return activateDocument(existing);
+  if (!current.documentId && !confirmed && !(await allowDiscard())) return false;
   status('Opening…');
   // Native open switches backend active-document state before it resolves, so
   // the outgoing document must become immutable before the call starts. Keep
   // the guard through replacement and new-editor mounting, and always release.
   try {
     setTransitionLocked(true);
-    const document = await invoke('open_document', { path });
+    rememberDocument();
+    const document = await invoke('open_document', { path, reuseExisting: !confirmed });
+    if (!confirmed && document.documentId && documents.has(document.documentId)) return activateDocument(documents.get(document.documentId), false);
     ++renderGeneration;
     previewSnapshot = null;
-    current = { path: document.path, name: document.name, content: document.content, saved: document.content, writable: document.writable !== false, active: true };
+    current = { ...document, saved: document.content, writable: document.writable !== false, active: true };
+    const previousVersion = current.documentId && documents.get(current.documentId);
+    if (confirmed && previousVersion) { current.revision = Math.max(current.revision || 0, previousVersion.revision || 0); await recoveryWriter.saved(previousVersion, previousVersion.revision || 0); }
+    registerDocument(current);
     resetDocumentPresentation(); recordDocumentNavigation(current.path);
-    if (activeFolder && !samePath(document.path, activeFolder.path) && !isWithin(document.path, activeFolder.path)) { activeFolder = null; folderEntries = []; expandedFolders.clear(); }
+    if (!document.documentId && activeFolder && !samePath(document.path, activeFolder.path) && !isWithin(document.path, activeFolder.path)) { activeFolder = null; folderEntries = []; expandedFolders.clear(); }
     if (activeFolder) expandParentsOf(document.path);
     setLineEnding(document.lineEnding || null);
     showDocument(); $('reader-scroll').scrollTop = 0; await refreshEditorSurface(); addRecent(current.path); return true;
@@ -639,6 +647,7 @@ function syncFolderSelection() {
   }
 }
 async function openFolderPath(path, confirmed = false) {
+  if (documents.size) { const listing = await invoke('open_folder', { path }); activeFolder = { path: listing.path, name: listing.name }; folderEntries = listing.entries; expandedFolders.clear(); clearFolderSearch(); if ($('document-view').hidden) { showDocument(); await refreshEditorSurface(); } renderFolderEntries(); dockTab = 'files'; dockVisible = true; renderNavigationDock(); return true; }
   if (!confirmed && !(await allowDiscard())) return false;
   // The scan and the backend document reset are asynchronous, so protect the
   // outgoing document as soon as departure is approved. Otherwise typing during
@@ -681,46 +690,56 @@ function requestOpenLocation(path) {
     return openPath(path);
   });
 }
-async function save(saveAs = false, force = false) {
-  if (!current.active) return false;
-  if (!saveAs && (documentReadOnly || current.writable === false)) { toast('This document is read-only. Use Save As to create a writable copy.'); return false; }
-  editor?.checkpoint();
-  const snapshot = current.content;
-  status('Saving…'); saveStatus = 'saving'; updateTitle();
+async function save(saveAs = false, force = false, owner = current) {
+  if (!owner.active || owner.closing) return false;
+  if (!saveAs && ((owner === current ? documentReadOnly : owner.view?.readOnly) || owner.writable === false)) { toast('This document is read-only. Use Save As to create a writable copy.'); return false; }
+  if (owner === current) editor?.checkpoint();
+  const snapshot = owner.content, savedRevision = owner.revision || 0;
+  const setSaveStatus = value => { owner.saveStatus = value; if (owner.view) owner.view.saveStatus = value; if (owner === current) { saveStatus = value; updateTitle(); } };
+  if (owner === current) status('Saving…'); setSaveStatus('saving');
   try {
-    const saved = await invoke('save_document', { content: snapshot, saveAs, force });
-    if (!saved) { saveStatus = null; status(''); updateTitle(); return false; }
-    current.path = saved.path; current.name = saved.name; current.saved = snapshot; if (saveAs) { current.writable = true; documentReadOnly = false; } saveStatus = null; updateTitle(); $('disk-banner').hidden = true; addRecent(current.path); status('Saved');
+    const saved = await invoke('save_document', { documentId: owner.documentId, content: snapshot, saveAs, force });
+    if (!saved) { setSaveStatus(null); if (owner === current) status(''); return false; }
+    owner.path = saved.path; owner.name = saved.name; owner.saved = snapshot; if (saveAs) { owner.writable = true; if (owner === current) documentReadOnly = false; } await recoveryWriter.saved(owner, savedRevision); renderTabs(); persistWorkspace(); setSaveStatus(null); if (owner !== current) return true; $('disk-banner').hidden = true; addRecent(owner.path); status('Saved');
     await renderPreview();
     return true;
   } catch (error) {
     status('');
     const failure = commandError(error);
-    if (failure.code !== 'file_changed') { saveStatus = { error: failure.message }; updateTitle(); throw new Error(failure.message); }
+    if (failure.code !== 'file_changed') { setSaveStatus({ error: failure.message }); throw new Error(failure.message); }
     // The conflict is unresolved while the dialog is open: report unsaved
     // changes, never Saving… or Saved, until the user picks an outcome.
-    saveStatus = null; updateTitle();
+    setSaveStatus(null);
     const choice = await ask('This file changed on disk', 'Another app changed this file. Reload the disk version, or overwrite it with your current document.', [
       { label: 'Cancel', value: 'cancel' }, { label: 'Reload', value: 'reload' }, { label: 'Overwrite', value: 'overwrite', style: 'destructive' }
     ]);
-    if (choice === 'overwrite') return save(saveAs, true);
-    if (choice === 'reload') { await openPath(current.path, true); return true; }
+    if (choice === 'overwrite') return save(saveAs, true, owner);
+    if (choice === 'reload') { await openPath(owner.path, true); return true; }
     return false;
   }
 }
-function requestSave(saveAs = false) { return enqueue(() => save(saveAs)); }
+const documentSaves = new Map();
+function requestSave(saveAs = false) {
+  if (!current.documentId) return enqueue(() => save(saveAs));
+  const owner = current, previous = documentSaves.get(owner.documentId);
+  const operation = previous ? previous.catch(() => {}).then(() => save(saveAs, false, owner)) : save(saveAs, false, owner);
+  documentSaves.set(owner.documentId, operation);
+  operation.catch(toast).finally(() => { if (documentSaves.get(owner.documentId) === operation) documentSaves.delete(owner.documentId); });
+  return operation;
+}
 function newDocument(sample = false) {
   return enqueue(async () => {
-    if (!(await allowDiscard())) return;
+    if (!current.documentId && !(await allowDiscard())) return;
     // Same protection as Home: the backend document is replaced before the
     // native reset resolves, so reject edits to the outgoing document now and
     // release the temporary guard after the new editor is in place or fails.
     try {
       setTransitionLocked(true);
-      await invoke('new_document'); ++renderGeneration;
+      rememberDocument(); const nativeDocument = await invoke('new_document'); ++renderGeneration;
       previewSnapshot = null;
       const content = sample ? SAMPLE : '';
-      current = { path: null, name: sample ? 'Welcome.md' : 'Untitled.md', content, saved: content, writable: true, active: true };
+      current = { ...nativeDocument, path: null, name: sample ? 'Welcome.md' : nativeDocument?.documentId ? `Untitled ${++unnamedNumber}.md` : 'Untitled.md', content, saved: sample && nativeDocument?.documentId ? '' : content, writable: true, active: true };
+      registerDocument(current); if (dirty()) documentEdited();
       resetDocumentPresentation(sample ? undefined : 'edit');
       setLineEnding(null);
       showDocument(); $('reader-scroll').scrollTop = 0; await refreshEditorSurface(); if (!sample) editor?.focus();
@@ -745,6 +764,8 @@ function allCommands() {
   const commands = [
     { label: 'Open file…', icon: 'file', shortcut: 'Ctrl+O', action: openEntry },
     { label: 'Open folder…', icon: 'folder-open', detail: 'Open a folder with the selected picker', action: openFolderEntry },
+    { label: 'Recover documents…', icon: 'file', action: reviewRecovery },
+    { label: 'Reopen closed tab', icon: 'file', action: () => enqueue(reopenDocument) },
     { label: 'New document', icon: 'plus', shortcut: 'Ctrl+N', action: () => newDocument() },
     { label: 'Change theme…', icon: 'theme', scope: 'themes' },
     { label: filePicker() === 'native' ? 'Use Folio file picker' : 'Use system file picker', icon: 'open', detail: filePicker() === 'native' ? 'Folio dialog with folders and typed paths' : 'System dialog for files and folders', action: toggleFilePicker },
@@ -1137,7 +1158,7 @@ $('format-toolbar-close').onclick = () => {
   $('view-menu-button').focus();
 };
 $('zoom-in').onclick = () => zoomWindow(.1); $('zoom-out').onclick = () => zoomWindow(-.1); $('zoom-reset').onclick = () => zoomWindow(0, true);
-$('reload').onclick = () => requestOpen(current.path); $('dismiss-disk').onclick = () => { $('disk-banner').hidden = true; };
+$('reload').onclick = () => { const owner = current; return enqueue(async () => { if (owner !== current || !owner.path || !(await allowDiscard())) return false; return openPath(owner.path, true); }); }; $('dismiss-disk').onclick = () => { $('disk-banner').hidden = true; };
 $('find-input').oninput = updateFind; $('find-next').onclick = () => nextFind(1); $('find-previous').onclick = () => nextFind(-1); $('find-close').onclick = closeFind;
 $('find-input').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); nextFind(event.shiftKey ? -1 : 1); } };
 function followPreviewLink(anchor) {
@@ -1149,7 +1170,7 @@ function followPreviewLink(anchor) {
     else document.getElementById(id)?.scrollIntoView({ block: 'start' });
   }
   else if (/^(https?:|mailto:)/i.test(href)) invoke('open_link', { url: href }).catch(toast);
-  else enqueue(async () => { const path = await invoke('resolve_document_link', { link: href }); await openPath(path); });
+  else enqueue(async () => { const path = await invoke('resolve_document_link', { documentId: current.documentId, link: href }); await openPath(path); });
 }
 // ProseMirror's macOS keymap handles Ctrl+H as deletion before the
 // document-level Replace shortcut can run. Keep Folio's shortcut consistent
@@ -1167,7 +1188,7 @@ document.addEventListener('keydown', event => {
   const control = event.ctrlKey || event.metaKey;
   if (control && event.shiftKey && event.key.toLowerCase() === 'p') { event.preventDefault(); $('command-dialog').open ? $('command-dialog').close() : openCommands(); return; }
   if (event.defaultPrevented) return;
-  if ($('help-dialog').open || $('command-dialog').open || $('confirm-dialog').open || $('open-dialog').open || $('source-dialog').open || $('editor-action-dialog').open) return;
+  if ($('recovery-dialog').open || $('workspace-close-dialog').open || $('help-dialog').open || $('command-dialog').open || $('confirm-dialog').open || $('open-dialog').open || $('source-dialog').open || $('editor-action-dialog').open) return;
   if (event.key === 'Escape') {
     if (!$('find-bar').hidden) closeFind();
     else if (document.body.classList.contains('focus-mode')) document.body.classList.remove('focus-mode');
@@ -1180,6 +1201,8 @@ document.addEventListener('keydown', event => {
   if (event.key === 'F11') { event.preventDefault(); invoke('toggle_fullscreen').catch(toast); return; }
   if (!control) return;
   const key = event.key.toLowerCase();
+  if (key === 't') { event.preventDefault(); event.shiftKey ? enqueue(reopenDocument) : newDocument(); return; }
+  if (event.ctrlKey && key === 'tab' && documents.size) { event.preventDefault(); const tabs = [...documents.values()], index = tabs.indexOf(current); enqueue(() => activateDocument(tabs[(index + (event.shiftKey ? -1 : 1) + tabs.length) % tabs.length])); return; }
   if (key === 'a' && !event.altKey && !event.shiftKey && !event.isComposing &&
       current.active && (editor || documentMode === 'source') &&
       !event.target.matches('input,textarea,select') && !event.target.isContentEditable) {
@@ -1204,7 +1227,12 @@ document.addEventListener('keydown', event => {
   else if (key === 'w') { event.preventDefault(); closeDocument(); }
   else if (key === 'q') { event.preventDefault(); requestClose(); }
 });
-async function requestClose() { return enqueue(async () => { if (await allowDiscard()) await invoke('close_window'); }); }
+async function requestClose() { return enqueue(async () => {
+  const protectWorkspace = documents.size > 0;
+  try { if (protectWorkspace) setTransitionLocked(true); if (protectWorkspace ? await reviewWindowClose() : await allowDiscard()) await invoke('close_window'); }
+  catch (error) { for (const doc of documents.values()) if (doc.content !== doc.saved) { doc.revision = (doc.revision || 0) + 1; recoveryWriter.changed(doc); await recoveryWriter.flush(doc); } throw error; }
+  finally { if (protectWorkspace) setTransitionLocked(false); }
+}); }
 
 const SAMPLE = `# A quiet place for your words
 
@@ -1248,6 +1276,7 @@ Your files stay yours. This sample is just a starting point.[^1]
 
 async function start() {
   initializeChrome(); initializeFolderSearch();
+  $('all-documents').onclick = () => { openCommands(); $('command-search').value = ''; commandRows = [...documents.values()].map(doc => ({ label: doc.name, detail: doc.path || 'Unsaved document', icon: 'file', action: () => enqueue(() => activateDocument(doc)) })).map(commandRow); filterCommands(); };
   zoomText(0); zoomWindow(0); renderRecent(); setDocumentWidth(wideLayout, false); setFormatToolbarVisible(formatToolbarVisible, false);
   syncOpenAffordance();
   applyTheme(selectedTheme, false); applyReadingFont(readingFont, false);
@@ -1264,7 +1293,13 @@ async function start() {
   setTouchpadZoom(touchpadZoom, false);
   if (omarchy && !$('preference-theme').querySelector('[value=omarchy]')) { const option = document.createElement('option'); option.value = 'omarchy'; option.textContent = 'Omarchy'; $('preference-theme').append(option); }
   applyDocumentPreferences();
-  for (const path of state.paths) requestOpenLocation(path);
+  await invoke('ready').catch(() => {});
+  const startupLayout = preferences.get('restoreSession', true) ? preferences.get('workspaceLayout', {}) : {};
+  await reviewRecovery();
+  const layout = startupLayout;
+  for (const path of state.paths || []) requestOpenLocation(path);
+  for (const path of layout.paths || []) enqueue(async () => { if ([...documents.values()].some(doc => samePath(doc.path || doc.originalPath, path))) return; await openPath(path); });
+  if (layout.activePath) enqueue(async () => { const doc = [...documents.values()].find(d => samePath(d.path, layout.activePath)); if (doc) await activateDocument(doc); });
   await window.__TAURI__.webview.getCurrentWebview().onDragDropEvent(event => {
     const type = event.payload.type; $('drop-overlay').hidden = type !== 'over' && type !== 'enter';
     if (type === 'drop') { $('drop-overlay').hidden = true; for (const path of event.payload.paths) requestOpenLocation(path); }
@@ -1277,7 +1312,7 @@ async function start() {
   setInterval(async () => {
     if (!current.path || busy || document.hidden) return;
     const path = current.path;
-    try { const changed = await invoke('document_changed'); if (path === current.path) $('disk-banner').hidden = !changed; } catch {}
+    try { const changed = await invoke('document_changed', { documentId: current.documentId }); if (path === current.path) $('disk-banner').hidden = !changed; } catch {}
   }, 3000);
   requestAnimationFrame(() => requestAnimationFrame(() => { invoke('ready').catch(() => {}); }));
 }

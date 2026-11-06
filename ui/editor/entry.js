@@ -175,6 +175,13 @@ export function create(options) {
   options.onPresentation?.(false, locked, false);
   return {
     getText: () => content,
+    captureSession() { return { content, history: history.slice(), future: future.slice(), selection: { ...selection() }, sourceOnly, locked }; },
+    restoreSession(session) {
+      if (!session) return;
+      content = session.content; history = session.history.slice(); future = session.future.slice(); groupTime = 0;
+      sourceSelection = { ...session.selection }; sourceOnly = Boolean(session.sourceOnly); locked = Boolean(session.locked);
+      richStale = sourceOnly; richEditor.setDocument(content, sourceSelection, { logical: true }); richEditor.setLocked(locked);
+    },
     getHeadings: () => richEditor?.headings() ?? null,
     context: () => richEditor?.context?.() ?? null,
     stats: () => ({ ...editorStats(), edit: editDebug }),
