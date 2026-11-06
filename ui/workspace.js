@@ -196,16 +196,21 @@ async function reopenDocument() {
 async function reviewWindowClose() {
   rememberDocument(); await Promise.allSettled([...documentSaves.values()]); const edited = [...documents.values()].filter(d => d.content !== d.saved);
   if (!edited.length) return true;
-  const dialog = $('workspace-close-dialog'), rows = $('workspace-close-rows'); rows.replaceChildren();
-  for (const doc of edited) { const row = document.createElement('label'); row.textContent = doc.name; const select = document.createElement('select'); select.setAttribute('aria-label', `Action for ${doc.name}`); for (const [value, text] of [['save', 'Save'], ['discard', 'Discard']]) { const option = document.createElement('option'); option.value = value; option.textContent = text; select.append(option); } row.append(select); rows.append(row); }
-  const proceed = await new Promise(resolve => { const finish = value => { dialog.close(); resolve(value); }; $('workspace-close-cancel').onclick = () => finish(false); $('workspace-close-confirm').onclick = () => finish(true); dialog.oncancel = event => { event.preventDefault(); finish(false); }; dialog.showModal(); $('workspace-close-cancel').focus(); });
-  if (!proceed) return false;
-  const choices = [...rows.querySelectorAll('select')].map(s => s.value);
-  for (let i = 0; i < edited.length; i++) if (choices[i] === 'save' && (!(await save(false, false, edited[i])) || edited[i].content !== edited[i].saved)) return false;
-  if ([...documents.values()].some(doc => doc.content !== doc.saved && !(edited.includes(doc) && choices[edited.indexOf(doc)] === 'discard'))) return false;
-  for (let i = 0; i < edited.length; i++) if (choices[i] === 'discard') { await recoveryWriter.flush(edited[i]); await invoke('recovery_saved', { documentId: edited[i].documentId, revision: edited[i].revision || 0 }); }
+  const names = edited.map(doc => doc.name);
+  const many = names.length > 1;
+  const listed = names.slice(0, 3).join(', ') + (names.length > 3 ? ` and ${names.length - 3} more` : '');
+  const choice = await ask('Save changes before closing?',
+    many ? `${names.length} documents have unsaved changes: ${listed}.` : `“${names[0]}” has changes that haven't been saved.`,
+    [{ label: 'Cancel', value: 'cancel' }, { label: many ? 'Discard all' : 'Discard', value: 'discard', style: 'destructive' }, { label: many ? 'Save all' : 'Save', value: 'save', style: 'suggested' }]);
+  if (choice === 'cancel') return false;
+  if (choice === 'discard') {
+    for (const doc of edited) { await recoveryWriter.flush(doc); await invoke('recovery_saved', { documentId: doc.documentId, revision: doc.revision || 0 }); }
+    await Promise.all([...documents.values()].map(doc => recoveryWriter.flush(doc))); return true;
+  }
+  for (const doc of edited) if (!(await save(false, false, doc)) || doc.content !== doc.saved) return false;
   await Promise.all([...documents.values()].map(doc => recoveryWriter.flush(doc))); return true;
 }
+
 async function reviewRecovery() {
   let drafts; try { drafts = await invoke('recovery_list'); const warnings = await invoke('recovery_warnings'); if (Array.isArray(warnings) && warnings.length) recoveryWriter.warning(warnings.map(w => w.message).join(' ')); } catch { return; }
   if (Array.isArray(drafts)) drafts = drafts.filter(draft => !documents.has(draft.documentId));

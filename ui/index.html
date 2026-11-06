@@ -56,6 +56,8 @@
     <symbol id="i-unlock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 7.6-2"/></symbol>
     <symbol id="i-code" viewBox="0 0 24 24"><path d="m9 8-4 4 4 4M15 8l4 4-4 4"/></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.35 5.65M20 5v6h-6"/></symbol>
+    <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></symbol>
+    <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
     <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
     <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></symbol>
     <symbol id="i-caret" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
@@ -262,7 +264,7 @@
   <div id="drop-overlay" hidden><div><svg class="icon" aria-hidden="true"><use href="#i-open"/></svg><h2>Drop to open</h2><p>One Markdown file. No setup.</p></div></div>
 
   <dialog id="command-dialog" class="command-dialog" aria-label="Command window">
-    <div class="command-input"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><input id="command-search" autocomplete="off" placeholder="Search commands or themes…" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="command-results" aria-label="Search commands or themes"><kbd class="command-esc">Esc</kbd></div>
+    <div class="command-input"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><input id="command-search" autocomplete="off" placeholder="Search commands…" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="command-results" aria-label="Search commands"><kbd class="command-esc">Esc</kbd></div>
     <div id="command-scope" class="command-scope">Commands</div>
     <div id="command-results" class="command-results">
       <div id="command-list" role="presentation"></div>
@@ -272,7 +274,6 @@
   </dialog>
 
   <dialog id="recovery-dialog" class="confirm-dialog" aria-labelledby="recovery-title"><h2 id="recovery-title">Recover unfinished work?</h2><div id="recovery-rows" class="workspace-review"></div><div class="workspace-actions"><button id="recovery-discard" class="button destructive">Discard selected…</button><button id="recovery-not-now" class="button">Not now</button><button id="recovery-restore" class="button suggested">Recover selected</button></div></dialog>
-  <dialog id="workspace-close-dialog" class="confirm-dialog" aria-labelledby="workspace-close-title"><h2 id="workspace-close-title">Save changes before closing?</h2><div id="workspace-close-rows" class="workspace-review"></div><div class="workspace-actions"><button id="workspace-close-cancel" class="button">Cancel</button><button id="workspace-close-confirm" class="button suggested">Continue</button></div></dialog>
   <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title"><h2 id="confirm-title"></h2><p id="confirm-message"></p><div id="confirm-actions"></div></dialog>
   <dialog id="source-dialog" class="source-dialog" aria-labelledby="source-snapshot-title">
     <div class="source-dialog-head"><h2 id="source-snapshot-title">Source snapshot</h2><button id="source-snapshot-close" class="icon-button" aria-label="Close source snapshot"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div>

@@ -54,9 +54,14 @@ const { openEditor } = require('./editor-browser.cjs');
   assert.equal(await page.locator('#command-list button').count(), 1, 'all documents is searchable');
   await page.keyboard.press('Escape');
   await page.evaluate(() => { void requestClose(); });
-  await page.waitForSelector('#workspace-close-dialog[open]');
+  await page.waitForSelector('#confirm-dialog[open]');
+  assert.equal(await page.locator('#confirm-title').textContent(), 'Save changes before closing?');
+  const closeChoices = await page.locator('#confirm-actions button').allTextContents();
+  assert.ok(closeChoices.includes('Cancel'), 'window close offers Cancel');
+  assert.ok(closeChoices.some(label => /^Discard( all)?$/.test(label)), 'window close offers a discard action');
+  assert.ok(closeChoices.some(label => /^Save( all)?$/.test(label)), 'window close offers a save action');
   const tabsBefore = await page.locator('[role=tab]').count();
-  await page.click('#workspace-close-cancel');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   await page.waitForFunction(() => !busy);
   assert.equal(await page.locator('[role=tab]').count(), tabsBefore, 'cancel keeps every tab');
   await page.evaluate(() => {

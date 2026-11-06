@@ -760,45 +760,80 @@ function renderRecent() {
 let commandScope = 'commands', commandRows = [], filteredRows = [], selectedCommand = 0;
 function allCommands() {
   const commands = [
-    { label: 'Open file…', icon: 'file', shortcut: 'Ctrl+O', action: openEntry },
-    { label: 'Open folder…', icon: 'folder-open', detail: 'Open a folder with the selected picker', action: openFolderEntry },
-    { label: 'New window', icon: 'file', action: () => invoke('new_window') },
-    { label: 'Move tab to new window', icon: 'file', action: () => enqueue(moveDocumentToNewWindow) },
-    { label: 'Show reading companion', icon: 'read', action: () => showReadingCompanion() },
-    { label: 'Recover documents…', icon: 'file', action: reviewRecovery },
-    { label: 'Reopen closed tab', icon: 'file', action: () => enqueue(reopenDocument) },
     { label: 'New document', icon: 'plus', shortcut: 'Ctrl+N', action: () => newDocument() },
-    { label: 'Change theme…', icon: 'theme', scope: 'themes' },
+    { label: 'Open file…', icon: 'file', shortcut: 'Ctrl+O', action: openEntry },
+    { label: 'Open folder…', icon: 'folder-open', shortcut: 'Ctrl+Shift+O', detail: 'Open a folder with the selected picker', action: openFolderEntry },
+    { label: 'New window', icon: 'file', action: () => invoke('new_window') },
+    { label: 'Move tab to new window', icon: 'arrow-right', action: () => enqueue(moveDocumentToNewWindow) },
+    { label: 'Recover documents…', icon: 'refresh', action: reviewRecovery },
+    { label: 'Reopen closed tab', icon: 'refresh', action: () => enqueue(reopenDocument) },
+    { label: 'Welcome screen', icon: 'home', action: goHome },
+    { label: 'All documents', icon: 'tab-search', shortcut: 'Ctrl+Shift+A', detail: 'Search open tabs', scope: 'documents' },
+    { label: 'Quit', icon: 'close', shortcut: 'Ctrl+Q', action: requestClose }
+  ];
+  if (current.active) {
+    commands.push(
+      { label: 'Save', icon: 'save', shortcut: 'Ctrl+S', action: () => requestSave() },
+      { label: 'Save as…', icon: 'save', shortcut: 'Ctrl+Shift+S', action: () => requestSave(true) },
+      { label: 'Export as HTML…', icon: 'save', action: () => runAppAction('html') },
+      { label: 'Export as PDF…', icon: 'file', action: () => runAppAction('pdf') },
+      { label: 'Duplicate…', icon: 'file', action: () => runAppAction('duplicate') },
+      { label: 'Close file', icon: 'close', shortcut: 'Ctrl+W', action: () => runAppAction('close') }
+    );
+    if (current.path) commands.push(
+      { label: 'Rename…', icon: 'edit', action: () => runAppAction('rename') },
+      { label: 'Copy document path', icon: 'file', action: () => runAppAction('copy-path') },
+      { label: 'Reveal in file manager', icon: 'folder-open', action: () => runAppAction('reveal') }
+    );
+  }
+  commands.push(
+    { label: 'Change theme…', icon: 'theme', detail: 'Choose a color theme', scope: 'themes' },
     { label: filePicker() === 'native' ? 'Use Folio file picker' : 'Use system file picker', icon: 'open', detail: filePicker() === 'native' ? 'Folio dialog with folders and typed paths' : 'System dialog for files and folders', action: toggleFilePicker },
     { label: 'Try a sample document', icon: 'file', action: () => newDocument(true) },
     { label: 'Clear recent files', icon: 'close', action: () => { preferences.set('recent', []); renderRecent(); toast('Recent files cleared'); } }
-  ];
-  if (nativePlatform === 'linux') commands.push({ label: touchpadZoom ? 'Disable touchpad zoom' : 'Enable touchpad zoom', icon: 'read', detail: 'Allow pinch gestures to zoom the app', action: () => setTouchpadZoom(!touchpadZoom) });
-  if (current.active) commands.splice(2, 0,
-    { label: 'Save', icon: 'save', shortcut: 'Ctrl+S', action: () => requestSave() },
-    { label: 'Save as…', icon: 'save', shortcut: 'Ctrl+Shift+S', action: () => requestSave(true) },
-    { label: documentReadOnly ? 'Unlock document' : 'Lock document', icon: documentReadOnly ? 'unlock' : 'lock', action: toggleDocumentReadOnly },
+  );
+  if (current.active) commands.push(
     { label: 'Reading mode', icon: 'read', action: () => setDocumentMode('reading') },
     { label: 'Edit mode', icon: 'edit', action: () => setDocumentMode('edit') },
     { label: 'Source mode', icon: 'code', action: () => setDocumentMode('source') },
-    { label: 'Source snapshot', icon: 'file', action: openSourceSnapshot },
+    { label: 'Inspect Markdown', icon: 'code', action: openSourceSnapshot },
     { label: 'Undo', icon: 'undo', shortcut: 'Ctrl+Z', action: () => enqueue(() => undoRedo()) },
     { label: 'Redo', icon: 'redo', shortcut: 'Ctrl+Shift+Z / Ctrl+Y', action: () => enqueue(() => undoRedo(true)) },
+    { label: 'Cut', icon: 'edit', shortcut: 'Ctrl+X', action: () => runAppAction('cut') },
+    { label: 'Copy', icon: 'file', shortcut: 'Ctrl+C', action: () => runAppAction('copy') },
+    { label: 'Paste', icon: 'plus', shortcut: 'Ctrl+V', action: () => runAppAction('paste') },
+    { label: 'Select all', icon: 'check', shortcut: 'Ctrl+A', action: () => runAppAction('select-all') },
     { label: 'Find in document', icon: 'search', shortcut: 'Ctrl+F', action: openFind },
+    { label: 'Find and replace', icon: 'search', shortcut: 'Ctrl+H', action: openReplace },
+    { label: documentReadOnly ? 'Unlock document' : 'Lock document', icon: documentReadOnly ? 'unlock' : 'lock', action: toggleDocumentReadOnly },
+    { label: 'Show reading companion', icon: 'read', action: () => showReadingCompanion() },
+    { label: 'Toggle outline', icon: 'outline', action: () => runAppAction('outline') },
+    { label: 'Go back', icon: 'arrow-left', action: () => runAppAction('back') },
+    { label: 'Go forward', icon: 'arrow-right', action: () => runAppAction('forward') },
+    { label: 'Go to heading', icon: 'outline', action: () => runAppAction('heading') },
+    { label: 'Go to top', icon: 'arrow-up', action: () => runAppAction('top') },
+    { label: 'Go to bottom', icon: 'arrow-down', action: () => runAppAction('bottom') }
+  );
+  commands.push(
+    { label: 'Toggle file explorer', icon: 'folder', shortcut: 'Ctrl+B', action: () => runAppAction('files') },
     { label: 'Search folder contents', icon: 'search', shortcut: 'Ctrl+Shift+F', action: openFolderSearch },
+    { label: 'Toggle focus mode', icon: 'focus', action: toggleFocus },
+    { label: 'Toggle fullscreen', icon: 'focus', shortcut: 'F11', action: () => runAppAction('fullscreen') },
     { label: remoteImages ? 'Block remote images' : 'Load remote images', icon: 'read', action: toggleRemoteImages },
     { label: readingFont === 'serif' ? 'Use sans-serif reading text' : 'Use serif reading text', icon: 'read', action: toggleReadingFont },
-    { label: 'Toggle outline', icon: 'outline', action: () => setOutline(!outlineVisible) },
-    { label: 'Toggle focus mode', icon: 'focus', action: toggleFocus },
     { label: wideLayout ? 'Use centered document width' : 'Use full document width', icon: wideLayout ? 'width-contract' : 'width-expand', action: toggleDocumentWidth },
     { label: 'Zoom in', icon: 'plus', shortcut: 'Ctrl+=', action: () => zoomWindow(.1) },
     { label: 'Zoom out', icon: 'minus', shortcut: 'Ctrl+-', action: () => zoomWindow(-.1) },
     { label: 'Reset window zoom', icon: 'refresh', shortcut: 'Ctrl+0', action: () => zoomWindow(0, true) },
     { label: 'Increase document text size', icon: 'plus', shortcut: 'Ctrl+Shift+=', action: () => zoomText(1) },
     { label: 'Decrease document text size', icon: 'minus', shortcut: 'Ctrl+Shift+-', action: () => zoomText(-1) },
-    { label: 'Reset document text size', icon: 'refresh', shortcut: 'Ctrl+Shift+0', action: () => zoomText(0, true) }
+    { label: 'Reset document text size', icon: 'refresh', shortcut: 'Ctrl+Shift+0', action: () => zoomText(0, true) },
+    { label: 'Keyboard shortcuts', icon: 'view', action: () => showHelp(true) },
+    { label: 'Documentation', icon: 'file', action: () => runAppAction('documentation') },
+    { label: 'Report an issue', icon: 'open', action: () => runAppAction('issue') },
+    { label: 'About Folio', icon: 'read', action: () => showHelp() }
   );
-  if (activeFolder) commands.splice(2, 0, { label: 'Toggle file tree', icon: 'folder', shortcut: 'Ctrl+B', action: () => setFolderVisible(!folderVisible) });
+  if (nativePlatform === 'linux') commands.push({ label: touchpadZoom ? 'Disable touchpad zoom' : 'Enable touchpad zoom', icon: 'read', detail: 'Allow pinch gestures to zoom the app', action: () => setTouchpadZoom(!touchpadZoom) });
   return commands;
 }
 function themeCommands() {
@@ -859,7 +894,7 @@ function commandRow(command, index) {
 function buildCommandRows() {
   const list = commandScope === 'themes' ? themeCommands()
     : commandScope === 'documents' ? [...documents.values()].map(doc => ({ label: doc.name, detail: doc.path || 'Unsaved document', icon: 'file', action: () => enqueue(() => activateDocument(doc)) }))
-    : [...allCommands(), ...themeCommands()];
+    : allCommands();
   commandRows = list.map(commandRow);
 }
 function updateActiveCommand() {
@@ -888,7 +923,7 @@ function openCommands(scope = 'commands') {
   commandScope = scope;
   selectedCommand = 0;
   $('command-search').value = '';
-  $('command-search').placeholder = scope === 'themes' ? 'Search themes…' : scope === 'documents' ? 'Search open documents…' : 'Search commands or themes…';
+  $('command-search').placeholder = scope === 'themes' ? 'Search themes…' : scope === 'documents' ? 'Search open documents…' : 'Search commands…';
   buildCommandRows();
   // Opening Appearance lands on the theme that is already applied, so the
   // checked row and the highlighted row agree.
@@ -1331,7 +1366,7 @@ document.addEventListener('keydown', event => {
   if (control && !event.altKey && event.shiftKey && event.key.toLowerCase() === 'a') { event.preventDefault(); openCommands('documents'); return; }
   if (control && event.shiftKey && event.key.toLowerCase() === 'p') { event.preventDefault(); $('command-dialog').open ? $('command-dialog').close() : openCommands(); return; }
   if (event.defaultPrevented) return;
-  if ($('recovery-dialog').open || $('workspace-close-dialog').open || $('help-dialog').open || $('command-dialog').open || $('confirm-dialog').open || $('open-dialog').open || $('source-dialog').open || $('editor-action-dialog').open) return;
+  if ($('recovery-dialog').open || $('help-dialog').open || $('command-dialog').open || $('confirm-dialog').open || $('open-dialog').open || $('source-dialog').open || $('editor-action-dialog').open) return;
   if (event.key === 'Escape') {
     if (!$('find-bar').hidden) closeFind();
     else if (document.body.classList.contains('focus-mode')) document.body.classList.remove('focus-mode');

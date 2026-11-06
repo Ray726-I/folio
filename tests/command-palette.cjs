@@ -36,8 +36,11 @@ const { openEditor } = require('./editor-browser.cjs');
     const after = await page.evaluateHandle(() => [...document.querySelectorAll('#command-list .command-item')].find(el => el.querySelector('.command-label').textContent === 'Change theme…'));
     assert.equal(await page.evaluate(([a,b]) => a === b, [before, after]), true, 'typing reuses row nodes');
     assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#command-list .command-item')].map(el => el.querySelector('.command-label').textContent)), [
-      'Change theme…','Theme: System','Theme: Adwaita Light','Theme: Adwaita Dark','Theme: Nord','Theme: Catppuccin Mocha','Theme: Rosé Pine','Theme: Solarized Light'
-    ]);
+      'Change theme…'
+    ], 'themes stay inside the Appearance submenu');
+    await page.locator('#command-search').fill('nord');
+    assert.equal(await page.locator('#command-list .command-item').count(), 0, 'theme names are not exposed in the main command search');
+    await page.locator('#command-search').fill('theme');
     const activeId = await page.locator('#command-search').getAttribute('aria-activedescendant');
     assert.equal(await page.locator(`#${activeId} .command-label`).textContent(), 'Change theme…', 'active id follows the visible row');
 
@@ -58,7 +61,7 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.locator('#palette-hint').focus();
     await page.keyboard.press('Enter');
     assert.equal(await page.locator('#command-scope').textContent(), 'Commands');
-    assert.equal(await page.locator('#command-list .command-item').count(), 42);
+    assert.ok(await page.locator('#command-list .command-item').count() >= 55, 'the palette exposes the full application action set');
     await page.locator('#command-search').fill('theme');
     await page.keyboard.press('Enter');
     await page.locator('#palette-hint').click();
@@ -91,6 +94,11 @@ const { openEditor } = require('./editor-browser.cjs');
 
     // Actions, not just appearance: the lock command says what it does.
     await page.evaluate(() => openCommands());
+    for (const [query, label] of [['fullscreen', 'Toggle fullscreen'], ['paste', 'Paste'], ['keyboard', 'Keyboard shortcuts'], ['go to top', 'Go to top'], ['export as pdf', 'Export as PDF…']]) {
+      await page.locator('#command-search').fill(query);
+      assert.ok(await page.evaluate(label => [...document.querySelectorAll('#command-list .command-label')].some(item => item.textContent === label), label), `${label} is in the command palette`);
+    }
+    await page.locator('#command-search').fill('lock');
     const lockIcon = await page.evaluate(() => {
       const row = [...document.querySelectorAll('#command-list .command-item')].find(item => item.textContent.startsWith('Lock document'));
       return row?.querySelector('svg use')?.getAttribute('href');
