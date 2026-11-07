@@ -53,7 +53,12 @@
   --purple:#813d9c;
   --muted:color-mix(in srgb,var(--fg) 70%,var(--bg));
   --line:color-mix(in srgb,var(--fg) 13%,var(--bg));
-  --hover:color-mix(in srgb,var(--fg) 7%,var(--bg));
+  /* Hover is a palette colour, not a formula: each theme names the step its
+     own surfaces take, so a tinted panel gets a tinted highlight instead of a
+     grey wash, and the value is visibly distinct from --panel. Omarchy themes
+     have no hover in their palette, so theme.js derives one from the panel in
+     the panel's hue. */
+  --hover:#e5e5e2;
   --focus-ring:color-mix(in srgb,var(--fg) 65%,transparent);
   --text-size:19px;
   --gutter:clamp(16px,4vw,56px);
@@ -450,6 +455,7 @@
     --fg:#eeeeec;
     --surface:#303030;
     --panel:#383838;
+    --hover:#454545;
     --accent:#78aeed;
     --selection:#3f608f;
     --selection-ink:#fff;
@@ -468,6 +474,7 @@
   --fg:#eeeeec;
   --surface:#303030;
   --panel:#383838;
+  --hover:#454545;
   --accent:#78aeed;
   --selection:#3f608f;
   --selection-ink:#fff;
@@ -485,6 +492,7 @@
   --fg:#e5e9f0;
   --surface:#353d4b;
   --panel:#3b4252;
+  --hover:#434c5e;
   --accent:#88c0d0;
   --selection:#4c566a;
   --selection-ink:#fff;
@@ -502,6 +510,7 @@
   --fg:#cdd6f4;
   --surface:#181825;
   --panel:#313244;
+  --hover:#45475a;
   --accent:#cba6f7;
   --selection:#585b70;
   --selection-ink:#fff;
@@ -519,6 +528,7 @@
   --fg:#e0def4;
   --surface:#1f1d2e;
   --panel:#26233a;
+  --hover:#302c46;
   --accent:#c4a7e7;
   --selection:#524f67;
   --selection-ink:#fff;
@@ -536,6 +546,7 @@
   --fg:#586e75;
   --surface:#eee8d5;
   --panel:#fff9e8;
+  --hover:#e6dfc9;
   --accent:#268bd2;
   --selection:#e3dfca;
   --green:#859900;
@@ -2504,6 +2515,13 @@ body {
   border-radius:10px;
   background:var(--panel);
   box-shadow:0 12px 34px #0003,0 2px 6px #0002
+}
+
+/* A pointer-opened menu receives focus itself so the first row is not
+   pre-highlighted. That focus is a container state, not a keyboard stop. */
+.menu:focus,
+.menu:focus-visible {
+  outline:none
 }
 
 .menu-right {

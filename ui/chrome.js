@@ -167,13 +167,18 @@ function positionRecentMenu() {
   menu.style.left = Math.max(edge, Math.min(left, innerWidth - bounds.width - edge)) + 'px';
   menu.style.top = Math.max(edge, Math.min(top, innerHeight - bounds.height - edge)) + 'px';
 }
-function openRecentMenu(focus = true) {
+// `focus` is 'item' for a keyboard open, 'menu' for a pointer open (focus the
+// flyout itself so no row is pre-highlighted), or false when a hover merely
+// reveals it and focus should stay where it is.
+function openRecentMenu(focus = 'item') {
+  const menu = $('open-recent-menu');
   clearTimeout(recentMenuCloseTimer);
-  if ($('open-recent-menu').hidden) renderRecentMenu();
-  $('open-recent-menu').hidden = false;
+  if (menu.hidden) renderRecentMenu();
+  menu.hidden = false;
   $('open-recent-button').setAttribute('aria-expanded', 'true');
   positionRecentMenu();
-  if (focus) $('open-recent-menu').querySelector('button')?.focus();
+  if (focus === 'item') menu.querySelector('button')?.focus();
+  else if (focus === 'menu') { menu.tabIndex = -1; menu.focus({ preventScroll: true }); }
 }
 // Document preferences: one settings surface for typography, theme, reading
 // behaviour and layout. Sliders preview the document live, but the restyle is
@@ -452,7 +457,7 @@ function initializeChrome() {
   $('lock-document').onclick = toggleDocumentReadOnly;
   document.querySelectorAll('button[data-document-mode]').forEach(button => button.onclick = () => setDocumentMode(button.dataset.documentMode));
   document.querySelectorAll('[data-app-action]').forEach(button => button.onclick = () => runAppAction(button.dataset.appAction));
-  $('open-recent-button').onclick = event => { event.stopPropagation(); openRecentMenu(); };
+  $('open-recent-button').onclick = event => { event.stopPropagation(); openRecentMenu('menu'); };
   const recentGroup = $('open-recent-button').parentElement;
   recentGroup.addEventListener('pointerenter', event => { if (event.pointerType !== 'touch') openRecentMenu(false); });
   recentGroup.addEventListener('pointerleave', () => { recentMenuCloseTimer = setTimeout(closeRecentMenu, 160); });
@@ -477,7 +482,7 @@ function initializeChrome() {
     const open = currentGroup && !currentGroup.querySelector('.menu').hidden;
     closeAllMenus(); next.focus(); if (open) next.click();
   });
-  $('app-menubar').addEventListener('pointerover', event => { const next = event.target.closest('.menubar-button'); if (next && next.getAttribute('aria-expanded') !== 'true' && triggers.some(button => button.getAttribute('aria-expanded') === 'true')) next.click(); });
+  $('app-menubar').addEventListener('pointerover', event => { const next = event.target.closest('.menubar-button'); if (next && next.getAttribute('aria-expanded') !== 'true' && triggers.some(button => button.getAttribute('aria-expanded') === 'true')) next.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 })); });
   let sourceBeforeInput = null, sourceInputType = 'insertText';
   const syncSourceSelection = () => {
     if (documentMode !== 'source' || !editor) return null;

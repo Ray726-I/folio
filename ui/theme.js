@@ -43,6 +43,27 @@ function mixColors(first, second, amount) {
   const other = colorChannels(second);
   return '#' + colorChannels(first).map((channel, index) => Math.round(channel * (1 - amount) + other[index] * amount).toString(16).padStart(2, '0')).join('');
 }
+// Hover is a step in the surface's own hue, never a grey wash over a tinted
+// panel, so a theme without a hand-picked hover (Omarchy) gets one derived
+// from its panel: same hue and saturation, one lightness step lighter in dark
+// themes and darker in light ones.
+function shiftLightness(color, amount) {
+  const [red, green, blue] = colorChannels(color).map(channel => channel / 255);
+  const max = Math.max(red, green, blue), min = Math.min(red, green, blue), delta = max - min;
+  const lightness = (max + min) / 2;
+  const saturation = delta === 0 ? 0 : delta / (1 - Math.abs(2 * lightness - 1));
+  const hue = delta === 0 ? 0
+    : max === red ? ((green - blue) / delta + (green < blue ? 6 : 0)) * 60
+    : max === green ? ((blue - red) / delta + 2) * 60
+    : ((red - green) / delta + 4) * 60;
+  const target = Math.min(1, Math.max(0, lightness + amount));
+  const tonal = offset => {
+    const k = (offset + hue / 30) % 12;
+    const amplitude = saturation * Math.min(target, 1 - target);
+    return Math.round(255 * (target - amplitude * Math.max(-1, Math.min(k - 3, 9 - k, 1))));
+  };
+  return '#' + [0, 8, 4].map(tonal).map(value => value.toString(16).padStart(2, '0')).join('');
+}
 function colorLuminance(color) {
   return colorChannels(color).map(channel => channel / 255)
     .map(channel => channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4)
@@ -230,7 +251,7 @@ function availableThemes() { return omarchy ? [...themes, { id: 'omarchy', label
 // Tokens written to the root by the Omarchy palette. Theme changes clear just
 // these; a blanket style reset also dropped --text-size and the reader's
 // spacing preferences, forcing a full reflow with the wrong metrics.
-const inlineThemeVariables = ['--bg', '--fg', '--surface', '--panel', '--accent', '--selection', '--green', '--red', '--yellow', '--blue', '--purple', '--accent-ink',
+const inlineThemeVariables = ['--bg', '--fg', '--surface', '--panel', '--accent', '--selection', '--green', '--red', '--yellow', '--blue', '--purple', '--accent-ink', '--hover',
   // Derived colours are recomputed below; drop stale ones so a palette that
   // cannot resolve yet never leaves the previous theme's reading ink behind.
   '--read-body', '--read-strong', '--read-accent', '--read-blue', '--read-purple', '--read-green', '--read-yellow', '--read-red',
@@ -257,6 +278,11 @@ function applyTheme(id, persist = true) {
     const map = { '--bg': 'background', '--fg': 'foreground', '--surface': 'dark_background', '--panel': 'lighter_background', '--accent': 'accent', '--selection': 'selection', '--green': 'green', '--red': 'red', '--yellow': 'yellow', '--blue': 'blue', '--purple': 'magenta' };
     const fallbacks = { '--surface': 'color-mix(in srgb, var(--fg) 4%, var(--bg))', '--panel': 'color-mix(in srgb, var(--fg) 7%, var(--bg))', '--selection': 'color-mix(in srgb, var(--accent) 22%, var(--bg))' };
     for (const [variable, key] of Object.entries(map)) root.style.setProperty(variable, colors[key] || fallbacks[variable] || colors.accent || colors.foreground);
+    // Built-in themes name their hover colour; Omarchy names only surfaces, so
+    // derive it from the panel in the panel's own hue. A palette without
+    // lighter_background falls back to the mixed panel token.
+    const panel = /^#[0-9a-f]{6}$/i.test(colors.lighter_background || '') ? colors.lighter_background : cssVarColor('--panel');
+    if (/^#[0-9a-f]{6}$/i.test(panel)) root.style.setProperty('--hover', shiftLightness(panel, omarchy.mode === 'light' ? -.055 : .055));
     root.style.colorScheme = omarchy.mode === 'light' ? 'light' : 'dark';
   }
   paletteRetries = 0;

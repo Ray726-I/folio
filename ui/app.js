@@ -1118,10 +1118,13 @@ function closeAllMenus(returnFocus = false) {
   for (const id of ['open-menu', 'view-menu', 'folio-menu', 'edit-menu', 'application-view-menu', 'go-menu', 'help-menu', 'document-mode-menu', 'document-more-menu', 'open-recent-menu', 'tree-menu']) {
     const menu = $(id);
     if (menu && !menu.hidden) {
-      menu.hidden = true;
+      // Read focus before hiding: hiding a menu whose container itself holds
+      // focus moves focus to the body, and the trigger would never get it back.
+      const hadFocus = returnFocus && menu.contains(document.activeElement);
       const trigger = document.querySelector(`[aria-controls="${id}"]`);
+      menu.hidden = true;
       trigger?.setAttribute('aria-expanded', 'false');
-      if (returnFocus && menu.contains(document.activeElement)) trigger?.focus();
+      if (hadFocus) trigger?.focus();
     }
   }
 }
@@ -1129,15 +1132,21 @@ function setupMenu(triggerId, menuId) {
   const trigger = $(triggerId), menu = $(menuId);
   if (!trigger || !menu) return;
   const items = () => [...menu.querySelectorAll('.menu-item:not([hidden]):not(:disabled)')].filter(item => item.closest('[role=menu]') === menu);
-  function openMenu() {
+  function openMenu(pointerOpen = false) {
     const wasHidden = menu.hidden;
     closeAllMenus();
     if (!wasHidden) return;
     menu.hidden = false;
     trigger.setAttribute('aria-expanded', 'true');
-    (menu.querySelector('input,select') || items()[0])?.focus();
+    // A pointer-opened menu takes focus itself. Focusing the first row would
+    // paint a focus ring on an item the pointer is nowhere near; hover is the
+    // only state a pointer user should see until they move. Keyboard opens
+    // still land on the first item so arrows, Home and End start from it.
+    if (pointerOpen) { menu.tabIndex = -1; menu.focus({ preventScroll: true }); }
+    else (menu.querySelector('input,select') || items()[0])?.focus();
   }
-  trigger.addEventListener('click', event => { event.stopPropagation(); menu.hidden ? openMenu() : closeAllMenus(true); });
+  // A keyboard activation (Enter/Space) also fires click, but with detail 0.
+  trigger.addEventListener('click', event => { event.stopPropagation(); menu.hidden ? openMenu(event.detail > 0) : closeAllMenus(true); });
   trigger.addEventListener('keydown', event => {
     if (event.key === 'ArrowDown' && menu.hidden) { event.preventDefault(); openMenu(); }
     else if (event.key === 'Escape' && !menu.hidden) { event.preventDefault(); closeAllMenus(true); }
