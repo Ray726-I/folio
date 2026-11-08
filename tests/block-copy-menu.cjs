@@ -36,6 +36,25 @@ const { openEditor } = require('./editor-browser.cjs');
     await tableMenu.waitFor({ state: 'visible' });
     await tableMenu.getByRole('menuitem', { name: 'Copy table' }).click();
     assert.equal(await page.evaluate(() => window.copiedCode), '| A | B |\n|---|---|\n| 1 | 2 |\n', 'tables copy exact source');
+    // Right-clicking selected text inside an in-place source editor must not
+    // collapse it: the menu opens over the open card and Copy block works.
+    await page.locator('.code-container').first().click({ button: 'right' });
+    await docMenu.waitFor({ state: 'visible' });
+    await docMenu.getByRole('menuitem', { name: 'Edit Markdown' }).click();
+    await page.waitForFunction(() => document.querySelector('.folio-source-edit'));
+    await page.evaluate(() => {
+      const card = document.querySelector('.folio-source-edit code');
+      const range = document.createRange();
+      range.setStart(card.firstChild, 4); range.setEnd(card.firstChild, 12);
+      const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);
+    });
+    const cardBox = await page.locator('.folio-source-edit').boundingBox();
+    await page.mouse.click(cardBox.x + 60, cardBox.y + 30, { button: 'right' });
+    await docMenu.waitFor({ state: 'visible' });
+    assert.equal(await page.evaluate(() => !!document.querySelector('.folio-source-edit')), true, 'right-click keeps the source editor open');
+    await docMenu.getByRole('menuitem', { name: 'Copy block' }).click();
+    assert.equal(await page.evaluate(() => window.copiedCode), '```mermaid\nflowchart TD\n  A-->B\n```\n', 'source-card copy carries the fence');
+    assert.equal(await page.evaluate(() => !!document.querySelector('.folio-source-edit')), true, 'copying keeps editing where it was');
     assert.deepEqual(session.errors, []);
     console.log('PASS: context menus copy formulas, mermaid, code, blocks and tables');
   } finally { await session.close(); }

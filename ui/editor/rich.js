@@ -3796,7 +3796,9 @@ export function createRichEditor(parent, options) {
     menu.className = 'folio-table-menu folio-document-menu';
     menu.setAttribute('role', 'menu'); menu.setAttribute('aria-label', 'Document menu');
     menu.tabIndex = -1;
-    menu.append(markdownMenuItem(target));
+    // Inside an in-place source editor the block is already revealed; the
+    // Edit entry would be a disabled dead end, so Copy leads instead.
+    if (!target.closest?.('.folio-source-edit')) menu.append(markdownMenuItem(target));
     const copyItem = blockCopyItem(target);
     if (copyItem) menu.append(copyItem);
     const separator = document.createElement('hr'); separator.setAttribute('role', 'separator');
@@ -4264,6 +4266,10 @@ export function createRichEditor(parent, options) {
   view.dom.addEventListener('focusout', () => {
     requestAnimationFrame(() => {
       if (view.isDestroyed || !model.sourceEdit || view.dom.contains(document.activeElement)) return;
+      // A context menu opened from the card owns focus now; collapsing would
+      // destroy what the user is about to copy. The menu closes on its own
+      // terms and hands focus back to the editor.
+      if (activePopup?.menu?.contains(document.activeElement)) return;
       const selection = sourceSelection(view.state);
       model = parseSource(model.source); bookmark = null;
       view.updateState(stateFor(model.doc, selection));
