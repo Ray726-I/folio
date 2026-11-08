@@ -30,6 +30,7 @@ async function activateDocument(doc, capture = true) {
   let activated = false;
   try {
   if (capture) rememberDocument();
+  outlineFollowSuspended = true;
   setTransitionLocked(true);
   await invoke('activate_document', { documentId: doc.documentId });
   ++renderGeneration; previewSnapshot = null; current = doc;
@@ -47,6 +48,19 @@ async function activateDocument(doc, capture = true) {
     setTransitionLocked(false);
     if (activated && current === doc) for (const [element, top] of [[$('reader-scroll'), doc.view?.scroll || 0], [$('document-source'), doc.view?.sourceScroll || 0]]) {
       const behavior = element.style.scrollBehavior; element.style.scrollBehavior = 'auto'; element.scrollTop = top; element.style.scrollBehavior = behavior;
+    }
+    // The rebuild above passes through cleared content at scroll 0; any spy
+    // frame queued in between must not paint that transient state. Resume
+    // only once the saved offset is back, then sync the highlight to the
+    // settled position instead of waiting for the next scroll event.
+    outlineFollowSuspended = false;
+    if (activated && current === doc) {
+      updateActiveOutline({ instant: true });
+      // Restoring while async media (images, diagrams) still settles can
+      // clamp short. Re-assert on the next frame so a tall document still
+      // lands on its saved offset.
+      const reader = $('reader-scroll'), top = doc.view?.scroll || 0;
+      requestAnimationFrame(() => { if (current === doc && Math.abs(reader.scrollTop - top) > 1 && top <= reader.scrollHeight - reader.clientHeight) reader.scrollTop = top; });
     }
   }
 }

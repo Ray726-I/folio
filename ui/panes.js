@@ -28,6 +28,9 @@ function closeReadingCompanion() {
   clearTimeout(companionTimer); clearTimeout(companionMaxTimer); companionMaxTimer = 0; ++companionGeneration; companionAbort?.abort(); cancelMermaidPending('companion');
   companionDocument = null; $('reading-companion').hidden = true; $('pane-divider').hidden = true;
   $('document-view').classList.remove('has-companion'); focusPane('main'); $('reader-scroll').focus();
+  // The companion borrows the outline list for its own items; rebuild the
+  // document rows now rather than leaving them stale until the next debounce.
+  if (typeof refreshEditorOutline === 'function') refreshEditorOutline();
 }
 function scheduleCompanionRender(delay = 180) {
   if (!companionDocument) return;
@@ -101,6 +104,7 @@ async function moveDocumentToNewWindow(doc = focusedDocument()) {
 }
 async function mountTransferredDocument({ token, document: captured }) {
   setTransitionLocked(true);
+  outlineFollowSuspended = true;
   try {
     current = captured; current.active = true; registerDocument(current);
     documentMode = current.view?.mode || 'edit'; documentReadOnly = current.view?.readOnly || false;
@@ -111,7 +115,7 @@ async function mountTransferredDocument({ token, document: captured }) {
     $('find-input').value = current.view?.find || ''; $('find-bar').hidden = !current.view?.findOpen;
     if (current.view?.findOpen) { updateFind(); findIndex = current.view.findIndex; }
     await invoke('finish_window_transfer', { token, documentId: current.documentId });
-  } finally { setTransitionLocked(false); }
+  } finally { setTransitionLocked(false); outlineFollowSuspended = false; updateActiveOutline({ instant: true }); }
   scheduleAutomaticSave(current);
 }
 function initializePanes() {

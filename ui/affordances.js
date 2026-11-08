@@ -28,61 +28,125 @@ function initializeTabScrolling() {
   list.addEventListener('scroll',update,{passive:true});new ResizeObserver(update).observe(list);new MutationObserver(()=>requestAnimationFrame(update)).observe(list,{childList:true});update();
 }
 function initializeDocumentAffordances() {
-  const bubble=document.createElement('div');bubble.className='selection-format';bubble.role='toolbar';bubble.setAttribute('aria-label','Format selection');bubble.hidden=true;
-  for(const [label,command,text] of [['Bold','bold','B'],['Italic','italic','I'],['Link','link','Link'],['Inline code','code','<>']]) {
-    const button=document.createElement('button');button.type='button';button.textContent=text;button.title=label;button.setAttribute('aria-label',label);
-    button.onpointerdown=event=>{event.preventDefault();editor?.captureSelection?.();};
-    button.onclick=()=>{if(documentMode==='edit'&&documentWritable())editor?.command(command);bubble.hidden=true;};bubble.append(button);
+  // Contextual selection toolbar: inline marks first, then links, then block
+  // formatting, then the block-insertion overflow. It exists only while text
+  // is selected in Edit mode; Folio keeps no persistent formatting chrome.
+  const bubble=document.createElement('div');
+  bubble.className='selection-format';bubble.setAttribute('role','toolbar');bubble.setAttribute('aria-label','Format selection');bubble.hidden=true;
+  const FORMAT_ACTIONS=[
+    { id:'bold',command:'bold',icon:'i-bold',label:'Bold',shortcut:'Ctrl+B',mark:'strong',group:1 },
+    { id:'italic',command:'italic',icon:'i-italic',label:'Italic',shortcut:'Ctrl+I',mark:'em',group:1 },
+    { id:'strike',command:'strike',icon:'i-strike',label:'Strikethrough',mark:'strike',group:1 },
+    { id:'code',command:'code',icon:'i-code',label:'Inline code',mark:'code',group:1 },
+    { id:'link',command:'link',icon:'i-link',label:'Link',group:2 },
+    { id:'quote',command:'quote',icon:'i-quote',label:'Blockquote',group:3,block:true },
+    { id:'bullet',command:'bullet',icon:'i-list-bullet',label:'Bulleted list',group:3,block:true },
+    { id:'numbered',command:'numbered',icon:'i-list-ordered',label:'Numbered list',group:3,block:true },
+    { id:'more',icon:'i-more',label:'More formatting',group:4,overflow:true },
+  ];
+  const formatButtons=new Map();
+  let lastGroup=0;
+  for(const action of FORMAT_ACTIONS) {
+    if(action.group!==lastGroup&&lastGroup) {
+      const rule=document.createElement('span');rule.className='selection-format-separator';rule.setAttribute('aria-hidden','true');bubble.append(rule);
+    }
+    lastGroup=action.group;
+    const button=document.createElement('button');
+    button.type='button';button.className='selection-format-button';button.dataset.action=action.id;
+    button.setAttribute('aria-label',action.label);
+    button.title=action.shortcut?`${action.label} (${action.shortcut})`:action.label;
+    button.innerHTML=`<svg class="icon" aria-hidden="true"><use href="#${action.icon}"/></svg>`;
+    if(action.mark) button.setAttribute('aria-pressed','false');
+    if(action.overflow) button.setAttribute('aria-haspopup','menu');
+    button.addEventListener('pointerdown',event=>{event.preventDefault();editor?.captureSelection?.();});
+    button.addEventListener('click',()=>{
+      if(!documentWritable())return;
+      if(action.overflow) { editor?.openBlockMenu?.(button.getBoundingClientRect()); return; }
+      editor?.command(action.command,action.id==='link'?{select:'label'}:undefined);
+      // A command can move the logical range while the native selection stays
+      // collapsed (for example Link selects the URL placeholder). Re-assert the
+      // range so the bubble stays anchored to visible text.
+      const logical=editor?.getSelection?.();
+      if(logical&&logical.anchor!==logical.head&&(!getSelection()||getSelection().isCollapsed))editor?.selectRange?.(logical.anchor,logical.head,true);
+      // Keep the bubble mounted after formatting and refresh its state right
+      // away; the source-ledger round trip may settle asynchronously, so the
+      // next frame re-reads it and re-measures the anchor as well.
+      refreshFormatState();
+      requestAnimationFrame(()=>{refreshFormatState();schedule();});
+    });
+    formatButtons.set(action.id,button);
+    bubble.append(button);
   }
   document.body.append(bubble);
+  function hideFormatToolbar(){ if(!bubble.hidden) bubble.hidden=true; }
+  function refreshFormatState(){
+    if(bubble.hidden)return;
+    const writable=documentWritable();
+    const context=writable?editor?.context?.():null;
+    const locked=!writable||Boolean(context?.code);
+    for(const action of FORMAT_ACTIONS) {
+      const button=formatButtons.get(action.id);
+      if(!button)continue;
+      if(action.mark) {
+        const active=Boolean(context?.marks?.includes(action.mark));
+        const mixed=Boolean(context?.mixed?.includes(action.mark));
+        button.setAttribute('aria-pressed',String(active||mixed));
+        if(mixed)button.dataset.mixed='true';else delete button.dataset.mixed;
+        button.setAttribute('aria-label',mixed?`${action.label} (partially applied)`:action.label);
+        button.disabled=locked;
+      } else if(action.block) {
+        // Block syntax cannot render inside a code block or a table cell.
+        button.disabled=locked||Boolean(context?.table);
+      } else {
+        button.disabled=!writable||Boolean(context?.code);
+      }
+    }
+  }
   let bubbleFrame=0;
   const updateBubble=()=>{
     bubbleFrame=0;const selection=getSelection();
-    if(bubble.contains(document.activeElement))return;
-    if(documentMode!=='edit'||!documentWritable()||!selection||selection.isCollapsed||!$('preview').contains(selection.anchorNode)||!$('preview').contains(selection.focusNode)||selection.anchorNode.parentElement?.closest('pre,.code-container,.folio-source-edit')){bubble.hidden=true;return;}
-    const rect=selection.getRangeAt(0).getBoundingClientRect();if(!rect.width||rect.bottom<0||rect.top>innerHeight){bubble.hidden=true;return;}
-    bubble.hidden=false;const readerBounds=$('reader-scroll').getBoundingClientRect();bubble.style.left=`${Math.max(readerBounds.left+8,Math.min(readerBounds.right-bubble.offsetWidth-8,rect.left+(rect.width-bubble.offsetWidth)/2))}px`;bubble.style.top=`${Math.max(4,rect.top-bubble.offsetHeight-8)}px`;
+    if(documentMode!=='edit'||!documentWritable()||!selection||selection.isCollapsed||!$('preview').contains(selection.anchorNode)||!$('preview').contains(selection.focusNode)||selection.anchorNode.parentElement?.closest('pre,.code-container,.folio-source-edit')){hideFormatToolbar();return;}
+    if(!selection.rangeCount) { hideFormatToolbar(); return; }
+    const range=selection.getRangeAt(0);
+    // Anchor to the first line of the selection, not the union rectangle of a
+    // tall multiline range, so the toolbar tracks what the eye reads first.
+    const rects=[...range.getClientRects()].filter(rect=>rect.width>0&&rect.height>0);
+    const first=rects[0]||range.getBoundingClientRect();
+    if(!first.width||!first.height||first.bottom<0||first.top>innerHeight){hideFormatToolbar();return;}
+    bubble.hidden=false;
+    const width=bubble.offsetWidth,height=bubble.offsetHeight,gap=9,margin=8;
+    // Pane-aware: the reader pane's box already excludes the companion pane,
+    // so the toolbar can never overlap the adjacent preview. When the pane is
+    // narrower than the toolbar itself, fall back to the window so the
+    // controls are never clipped.
+    const pane=$('reader-scroll').getBoundingClientRect();
+    const fitsPane=pane.width-margin*2>=width;
+    const minLeft=fitsPane?pane.left+margin:Math.max(8,Math.min(pane.left,innerWidth-width-8));
+    const maxLeft=fitsPane?pane.right-margin-width:Math.min(pane.right-margin-width,innerWidth-width-8);
+    const center=first.left+first.width/2;
+    const left=Math.max(minLeft,Math.min(maxLeft,center-width/2));
+    const above=first.top-gap-height,below=first.bottom+gap;
+    const useBelow=above<pane.top+margin&&below+height<=pane.bottom-margin;
+    const top=Math.max(pane.top+margin,Math.min(pane.bottom-margin-height,useBelow?below:above));
+    bubble.style.left=`${Math.round(left)}px`;
+    bubble.style.top=`${Math.round(top)}px`;
+    bubble.dataset.side=useBelow?'below':'above';
+    const pointer=Math.max(14,Math.min(width-14,center-left));
+    bubble.style.setProperty('--pointer-left',`${Math.round(pointer)}px`);
+    refreshFormatState();
   };
   const schedule=()=>{if(!bubbleFrame)bubbleFrame=requestAnimationFrame(updateBubble);};
   document.addEventListener('selectionchange',schedule);window.addEventListener('scroll',schedule,true);window.addEventListener('resize',schedule);
   new MutationObserver(schedule).observe(root,{attributes:true,attributeFilter:['data-document-mode']});
-  bubble.onkeydown=event=>{if(event.key==='Escape'){event.preventDefault();bubble.hidden=true;editor?.focus();}};
-  const copy=document.createElement('button');copy.className='code-copy';copy.type='button';copy.hidden=true;copy.setAttribute('aria-label','Copy code');copy.title='Copy code';copy.append(icon('copy'));document.body.append(copy);
-  let codeBlock=null, copyTimer, copyFeedbackTimer;
-  const setCopyState=copied=>{copy.querySelector('use').setAttribute('href',copied?'#i-check':'#i-copy');copy.setAttribute('aria-label',copied?'Code copied':'Copy code');copy.title=copied?'Copied':'Copy code';copy.classList.toggle('copied',copied);};
-  const placeCopy=block=>{
-    if(!block?.isConnected){copy.hidden=true;codeBlock=null;return;}
-    if(codeBlock!==block){clearTimeout(copyFeedbackTimer);setCopyState(false);}
-    codeBlock=block;const rect=block.getBoundingClientRect();copy.hidden=false;const width=copy.offsetWidth;copy.style.left=`${Math.max(8,Math.min(innerWidth-width-8,rect.right-width-8))}px`;copy.style.top=`${Math.max(0,rect.top+5)}px`;
-  };
-  document.addEventListener('pointerover',event=>{if(copy.contains(event.target))return;const block=event.target.closest?.('.code-container,pre');if(block&&!block.closest('.folio-source-edit')&&block.closest('#preview,#companion-preview')){clearTimeout(copyTimer);placeCopy(block);}else copyTimer=setTimeout(()=>{if(document.activeElement!==copy&&!copy.matches(':hover'))copy.hidden=true;},150);});
-  document.addEventListener('focusin',event=>{const block=event.target.closest?.('.code-container,pre');if(block&&!block.closest('.folio-source-edit')&&block.closest('#preview,#companion-preview'))placeCopy(block);else if(event.target!==copy)copy.hidden=true;});
-  copy.onpointerenter=()=>clearTimeout(copyTimer);
-  copy.onclick=async()=>{const code=codeBlock?.querySelector('.code-surface code,pre code,code');if(!code)return;try{await navigator.clipboard.writeText(code.textContent);setCopyState(true);clearTimeout(copyFeedbackTimer);copyFeedbackTimer=setTimeout(()=>setCopyState(false),1800);}catch(error){toast(errorMessage(error));}};
-  window.addEventListener('scroll',()=>{if(document.activeElement!==copy)copy.hidden=true;else placeCopy(codeBlock);},true);
-  const makeCodeFocusable=node=>{
-    if(!(node instanceof Element))return;
-    for(const block of [node,...node.querySelectorAll('.code-container,pre')]) {
-      const eligible=block.matches('.code-container')&&block.closest('#preview')||block.matches('pre')&&block.closest('#companion-preview');
-      if(!eligible||block.closest('[aria-hidden="true"]'))continue;
-      if(!block.hasAttribute('tabindex'))block.tabIndex=0;
-    }
-  };
+  bubble.onkeydown=event=>{if(event.key==='Escape'){event.preventDefault();hideFormatToolbar();editor?.focus();}};
   document.addEventListener('keydown',event=>{
-    if(event.key!=='Tab')return;
-    const block=event.target.closest?.('.code-container,pre');
-    if(block&&block===codeBlock&&!event.shiftKey){event.preventDefault();placeCopy(block);copy.focus();}
-    else if(event.target===copy&&event.shiftKey&&codeBlock?.isConnected){event.preventDefault();codeBlock.focus();}
-    else if(event.target===copy&&codeBlock?.isConnected){
-      const focusables=[...document.querySelectorAll('button,input,textarea,select,a[href],[tabindex]')].filter(el=>el.tabIndex>=0&&!el.disabled&&el.getClientRects().length);
-      const next=focusables.slice(focusables.indexOf(codeBlock)+1).find(el=>el!==copy&&!codeBlock.contains(el));
-      if(next){event.preventDefault();copy.hidden=true;next.focus();}
-    }
-  });
-  for(const id of ['preview','companion-preview']) {
-    new MutationObserver(records=>{for(const record of records)for(const node of record.addedNodes)makeCodeFocusable(node);}).observe($(id),{childList:true,subtree:true});
-    makeCodeFocusable($(id));
-  }
+    if(event.key!=='Escape'||bubble.hidden)return;
+    if(document.querySelector('dialog[open]'))return;
+    // An open picker or table menu owns Escape; it closes itself and restores
+    // focus.
+    if(document.querySelector('.folio-slash-menu, .folio-table-menu'))return;
+    event.preventDefault();hideFormatToolbar();editor?.focus();
+  },true);
   const progress=document.createElement('span');progress.id='reading-progress';progress.setAttribute('aria-label','Reading progress');$('statusbar').querySelector('.status-start').append(progress);
   const updateProgress=()=>{const scroller=$(focusedPane==='companion'?'companion-scroll':'reader-scroll'),range=scroller.scrollHeight-scroller.clientHeight;progress.hidden=!current.active||documentMode==='source'||range<scroller.clientHeight;progress.textContent=` · ${Math.round(range>0?100*scroller.scrollTop/range:100)}%`;};
   for(const id of ['reader-scroll','companion-scroll'])$(id).addEventListener('scroll',updateProgress,{passive:true});new ResizeObserver(updateProgress).observe($('preview'));updateProgress();

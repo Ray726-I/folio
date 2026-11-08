@@ -543,23 +543,28 @@ export function createRichEditor(parent, options) {
     if (!text || /\s/.test(text) || !safeDestination(text)) return false;
     return /^(?:[a-z][a-z\d+.-]*:\S+|\/\/\S+|\/{1,2}\S*|\.{1,2}\/\S+|[\w.-]+\/[\w./-]*)$/i.test(text);
   }
-  function insertCommandSyntax(name) {
+  function insertCommandSyntax(name, arg) {
     const range = commandSourceRange();
     if (!range) return false;
     const selected = model.source.slice(range.from, range.to);
+    // Rich view hides a link destination, so a selection parked there has no
+    // visible DOM range (the toolbar would vanish). Callers that need a
+    // visible selection pass { select: 'label' }.
+    const selectLabel = name === 'link' && arg?.select === 'label';
     let insert, anchor, head;
     if (name === 'link') {
       if (selected && looksLikeDestination(selected)) {
         insert = `[${selected}](${selected})`;
-        const start = insert.lastIndexOf(`(${selected})`) + 1;
-        anchor = start; head = start + selected.length;
+        if (selectLabel) { anchor = 1; head = 1 + selected.length; }
+        else { const start = insert.lastIndexOf(`(${selected})`) + 1; anchor = start; head = start + selected.length; }
       } else if (selected) {
         insert = `[${selected}](https://example.com)`;
-        const start = insert.indexOf('https://example.com');
-        anchor = start; head = start + 'https://example.com'.length;
+        if (selectLabel) { anchor = 1; head = 1 + selected.length; }
+        else { const start = insert.indexOf('https://example.com'); anchor = start; head = start + 'https://example.com'.length; }
       } else {
         insert = '[text](https://example.com)';
-        anchor = 1; head = 1 + 'text'.length;
+        if (selectLabel) { anchor = 1; head = 1 + 'text'.length; }
+        else { anchor = insert.indexOf('https://example.com'); head = anchor + 'https://example.com'.length; }
       }
     } else if (name === 'image') {
       if (selected && looksLikeDestination(selected)) {
@@ -647,7 +652,7 @@ export function createRichEditor(parent, options) {
       const from = Math.min(state.selection.from, pos), to = Math.max(state.selection.to, pos + node.nodeSize);
       editor.dispatch(state.tr.setSelection(TextSelection.create(state.doc, from, to)));
     });
-    dom.append(formula); let generation = 0;
+    dom.append(formula); dom.dataset.tex = node.attrs.tex ?? ''; let generation = 0;
     const render = async () => {
       const tex = node.attrs.tex;
       const current = ++generation; formula.textContent = tex; formula.classList.remove('math-error');
@@ -657,7 +662,7 @@ export function createRichEditor(parent, options) {
     };
     const refresh = () => formula.setAttribute('aria-disabled', String(options.isLocked()));
     render(); refreshers.add(refresh);
-    return { dom, update(next) { if (next.type !== node.type) return false; if (next.sameMarkup(node) && next.textContent === node.textContent) { node = next; return true; } node = next; render(); return true; }, stopEvent: event => {
+    return { dom, update(next) { if (next.type !== node.type) return false; if (next.sameMarkup(node) && next.textContent === node.textContent) { node = next; return true; } node = next; dom.dataset.tex = node.attrs.tex ?? ''; render(); return true; }, stopEvent: event => {
       if (event.type === 'keydown') {
         // The formula is focusable so keyboard users can open it with Enter.
         // That must not make document-wide selection and deletion only work
@@ -1974,9 +1979,22 @@ export function createRichEditor(parent, options) {
       return state.tr.insertText(match[1], start, end).addMark(start, start + match[1].length, schema.marks[mark].create()).removeStoredMark(schema.marks[mark]);
     })),
     new InputRule(/\$([^$\n]+)\$$/, (state, match, start, end) => state.tr.replaceWith(start, end, schema.nodes.math_inline.create({ tex: match[1] }))),
-    wrappingInputRule(/^\s*>\s$/, schema.nodes.blockquote),
-    wrappingInputRule(/^\s*([-+*])\s$/, schema.nodes.bullet_list, match => ({ bullet: match[1], tight: true })),
-    wrappingInputRule(/^(\d+)\.\s$/, schema.nodes.ordered_list, match => ({ order: +match[1], tight: true })),
+    // List and quote markers only wrap plain paragraphs. Inside a heading (or
+    // any other block) they are literal text: wrapping a heading in a list
+    // serializes the markers out of order (`## 1. Title` became `1. ## Title`)
+    // instead of keeping what was typed.
+    ...[
+      [(/^\s*>\s$/), schema.nodes.blockquote, undefined],
+      [(/^\s*([-+*])\s$/), schema.nodes.bullet_list, match => ({ bullet: match[1], tight: true })],
+      [(/^(\d+)\.\s$/), schema.nodes.ordered_list, match => ({ order: +match[1], tight: true })],
+    ].map(([pattern, type, attrs]) => {
+      const rule = wrappingInputRule(pattern, type, attrs);
+      const apply = rule.handler;
+      return new InputRule(pattern, (state, match, start, end) => {
+        if (state.selection.$from.parent.type !== schema.nodes.paragraph) return null;
+        return apply(state, match, start, end);
+      }, { inCodeMark: rule.inCodeMark });
+    }),
     textblockTypeInputRule(/^(#{1,6})\s$/, schema.nodes.heading, match => ({ level: match[1].length })),
     textblockTypeInputRule(/^```([\w-]*)\s$/, schema.nodes.code_block, match => ({ params: match[1] })),
     new InputRule(/^\[([ xX])\]\s$/, (state, match, start, end) => {
@@ -2098,12 +2116,36 @@ export function createRichEditor(parent, options) {
         break;
       }
     }
+    // Formatting state is reported per mark: `marks` is fully applied across
+    // the selection, `mixed` is partially applied so the toolbar can show an
+    // indeterminate state instead of claiming the whole range is formatted.
+    const MARK_NAMES = ['strong', 'em', 'code', 'strike'];
+    const selection = state.selection;
     const activeMarks = state.storedMarks || $from.marks();
-    const marks = ['strong', 'em', 'code'].filter(name => activeMarks.some(mark => mark.type === schema.marks[name]));
-    if (!marks.length && !state.selection.empty) {
-      for (const name of ['strong', 'em', 'code']) if (state.doc.rangeHasMark(state.selection.from, state.selection.to, schema.marks[name])) marks.push(name);
+    const marks = [], mixed = [];
+    if (selection.empty) {
+      for (const name of MARK_NAMES) if (activeMarks.some(mark => mark.type === schema.marks[name])) marks.push(name);
+    } else {
+      for (const name of MARK_NAMES) {
+        const mark = schema.marks[name];
+        if (!mark || !state.doc.rangeHasMark(selection.from, selection.to, mark)) continue;
+        let everywhere = true;
+        state.doc.nodesBetween(selection.from, selection.to, node => {
+          if (!everywhere) return false;
+          if (node.isText && !mark.isInSet(node.marks)) everywhere = false;
+          return true;
+        });
+        (everywhere ? marks : mixed).push(name);
+      }
     }
-    return { table: isInTable(state), heading, code: $from.parent.type.spec.code === true, marks };
+    let listKind = null, quote = false;
+    for (let depth = $from.depth; depth > 0; depth--) {
+      const type = $from.node(depth).type;
+      if (!listKind && type === schema.nodes.bullet_list) listKind = 'bullet';
+      if (!listKind && type === schema.nodes.ordered_list) listKind = 'numbered';
+      if (type === schema.nodes.blockquote) quote = true;
+    }
+    return { table: isInTable(state), heading, code: $from.parent.type.spec.code === true, marks, mixed, list: listKind, quote };
   }
   let activePopup = null;
   function closePopup(restore = false) {
@@ -2123,12 +2165,20 @@ export function createRichEditor(parent, options) {
     const dom = view.domAtPos(view.state.selection.head).node;
     return revealSourceBlock(dom instanceof Element ? dom : dom.parentElement);
   }
-  function openSlashMenu(trigger) {
+  function openSlashMenu(trigger, options2 = {}) {
     if (options.isLocked()) return;
     closePopup();
+    // Attached mode opens the same picker from the selection toolbar's More
+    // button: no leading slash, anchored to the button, inserting at the
+    // current selection. It reuses this picker rather than adding a second
+    // popup system.
+    const attached = options2.attached === true;
+    const anchorRect = attached && options2.anchor ? options2.anchor : null;
     const initial = sourceSelection(view.state);
-    const start = initial.head - 1;
-    if (initial.anchor !== initial.head || model.source.slice(start, initial.head) !== '/') return;
+    const start = attached ? initial.head : initial.head - 1;
+    if (!attached) {
+      if (initial.anchor !== initial.head || model.source.slice(start, initial.head) !== '/') return;
+    }
     const menu = document.createElement('div'); menu.className = 'folio-slash-menu';
     menu.id = 'folio-block-suggestions';
     menu.setAttribute('role', 'listbox'); menu.setAttribute('aria-label', 'Insert block');
@@ -2157,7 +2207,11 @@ export function createRichEditor(parent, options) {
 
     function slashContext() {
       const selection = sourceSelection(view.state);
-      if (!selection || selection.anchor !== selection.head) return null;
+      if (!selection) return null;
+      // Attached mode inserts at whatever is selected; the slash picker only
+      // exists for a collapsed caret after a typed "/".
+      if (attached) return { head: selection.head, query: '' };
+      if (selection.anchor !== selection.head) return null;
       const position = selection.head;
       if (position < start + 1 || model.source[start] !== '/') return null;
       if (model.source.lastIndexOf('\n', start - 1) + 1 !== start) return null;
@@ -2209,9 +2263,16 @@ export function createRichEditor(parent, options) {
       const next = select
         ? { anchor: select[0], head: select[1] }
         : { anchor: snippet.length, head: snippet.length };
+      // Attached insertions are block-level: insert the block prefix at the
+      // start of the line holding the selection instead of replacing the
+      // selected words. Slash insertions replace the typed "/" query in place.
+      const selection = sourceSelection(view.state);
+      const lineStart = model.source.lastIndexOf('\n', Math.min(selection.anchor, selection.head) - 1) + 1;
+      const insertFrom = attached ? lineStart : start;
+      const insertTo = attached ? lineStart : context.head;
       closePopup();
       const outcome = replaceLogicalSelection(snippet, 'command',
-        { from: start, to: context.head, all: false, collapsed: context.head === start + 1 }, next);
+        { from: insertFrom, to: insertTo, all: false, collapsed: insertTo === insertFrom }, next);
       if (!outcome.committed) options.message?.('This block could not be inserted into the Markdown source.');
       try { view.focus(); } catch {}
       if (outcome.committed && item.id === 'code') {
@@ -2364,6 +2425,23 @@ export function createRichEditor(parent, options) {
       }, 90);
     }
     function place() {
+      if (attached) {
+        // Anchored to the More button, flipping above when the viewport below
+        // is short, and clamped to the window like every other popup here.
+        let rect = anchorRect;
+        if (!rect) { try { const at = view.coordsAtPos(view.state.selection.from); rect = { left: at.left, right: at.right, top: at.top, bottom: at.bottom, width: at.right - at.left }; } catch { rect = null; } }
+        const gap = 8, margin = 10;
+        const width = menu.offsetWidth, height = menu.offsetHeight;
+        const box = rect || { left: window.innerWidth / 2, right: window.innerWidth / 2, top: 80, bottom: 80, width: 0 };
+        const below = box.bottom + gap, above = box.top - gap - height;
+        const useAbove = below + height > window.innerHeight - margin && above >= margin;
+        const top = Math.max(margin, Math.min(useAbove ? above : below, window.innerHeight - margin - height));
+        const left = Math.max(margin, Math.min(box.left + (box.width || 0) / 2 - width / 2, window.innerWidth - width - margin));
+        menu.style.left = `${Math.round(left)}px`;
+        menu.style.top = `${Math.round(top)}px`;
+        menu.dataset.side = useAbove ? 'above' : 'below';
+        return;
+      }
       // Anchor to the slash itself, not the moving caret: filtering must not
       // drag the picker sideways with every typed character.
       let anchor;
@@ -2380,11 +2458,16 @@ export function createRichEditor(parent, options) {
       menu.dataset.side = useAbove ? 'above' : 'below';
     }
     function renderRoot() {
+      // Image insertion carries its own file/path consent workflow; it stays in
+      // the slash picker proper, never in the selection toolbar's overflow.
+      const blocks = attached
+        ? SLASH_BLOCKS.map(item => item.children ? { ...item, children: item.children.filter(child => child.id !== 'image') } : item)
+        : SLASH_BLOCKS;
       const context = slashContext();
       if (!context) { closePopup(); return; }
       const query = context.query.trim().toLowerCase();
       filtered = Boolean(query);
-      displayed = filtered ? SLASH_LEAVES.filter(item => matchesQuery(item, query)) : SLASH_BLOCKS;
+      displayed = filtered ? SLASH_LEAVES.filter(item => matchesQuery(item, query)) : blocks;
       if (filtered) closeSub();
       else if (openIndex >= 0 && !displayed[openIndex]?.children) closeSub();
       if (filtered && query !== lastQuery) { active = 0; activeSub = 0; }
@@ -2415,6 +2498,9 @@ export function createRichEditor(parent, options) {
     }
     function onViewportChange(event) {
       if (event?.type === 'scroll' && menu.contains(event.target)) return;
+      // An attached menu hangs off a static button; scrolling the document
+      // must not dismiss it.
+      if (attached && event?.type === 'scroll') { place(); return; }
       closePopup();
     }
     function cleanup() {
@@ -2429,7 +2515,10 @@ export function createRichEditor(parent, options) {
       if (event.isComposing) return false;
       if (event.key === 'Escape') {
         if (openIndex >= 0) exitSub();
-        else closePopup();
+        else {
+          closePopup();
+          if (attached) { try { view.focus(); } catch {} }
+        }
         return true;
       }
       if (event.key === 'Tab' || event.key === 'Home' || event.key === 'End'
@@ -2489,7 +2578,48 @@ export function createRichEditor(parent, options) {
     document.body.append(menu);
     activePopup = mode;
     renderRoot();
+    if (attached) {
+      menu.tabIndex = -1;
+      menu.addEventListener('keydown', event => {
+        if (event.isComposing) return;
+        if (keydown(event)) { event.preventDefault(); event.stopPropagation(); }
+      });
+      requestAnimationFrame(() => { try { menu.focus({ preventScroll: true }); } catch {} });
+    }
   }
+  // Task list: an ordinary list item toggles into an unchecked task, a task
+  // toggles back to plain. A paragraph first becomes a bullet list.
+  function taskListCommand(state, dispatch) {
+    const { $from } = state.selection;
+    for (let depth = $from.depth; depth > 0; depth--) {
+      const node = $from.node(depth);
+      if (node.type !== schema.nodes.list_item) continue;
+      if (dispatch) {
+        const checked = node.attrs.checked;
+        const next = checked === true ? null : checked === false ? null : false;
+        dispatch(state.tr.setNodeMarkup($from.before(depth), null, { ...node.attrs, checked: next }));
+      }
+      return true;
+    }
+    const wrap = wrapInList(schema.nodes.bullet_list);
+    if (!wrap(state)) return false;
+    if (!dispatch) return true;
+    wrap(state, tr => {
+      let target = null;
+      const end = Math.max(0, Math.min(tr.selection.to, tr.doc.content.size));
+      tr.doc.nodesBetween(Math.min(tr.selection.from, end), end, (node, pos) => {
+        if (target === null && node.type === schema.nodes.list_item) target = pos;
+        return target === null;
+      });
+      if (target !== null) {
+        const item = tr.doc.nodeAt(target);
+        if (item) tr.setNodeMarkup(target, null, { ...item.attrs, checked: false });
+      }
+      dispatch(tr);
+    });
+    return true;
+  }
+
   function clearFormulaNodeSelection() {
     const selection = view.state.selection;
     if (!(selection instanceof NodeSelection) || !['math_block', 'math_inline'].includes(selection.node.type.name)) return false;
@@ -3606,6 +3736,55 @@ export function createRichEditor(parent, options) {
     });
     return item;
   }
+  function exactSourceForTarget(target) {
+    // Top-level node DOM back to the exact Markdown bytes that produced it.
+    let offset = 0;
+    for (const segment of model.segments) {
+      const owner = view.nodeDOM(offset);
+      if (owner === target || owner?.contains?.(target)) {
+        const text = model.source.slice(segment.from, segment.to);
+        return text.trim() ? text : null;
+      }
+      offset += segment.node.nodeSize;
+    }
+    return null;
+  }
+  function blockCopyItem(target) {
+    // One menu entry copies the right-clicked block in the form that pastes
+    // back cleanly: inner code for fences, TeX for formulas, exact Markdown
+    // source for every other block kind.
+    const resolve = () => {
+      const math = target.closest?.('.math-block,.math-inline');
+      if (math && !math.closest('.code-container')) {
+        const tex = math.dataset?.tex;
+        return tex ? { label: 'Copy formula', text: tex } : null;
+      }
+      const fence = target.closest?.('.code-container,pre');
+      if (fence && !fence.closest('.folio-source-edit')) {
+        const code = fence.querySelector('.code-surface code,pre code,code')?.textContent;
+        if (code) {
+          const language = (fence.dataset?.language || '').toLowerCase();
+          const kind = language === 'math' ? 'formula' : language === 'mermaid' ? 'mermaid code' : 'code';
+          return { label: `Copy ${kind}`, text: code };
+        }
+      }
+      const text = exactSourceForTarget(target);
+      return text ? { label: 'Copy block', text } : null;
+    };
+    const copy = resolve();
+    if (!copy) return null;
+    const item = document.createElement('button');
+    item.type = 'button'; item.textContent = copy.label;
+    item.setAttribute('role', 'menuitem');
+    item.setAttribute('aria-label', copy.label);
+    item.addEventListener('click', async () => {
+      closePopup();
+      try { await navigator.clipboard.writeText(copy.text); options.message?.('Copied'); }
+      catch (error) { options.message?.(String(error?.message || error)); }
+      try { view.focus({ preventScroll: true }); } catch {}
+    });
+    return item;
+  }
   function openDocumentMenu(target, event) {
     closePopup();
     captureDOMSelection();
@@ -3618,6 +3797,8 @@ export function createRichEditor(parent, options) {
     menu.setAttribute('role', 'menu'); menu.setAttribute('aria-label', 'Document menu');
     menu.tabIndex = -1;
     menu.append(markdownMenuItem(target));
+    const copyItem = blockCopyItem(target);
+    if (copyItem) menu.append(copyItem);
     const separator = document.createElement('hr'); separator.setAttribute('role', 'separator');
     menu.append(separator);
     for (const [label, action] of [['Undo', 'undo'], ['Redo', 'redo'], ['Cut', 'cut'], ['Copy', 'copy'], ['Paste', 'paste'], ['Select all', 'select-all']]) {
@@ -3683,6 +3864,23 @@ export function createRichEditor(parent, options) {
     sourceItem.addEventListener('focus', () => closeSubmenu(false));
     menu.append(sourceItem);
     topButtons.push(sourceItem);
+    const tableSource = exactSourceForTarget(tableInfo()?.wrapper);
+    if (tableSource) {
+      const copyItem = document.createElement('button');
+      copyItem.type = 'button'; copyItem.textContent = 'Copy table';
+      copyItem.setAttribute('role', 'menuitem');
+      copyItem.setAttribute('aria-label', 'Copy table');
+      copyItem.addEventListener('pointerenter', () => closeSubmenu(false));
+      copyItem.addEventListener('focus', () => closeSubmenu(false));
+      copyItem.addEventListener('click', async () => {
+        closeTableMenu();
+        try { await navigator.clipboard.writeText(tableSource); options.message?.('Copied'); }
+        catch (error) { options.message?.(String(error?.message || error)); }
+        try { view.focus({ preventScroll: true }); } catch {}
+      });
+      menu.append(copyItem);
+      topButtons.push(copyItem);
+    }
     function closeSubmenu(restoreFocus) {
       if (!openSub) return;
       const { wrap, btn, sub } = openSub;
@@ -4104,6 +4302,7 @@ export function createRichEditor(parent, options) {
     view,
     headings: () => headingMetadata.read(model),
     context: () => currentContext(view.state),
+    openBlockMenu(anchor) { openSlashMenu(view.dom, { attached: true, anchor }); },
     captureSelection() {
       captureDOMSelection();
     },
@@ -4186,12 +4385,14 @@ export function createRichEditor(parent, options) {
       if (outcome.committed) { try { view.focus(); } catch {} return true; }
       return false;
     },
-    command(name) {
-      if (options.isLocked()) return;
+    command(name, arg) {
+      if (options.isLocked()) return false;
       const commands = {
         bold: toggleMark(schema.marks.strong), italic: toggleMark(schema.marks.em), code: toggleMark(schema.marks.code), strike: toggleMark(schema.marks.strike),
-        paragraph: setBlockType(schema.nodes.paragraph), heading: setBlockType(schema.nodes.heading, { level: 2 }),
+        paragraph: setBlockType(schema.nodes.paragraph),
+        heading: setBlockType(schema.nodes.heading, { level: Math.min(6, Math.max(1, Number(arg?.level) || 2)) }),
         bullet: wrapInList(schema.nodes.bullet_list), numbered: wrapInList(schema.nodes.ordered_list), quote: wrapIn(schema.nodes.blockquote),
+        task: taskListCommand,
         row: addRowAfter, column: addColumnAfter, 'delete-row': deleteRow, 'delete-column': deleteColumn, 'delete-table': deleteTable,
         'insert-row-above': addRowBefore, 'insert-row-below': addRowAfter,
         'insert-column-left': addColumnBefore, 'insert-column-right': addColumnAfter
@@ -4236,11 +4437,16 @@ export function createRichEditor(parent, options) {
         // what makes the toolbar buttons usable rather than only exposing an
         // empty source range: the selected text becomes the label/TeX/src when
         // it fits, and a placeholder stays selected for direct typing.
-        if (!insertCommandSyntax(name)) revealCurrentSelection();
+        if (!insertCommandSyntax(name, arg)) revealCurrentSelection();
         view.focus();
-        return;
-      } else commands[name]?.(view.state, view.dispatch, view);
+        return true;
+      } else {
+        const applied = Boolean(commands[name]?.(view.state, view.dispatch, view));
+        view.focus();
+        return applied;
+      }
       view.focus();
+      return true;
     },
     destroy() {
       endHandleDrag(false);

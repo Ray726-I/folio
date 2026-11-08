@@ -1,5 +1,8 @@
 'use strict';
 // Outline presentation is independent of document navigation and source offsets.
+// Indentation compresses with depth: full steps for the first three heading
+// levels, then smaller steps so deep headings keep horizontal room.
+const OUTLINE_LEVEL_INDENT = [0, 0, 14, 28, 36, 44, 52];
 let outlineStateDocument = null, outlineCollapsed = new Set(), outlineContextEntry = null, outlineTabEntry = null;
 
 function buildOutlineTree(previousEntries = []) {
@@ -22,7 +25,12 @@ function buildOutlineTree(previousEntries = []) {
     entry.depth = stack.length;
     stack.push(index);
     const row = entry.row || document.createElement('div'); row.className = 'outline-row'; row.id = 'outline-row-' + index;
-    row.style.setProperty('--outline-indent', Math.min(entry.depth, 4) * 12 + 'px');
+    // Indentation follows heading level on a compressed scale (14px steps to
+    // level 3, then 8px) instead of tree depth, so deep headings keep room.
+    // Disclosure chevrons stay in one fixed gutter; the tree spine in CSS
+    // uses depth only to decide whether a row hangs off a parent.
+    row.style.setProperty('--outline-indent', `${OUTLINE_LEVEL_INDENT[Math.min(Math.max(entry.level || 1, 1), 6)] ?? 0}px`);
+    row.dataset.depth = entry.depth;
     if (!entry.row) row.append(entry.button);
     entry.row = row;
     fragment.append(row);

@@ -114,9 +114,23 @@ function refreshEditorOutline() {
       entry = { button, key: heading.key || `outline-fallback-${++outlineFallbackIdentity}` };
       button.onclick = () => {
         const caret = headingCaretOffset(entry.offset);
-        if (documentMode === 'source') { jumpToSource(caret); setActiveOutline(outlineEntries.indexOf(entry)); return; }
-        editor.selectRange(caret); setActiveOutline(outlineEntries.indexOf(entry));
-        entry.element?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+        if (documentMode === 'source') { jumpToSource(caret); setActiveOutline(outlineEntries.indexOf(entry), { instant: true }); return; }
+        // Claim the highlight first so rapid scroll events from this jump do
+        // not repaint it, then place the heading on the spy line the follower
+        // reads. Same offset both sides means the follower converges on the
+        // clicked heading instead of the one above it. Instant: a jump must
+        // land, never animate past intermediate headings.
+        suppressOutlineFollow(600);
+        editor.selectRange(caret);
+        const index = outlineEntries.indexOf(entry);
+        setActiveOutline(index, { instant: true });
+        const target = entry.element;
+        if (target?.isConnected) {
+          const reader = $('reader-scroll');
+          const behavior = reader.style.scrollBehavior; reader.style.scrollBehavior = 'auto';
+          reader.scrollTop += target.getBoundingClientRect().top - reader.getBoundingClientRect().top - OUTLINE_SPY_OFFSET;
+          reader.style.scrollBehavior = behavior;
+        }
       };
       treeChanged = true;
     }
@@ -127,7 +141,6 @@ function refreshEditorOutline() {
     }
     if (entry.level !== heading.level) {
       entry.button.dataset.level = heading.level;
-      entry.button.style.setProperty('--indent', `${Math.min(heading.level - 1, 3) * 10}px`);
     }
     Object.assign(entry, { id, element, offset: heading.offset, level: heading.level, text });
     nextEntries.push(entry);
@@ -135,7 +148,11 @@ function refreshEditorOutline() {
   outlineEntries = nextEntries;
   outlineActiveIndex = previousActive ? outlineEntries.indexOf(previousActive) : -1;
   $('outline-count').textContent = outlineEntries.length ? `${outlineEntries.length} ${outlineEntries.length === 1 ? 'section' : 'sections'}` : 'No headings';
-  if (treeChanged || outlineStateDocument !== current) buildOutlineTree(previousEntries);
+  // The companion reuses this list for its own buttons, and the dock can show
+  // the panel without rebuilding it: if the live DOM is not our rows, rebuild
+  // even when the heading data itself did not change.
+  const domStale = $('outline-items').firstElementChild !== (outlineEntries[0]?.row ?? null);
+  if (treeChanged || outlineStateDocument !== current || domStale) buildOutlineTree(previousEntries);
   if (!outlineEntries.length && !$('outline-items').querySelector('.sidebar-empty')) { const empty = document.createElement('p'); empty.className = 'sidebar-empty'; empty.textContent = 'Add a heading to build the outline.'; $('outline-items').append(empty); }
   const activeAtRefresh = outlineActiveIndex;
   requestAnimationFrame(() => { if (outlineActiveIndex === activeAtRefresh) updateActiveOutline(); });

@@ -30,7 +30,19 @@ function loadKatex() {
   return katexLoading;
 }
 let outlineEntries = [], outlineActiveFrame = null, outlineActiveIndex = -1;
-function setActiveOutline(index) {
+// While a tab switch rebuilds the editor the reader passes through
+// intermediate scroll positions (cleared content, then restored offset). The
+// spy must ignore those and only read the settled position afterwards.
+let outlineFollowSuspended = false;
+// An outline click drives the reader itself. Without a brief suppression the
+// scroll it causes re-runs the spy mid-gesture and flips the highlight to
+// whichever heading happens to cross the spy line first.
+let outlineSuppressUntil = 0;
+function suppressOutlineFollow(milliseconds = 400) { outlineSuppressUntil = Date.now() + milliseconds; }
+// The spy line sits 88px below the reader top. Outline jumps land the target
+// heading on this same line so the manual highlight and the spy agree.
+const OUTLINE_SPY_OFFSET = 88;
+function setActiveOutline(index, options) {
   if (!outlineEntries.length) return;
   const active = Math.max(0, Math.min(index, outlineEntries.length - 1));
   if (active === outlineActiveIndex) return;
@@ -60,12 +72,17 @@ function setActiveOutline(index) {
   const target = list.scrollTop + (item.top + item.bottom) / 2 - top - list.clientHeight / 2;
   const scrollTop = Math.max(0, Math.min(target, list.scrollHeight - list.clientHeight));
   if (Math.abs(list.scrollTop - scrollTop) < 1) return;
-  list.scrollTo({ top: scrollTop, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+  // Scroll-driven follows glide; programmatic jumps (outline click, tab
+  // switch) snap so there is nothing to wait for and no mid-animation state
+  // for a rapid reversal to land on.
+  const instant = options?.instant || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  list.scrollTo({ top: scrollTop, behavior: instant ? 'instant' : 'smooth' });
 }
-function updateActiveOutline() {
+function updateActiveOutline(options) {
   if (!outlineEntries.length) return;
+  if (outlineFollowSuspended || Date.now() < outlineSuppressUntil) return;
   if ($('outline').hidden) return;
-  const line = $('reader-scroll').getBoundingClientRect().top + 88;
+  const line = $('reader-scroll').getBoundingClientRect().top + OUTLINE_SPY_OFFSET;
   let low = 0, high = outlineEntries.length - 1, active = 0;
   while (low <= high) {
     const middle = (low + high) >> 1;
@@ -76,7 +93,7 @@ function updateActiveOutline() {
       high = middle - 1;
     }
   }
-  setActiveOutline(active);
+  setActiveOutline(active, options);
 }
 function scheduleOutlineActive() {
   if (outlineActiveFrame !== null) return;

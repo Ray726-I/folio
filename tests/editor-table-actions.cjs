@@ -55,6 +55,7 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.locator('#preview td').first().click({ button: 'right' });
     await menu.waitFor({ state: 'visible' });
     await page.keyboard.press('ArrowDown'); // Edit Markdown
+    await page.keyboard.press('ArrowDown'); // Copy table
     await page.keyboard.press('ArrowDown'); // Row submenu
     await page.keyboard.press('ArrowRight');
     assert.equal(await page.locator('.folio-table-submenu:visible').count(), 1, 'keyboard opens the submenu');

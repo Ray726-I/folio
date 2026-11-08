@@ -221,7 +221,13 @@ function renderNavigationDock() {
   const show = dockVisible && !$('document-view').hidden;
   $('folder-search').hidden = !(show && dockTab === 'search' && activeFolder);
   $('search-divider').hidden = $('folder-search').hidden;
-  $('outline').hidden = !(show && dockTab === 'outline' && current.active);
+  // Showing the panel must also fill it: resizes and first shows can unhide
+  // it without any outline refresh having run (or after one early-returned
+  // while hidden), which otherwise leaves a visible "No headings" panel.
+  const outlineShouldShow = show && dockTab === 'outline' && current.active;
+  const outlineNewlyShown = outlineShouldShow && $('outline').hidden;
+  $('outline').hidden = !outlineShouldShow;
+  if (outlineNewlyShown && typeof scheduleEditorOutline === 'function') scheduleEditorOutline();
   $('file-browser').hidden = !(show && dockTab === 'files');
   $('outline-divider').hidden = $('outline').hidden;
   $('folder-divider').hidden = $('file-browser').hidden;
@@ -312,6 +318,9 @@ function setupSidebarResize(sidebarId, dividerId, key, defaultWidth, styleName =
   divider.addEventListener('pointerup', event => {
     if (divider.hasPointerCapture(event.pointerId)) divider.releasePointerCapture(event.pointerId);
     divider.classList.remove('dragging'); document.documentElement.classList.remove('pane-resizing');
+    // A pointer gesture must not leave the divider focused: the focus hint on
+    // its hairline would otherwise read as a stuck highlight after resizing.
+    divider.blur({ preventScroll: true });
     if (frame) { cancelAnimationFrame(frame); frame = 0; }
     applyPending();
     preferences.set(key, appliedWidth);

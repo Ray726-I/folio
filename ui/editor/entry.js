@@ -184,6 +184,7 @@ export function create(options) {
     },
     getHeadings: () => richEditor?.headings() ?? null,
     context: () => richEditor?.context?.() ?? null,
+    openBlockMenu: anchor => richEditor?.openBlockMenu?.(anchor),
     stats: () => ({ ...editorStats(), edit: editDebug }),
     resetStats: resetEditorStats,
     debugSelection() {
@@ -259,7 +260,7 @@ export function create(options) {
       richStale = true;
       return content === next;
     },
-    command(name) { if (isLocked()) return; groupTime = 0; richEditor?.command(name); groupTime = 0; },
+    command(name, arg) { if (isLocked()) return false; groupTime = 0; const applied = richEditor?.command(name, arg) !== false; groupTime = 0; return applied; },
     highlightRange(anchor, head = anchor) { richEditor?.setSearchHighlight(anchor, head); },
     clearHighlight() { richEditor?.clearSearchHighlight?.(); },
     focus() { richEditor?.focus(); },
