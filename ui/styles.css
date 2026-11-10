@@ -2924,7 +2924,7 @@ body.focus-mode .navigation-rail { display:none; }
   white-space:nowrap;
   overflow:hidden;
   text-overflow:ellipsis;
-  transition:background-color .12s ease,color .12s ease
+  transition:color .12s ease
 }
 
 .outline-link[data-level="1"] {
@@ -4637,3 +4637,46 @@ body[data-selection-pane="reader-scroll"] #companion-scroll,body[data-selection-
 @media(forced-colors:active) {
   .markdown table.folio-column-guides tr > :is(th,td):not(:first-child) { box-shadow:inset 1px 0 CanvasText; }
 }
+
+/* Folio Lab uses the same surfaces, type and controls as the workspace. */
+.lab-dialog { width:min(1400px, calc(100vw - 48px)); max-width:none; height:calc(100vh - 48px); max-height:none; padding:0; border:1px solid var(--line); border-radius:12px; color:var(--fg); background:var(--surface); box-shadow:0 20px 70px #0006; overflow:hidden; }
+.lab-dialog::backdrop { background:#0007; }
+.lab-header { display:flex; align-items:center; justify-content:space-between; padding:20px 26px; border-bottom:1px solid var(--line); }
+.lab-header h2 { margin:0; font-size:18px; }
+.lab-header p { margin:4px 0 0; color:var(--muted); font-size:13px; }
+.lab-content { height:calc(100% - 77px); padding:26px; overflow:auto; }
+.lab-intro { display:flex; flex-wrap:wrap; align-items:end; justify-content:space-between; gap:18px; margin-bottom:22px; }
+.lab-search { display:flex; align-items:center; gap:8px; width:min(300px,100%); padding:0 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--muted); }
+.lab-search:focus-within { outline:2px solid var(--accent); outline-offset:2px; }
+.lab-search input { width:100%; min-width:0; height:36px; padding:0; border:0; outline:0; background:transparent; color:var(--fg); font:13px var(--font-ui); }
+.lab-empty { color:var(--muted); padding:24px 0; font-size:13px; }
+.lab-intro h3 { margin:0 0 7px; font-size:20px; }
+.lab-intro p, .lab-card p { margin:0; color:var(--muted); line-height:1.5; font-size:13px; }
+.lab-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,240px),1fr)); gap:14px; }
+.lab-card { overflow:hidden; border:1px solid var(--line); border-radius:9px; background:var(--bg); }
+.lab-preview { height:100px; padding:14px; }
+.lab-terminal { background:#101b15; color:#a7e6b5; font:12px/1.5 'JetBrains Mono',monospace; }
+.lab-terminal-bar { display:flex; gap:5px; margin-bottom:6px; }
+.lab-terminal-bar span { width:6px; height:6px; border-radius:50%; background:#568667; }
+.lab-terminal-text { opacity:.9; font-size:10px; line-height:1.25; }
+.lab-terminal-text strong { color:#c8edcf; }
+.lab-guide { display:flex; justify-content:center; background:var(--panel); }
+.lab-guide-page { width:75%; padding:10px; background:var(--bg); border:1px solid var(--line); border-radius:4px; }
+.lab-guide-page span { display:block; height:4px; margin-bottom:5px; border-radius:3px; background:var(--line); }
+.lab-guide-page span:nth-child(2) { width:75%; }
+.lab-guide-page span:nth-child(3) { height:9px; margin:0 -5px 4px; background:var(--selection); }
+.lab-guide-page span:nth-child(5) { width:60%; }
+.lab-card-body { padding:14px; }
+.lab-category { color:var(--accent); font-size:12px; font-weight:600; }
+.lab-card h4 { margin:6px 0; font-size:16px; }
+.lab-card p { min-height:40px; }
+.lab-card .button { margin-top:14px; }
+.lab-footer { margin:22px 0 0; color:var(--muted); font-size:12px; }
+/* The guide sits outside the document and does not intercept selection. */
+.reading-guide-toolbar { display:none; align-items:center; gap:8px; min-height:38px; padding:4px 14px; border-bottom:1px solid var(--line); color:var(--muted); background:var(--surface); font:12px var(--font-ui); }
+:root[data-document-mode="reading"] body.lab-reading-guide .reading-guide-toolbar { display:flex; }
+.reading-guide-title { color:var(--fg); font-weight:600; }
+#reading-guide-position { flex:1; font-variant-numeric:tabular-nums; }
+.reading-guide-marker { position:fixed; z-index:20; pointer-events:none; border-left:3px solid var(--accent); border-radius:2px; background:color-mix(in srgb,var(--accent) 12%,transparent); }
+@media print { .reading-guide-toolbar, .reading-guide-marker { display:none!important; } }
+@media (max-width:600px) { .lab-dialog { width:calc(100vw - 20px); height:calc(100vh - 20px); } .lab-content { padding:20px; } }

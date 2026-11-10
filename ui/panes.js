@@ -2,6 +2,7 @@
 // A reading companion owns DOM and render jobs, never an editor or document history.
 let companionDocument = null, companionFollows = false, focusedPane = 'main', companionTimer = 0, companionGeneration = 0;
 let paneComposing = false, workspaceWindowLabel = 'main', companionAbort = null, companionMaxTimer = 0;
+let companionSyncFrame = 0, companionSyncPositions = [], companionSyncLineStarts = [], companionSyncContent = null;
 const autoSaveTimers = new Map();
 function focusedDocument() { return focusedPane === 'companion' && companionDocument ? companionDocument : current; }
 function focusPane(pane) {
@@ -20,13 +21,14 @@ function refreshCompanionOutline() {
 function showReadingCompanion(doc = current, follows = doc === current) {
   if (!doc.active) return;
   companionDocument = doc; companionFollows = follows;
+  updateCompanionSyncControl();
   $('reading-companion').hidden = false; $('pane-divider').hidden = false;
   $('document-view').classList.add('has-companion'); scheduleCompanionRender(0);
   if ($('document-view').classList.contains('pane-narrow')) { focusPane('companion'); $('companion-scroll').focus(); }
 }
 function closeReadingCompanion() {
   clearTimeout(companionTimer); clearTimeout(companionMaxTimer); companionMaxTimer = 0; ++companionGeneration; companionAbort?.abort(); cancelMermaidPending('companion');
-  companionDocument = null; $('reading-companion').hidden = true; $('pane-divider').hidden = true;
+  companionDocument = null; cancelAnimationFrame(companionSyncFrame); companionSyncFrame = 0; updateCompanionSyncControl(); $('reading-companion').hidden = true; $('pane-divider').hidden = true;
   $('document-view').classList.remove('has-companion'); focusPane('main'); $('reader-scroll').focus();
   // The companion borrows the outline list for its own items; rebuild the
   // document rows now rather than leaving them stale until the next debounce.
@@ -35,6 +37,7 @@ function closeReadingCompanion() {
 function scheduleCompanionRender(delay = 180) {
   if (!companionDocument) return;
   if (companionFollows) companionDocument = current;
+  updateCompanionSyncControl();
   ++companionGeneration;
   const run = () => { clearTimeout(companionTimer); clearTimeout(companionMaxTimer); companionTimer = companionMaxTimer = 0; renderReadingCompanion().catch(toast); };
   clearTimeout(companionTimer); companionTimer = setTimeout(run, delay);
@@ -60,6 +63,7 @@ async function renderReadingCompanion() {
   const anchor = [...root.querySelectorAll('[data-sourcepos]')].find(n => n.getBoundingClientRect().bottom > scroll.getBoundingClientRect().top);
   const position = anchor?.dataset.sourcepos, offset = anchor ? anchor.getBoundingClientRect().top - scroll.getBoundingClientRect().top : 0, top = scroll.scrollTop;
   root.innerHTML = typeof result === 'string' ? result : result.html || ''; prefixCompanionIds(root);
+  companionSyncPositions = [...root.querySelectorAll('p[data-sourcepos],h1[data-sourcepos],h2[data-sourcepos],h3[data-sourcepos],h4[data-sourcepos],h5[data-sourcepos],h6[data-sourcepos],pre[data-sourcepos],li[data-sourcepos],table[data-sourcepos]')].map(node => ({ node, line: parseInt(node.dataset.sourcepos, 10) })).filter(entry => Number.isFinite(entry.line)).sort((a,b) => a.line - b.line);
   $('companion-name').textContent = doc.name;
   const replacement = position && [...root.querySelectorAll('[data-sourcepos]')].find(n => n.dataset.sourcepos === position);
   scroll.scrollTop = replacement ? scroll.scrollTop + replacement.getBoundingClientRect().top - scroll.getBoundingClientRect().top - offset : top;
@@ -74,6 +78,7 @@ async function renderReadingCompanion() {
     code.parentElement.replaceWith(host);
   }
   if (focusedPane === 'companion') focusPane('companion');
+  scheduleCompanionSync();
 }
 function scheduleAutomaticSave(doc) {
   clearTimeout(autoSaveTimers.get(doc.documentId)); autoSaveTimers.delete(doc.documentId);
@@ -123,7 +128,7 @@ function initializePanes() {
   const split = document.createElement('div'); split.className = 'pane-layout'; main.before(split); split.append(main);
   const divider = document.createElement('div'); divider.id='pane-divider'; divider.role='separator'; divider.tabIndex=0; divider.hidden=true; divider.setAttribute('aria-label','Resize reading panes'); divider.setAttribute('aria-orientation','vertical'); divider.setAttribute('aria-valuemin','25'); divider.setAttribute('aria-valuemax','75');
   const reader = document.createElement('section'); reader.id='reading-companion'; reader.hidden=true;
-  reader.innerHTML='<header class="companion-head"><strong id="companion-name"></strong><button id="companion-edit" class="text-button">Edit in main pane</button><label><input id="companion-sync" type="checkbox">Sync scroll</label><button id="companion-close" class="text-button" aria-label="Close reading companion">Close</button></header><div id="companion-find" hidden><input type="search" aria-label="Find in reading companion"><span role="status"></span></div><div id="companion-scroll" class="companion-reader-scroll" tabindex="0" aria-label="Reading companion document"><article id="companion-preview" class="markdown"></article></div>';
+  reader.innerHTML='<header class="companion-head"><strong id="companion-name"></strong><button id="companion-edit" class="text-button">Edit in main pane</button><label id="companion-sync-control"><input id="companion-sync" type="checkbox">Sync scroll</label><button id="companion-close" class="text-button" aria-label="Close reading companion">Close</button></header><div id="companion-find" hidden><input type="search" aria-label="Find in reading companion"><span role="status"></span></div><div id="companion-scroll" class="companion-reader-scroll" tabindex="0" aria-label="Reading companion document"><article id="companion-preview" class="markdown"></article></div>';
   split.append(divider,reader);
   new ResizeObserver(entries => $('document-view').classList.toggle('pane-narrow', entries[0].contentRect.width < 720)).observe(split);
   let ratio=50; const resize = value => { ratio=Math.min(75,Math.max(25,value)); split.style.setProperty('--pane-ratio',ratio+'%'); divider.setAttribute('aria-valuenow',ratio); }; resize(50);
@@ -132,13 +137,59 @@ function initializePanes() {
   const endResize=()=>document.documentElement.classList.remove('pane-resizing');
   divider.addEventListener('lostpointercapture',endResize); divider.addEventListener('pointercancel',endResize); window.addEventListener('blur',endResize); divider.onpointermove=e=>{if(divider.hasPointerCapture(e.pointerId)){const b=split.getBoundingClientRect();resize((e.clientX-b.left)/b.width*100);}};
   main.addEventListener('focusin',()=>focusPane('main')); main.addEventListener('pointerdown',()=>{if(focusedPane!=='main')focusPane('main');});
-  reader.addEventListener('focusin',()=>{if(focusedPane!=='companion')focusPane('companion');}); reader.addEventListener('pointerdown',()=>{if(focusedPane!=='companion')focusPane('companion');});
+  reader.addEventListener('focusin', event => { if (!event.target.closest('#companion-sync-control') && focusedPane !== 'companion') focusPane('companion'); });
+  reader.addEventListener('pointerdown', event => { if (!event.target.closest('#companion-sync-control') && focusedPane !== 'companion') focusPane('companion'); });
   $('companion-close').onclick=closeReadingCompanion;
-  $('companion-edit').onclick=()=>enqueue(async()=>{const doc=companionDocument, previous=current; await activateDocument(doc); companionFollows=false; companionDocument=previous; scheduleCompanionRender(0);focusPane('main');editor?.focus();});
+  $('companion-edit').onclick=()=>enqueue(async()=>{const doc=companionDocument, previous=current; await activateDocument(doc); companionFollows=false; companionDocument=previous; updateCompanionSyncControl(); scheduleCompanionRender(0);focusPane('main');editor?.focus();});
   $('companion-find').querySelector('input').oninput=e=>{const query=e.target.value.toLowerCase();const nodes=[...$('companion-preview').querySelectorAll('p,h1,h2,h3,h4,h5,h6,li,pre,td')].filter(n=>query&&n.textContent.toLowerCase().includes(query));$('companion-find').querySelector('span').textContent=`${nodes.length} matching blocks`;nodes[0]?.scrollIntoView({block:'center'});};
   reader.onclick=e=>{const anchor=e.target.closest('a');if(anchor){e.preventDefault();if(anchor.getAttribute('href')?.startsWith('#'))document.getElementById(anchor.getAttribute('href').slice(1))?.scrollIntoView();else { const href = anchor.getAttribute('href'); if (/^(https?:|mailto:)/i.test(href)) invoke('open_link', {url:href}).catch(toast); else { const doc = companionDocument; enqueue(async () => { const path = await invoke('resolve_document_link', {documentId:doc.documentId,link:href}); await openPath(path); }); } }}};
-  main.addEventListener('scroll',()=>{if(!$('companion-sync').checked||!companionFollows)return; const line=main.getBoundingClientRect().top; const node=[...$('preview').querySelectorAll('[data-sourcepos]')].find(n=>n.getBoundingClientRect().bottom>line);const match=node&&[...$('companion-preview').querySelectorAll('[data-sourcepos]')].find(n=>n.dataset.sourcepos===node.dataset.sourcepos);if(match)$('companion-scroll').scrollTop+=match.getBoundingClientRect().top-$('companion-scroll').getBoundingClientRect().top;},{passive:true});
+  main.addEventListener('scroll', scheduleCompanionSync, { passive: true });
+  $('document-source').addEventListener('scroll', scheduleCompanionSync, { passive: true });
+  $('companion-sync').addEventListener('change', scheduleCompanionSync);
   document.addEventListener('compositionstart',()=>{paneComposing=true;},true); document.addEventListener('compositionend',()=>{paneComposing=false;scheduleAutomaticSave(current);},true);
   document.addEventListener('keydown',e=>{if(focusedPane!=='companion'||!(e.ctrlKey||e.metaKey)||e.altKey)return;const key=e.key.toLowerCase();if(['f','w','s','z','y','b','i','h','x','v'].includes(key)){e.preventDefault();e.stopImmediatePropagation();if(key==='f')openCompanionFind();if(key==='w')closeReadingCompanion();if(key==='s')requestSave(e.shiftKey);}},true);
 }
 function openCompanionFind() { $('companion-find').hidden=false;$('companion-find').querySelector('input').focus(); }
+
+// The formatted editor uses ProseMirror DOM, not renderer source-position attributes.
+// Map its visible position back to Markdown, then align the companion's nearest block.
+function updateCompanionSyncControl() {
+  const control = $('companion-sync-control');
+  if (!control) return;
+  const sameDocument = Boolean(companionDocument && companionDocument === current);
+  control.hidden = !sameDocument;
+  if (!sameDocument) $('companion-sync').checked = false;
+}
+function scheduleCompanionSync() {
+  if (companionSyncFrame || !$('companion-sync')?.checked || !companionDocument || companionDocument !== current) return;
+  companionSyncFrame = requestAnimationFrame(() => { companionSyncFrame = 0; syncCompanionScroll(); });
+}
+function syncCompanionScroll() {
+  if (!$('companion-sync').checked || companionDocument !== current) return;
+  const main = $('reader-scroll'), preview = $('companion-scroll');
+  const source = $('document-source');
+  let line;
+  if (documentMode === 'source') {
+    const height = parseFloat(getComputedStyle(source).lineHeight) || 24;
+    line = Math.floor(source.scrollTop / height) + 1;
+  } else {
+    const bounds = main.getBoundingClientRect();
+    const offset = editor?.sourceAtCoords?.({ left: bounds.left + bounds.width / 2, top: bounds.top + 16 });
+    if (offset != null) {
+      if (companionSyncContent !== current.content) { companionSyncContent = current.content; companionSyncLineStarts = lineStartsFor(current.content); }
+      let low = 0, high = companionSyncLineStarts.length;
+      while (low < high) { const mid = (low + high) >>> 1; if (companionSyncLineStarts[mid] <= offset) low = mid + 1; else high = mid; }
+      line = Math.max(1, low);
+    }
+  }
+  if (line && companionSyncPositions.length) {
+    let low = 0, high = companionSyncPositions.length;
+    while (low < high) { const mid = (low + high) >>> 1; if (companionSyncPositions[mid].line <= line) low = mid + 1; else high = mid; }
+    const match = companionSyncPositions[Math.max(0, low - 1)]?.node;
+    if (match?.isConnected) { preview.scrollTop += match.getBoundingClientRect().top - preview.getBoundingClientRect().top; return; }
+  }
+  // Fallback for a document without source-mapped blocks or an unmounted editor.
+  const scroller = documentMode === 'source' ? source : main;
+  const range = scroller.scrollHeight - scroller.clientHeight;
+  preview.scrollTop = range > 0 ? scroller.scrollTop / range * (preview.scrollHeight - preview.clientHeight) : 0;
+}

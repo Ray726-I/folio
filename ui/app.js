@@ -805,6 +805,7 @@ function allCommands() {
     );
   }
   commands.push(
+    { label: 'Folio Lab', icon: 'theme', detail: 'Explore optional extras', action: openLab },
     { label: 'Change theme…', icon: 'theme', detail: 'Choose a color theme', scope: 'themes' },
     { label: filePicker() === 'native' ? 'Use Folio file picker' : 'Use system file picker', icon: 'open', detail: filePicker() === 'native' ? 'Folio dialog with folders and typed paths' : 'System dialog for files and folders', action: toggleFilePicker },
     { label: 'Try a sample document', icon: 'file', action: () => newDocument(true) },

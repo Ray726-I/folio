@@ -183,6 +183,7 @@ export function create(options) {
       richStale = sourceOnly; richEditor.setDocument(content, sourceSelection, { logical: true }); richEditor.setLocked(locked);
     },
     getHeadings: () => richEditor?.headings() ?? null,
+    sourceAtCoords: coords => sourceOnly ? null : richEditor?.sourceAtCoords(coords) ?? null,
     context: () => richEditor?.context?.() ?? null,
     openBlockMenu: anchor => richEditor?.openBlockMenu?.(anchor),
     stats: () => ({ ...editorStats(), edit: editDebug }),

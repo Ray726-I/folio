@@ -1,0 +1,36 @@
+:root[data-theme="retro-terminal"] {
+  --bg:#101b15; --fg:#c8edcf; --surface:#17271d; --panel:#203329;
+  --hover:#2a4232; --accent:#85dc9b; --selection:#315d3d;
+  --selection-ink:#fff; --selection-wash:#477b54;
+  --green:#85dc9b; --red:#f09993; --yellow:#e4ce83; --blue:#9fcbd0; --purple:#cab5dc;
+  --font-ui:var(--font-mono); --font-reading:var(--font-mono);
+  color-scheme:dark;
+}
+/* A terminal treatment applies to the workspace, not to document contents. */
+:root[data-theme="retro-terminal"] .app-menubar,
+:root[data-theme="retro-terminal"] .document-tabs,
+:root[data-theme="retro-terminal"] #statusbar { border-color:#365b40; }
+:root[data-theme="retro-terminal"] .markdown,
+:root[data-theme="retro-terminal"] .document-source { text-shadow:0 0 7px #79e09540; letter-spacing:0; }
+:root[data-theme="retro-terminal"] .markdown h1,
+:root[data-theme="retro-terminal"] .markdown h2,
+:root[data-theme="retro-terminal"] .markdown h3 { letter-spacing:0; }
+:root[data-theme="retro-terminal"] #reader-scroll,
+:root[data-theme="retro-terminal"] #companion-scroll { background-image:repeating-linear-gradient(to bottom, transparent 0, transparent 3px, #83d79a09 4px); }
+:root[data-theme="retro-terminal"] .button,
+:root[data-theme="retro-terminal"] .menu,
+:root[data-theme="retro-terminal"] .document-tab { border-radius:2px; }
+
+/* Retro Terminal: framed panes and crisp, phosphor-lit controls. */
+:root[data-theme="retro-terminal"] .sidebar,
+:root[data-theme="retro-terminal"] .sidebar-head,
+:root[data-theme="retro-terminal"] .headerbar,
+:root[data-theme="retro-terminal"] .reading-guide-toolbar { border-color:#365b40; }
+:root[data-theme="retro-terminal"] .document-tab[aria-selected="true"] { background:#24412c; box-shadow:inset 0 -2px #85dc9b; }
+:root[data-theme="retro-terminal"] .markdown h1,
+:root[data-theme="retro-terminal"] .markdown h2 { border-bottom:1px solid #365b40; padding-bottom:.22em; }
+:root[data-theme="retro-terminal"] .markdown blockquote { border-left:3px solid #85dc9b; background:#182b1e; }
+:root[data-theme="retro-terminal"] .markdown pre { border:1px solid #365b40; border-radius:2px; }
+:root[data-theme="retro-terminal"] .icon-button,
+:root[data-theme="retro-terminal"] .menubar-button,
+:root[data-theme="retro-terminal"] .mode-button { border-radius:2px; }

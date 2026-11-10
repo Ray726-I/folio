@@ -403,6 +403,7 @@ function runAppAction(action) {
     undo: () => { undoRedo(); syncDocumentMode(); }, redo: () => { undoRedo(true); syncDocumentMode(); },
     cut: () => editClipboard('cut'), copy: () => editClipboard('copy'), paste: () => editClipboard('paste'), 'select-all': () => editClipboard('select-all'),
     find: openFind, 'folder-search': openFolderSearch, replace: openReplace, files: () => toggleDock('files'), outline: () => toggleDock('outline'),
+    lab: () => openLab(),
     reading: () => setDocumentMode(documentMode === 'reading' ? 'edit' : 'reading'), focus: toggleFocus, fullscreen: () => invoke('toggle_fullscreen'),
     'zoom-in': () => zoomWindow(.1), 'zoom-out': () => zoomWindow(-.1), 'zoom-reset': () => zoomWindow(0, true),
     back: () => navigateDocumentHistory(-1), forward: () => navigateDocumentHistory(1),

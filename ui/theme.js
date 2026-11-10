@@ -1,7 +1,9 @@
 'use strict';
 // Theme definitions, palette derivation, and Mermaid colour configuration.
 let omarchy = null, selectedTheme = preferences.get('theme', 'system');
+if (selectedTheme === 'retro-terminal' && preferences.get('labRetroEnabled', true) === false) selectedTheme = 'system';
 const themes = [
+  { id: 'retro-terminal', label: 'Retro Terminal', detail: 'Phosphor green on dark', swatch: '#85dc9b' },
   { id: 'system', label: 'System', detail: 'Follow light / dark appearance', swatch: 'linear-gradient(90deg, #fafafa 50%, #242424 50%)' },
   { id: 'paper', label: 'Adwaita Light', detail: 'Clean and familiar', swatch: '#fafafa' },
   { id: 'graphite', label: 'Adwaita Dark', detail: 'Soft charcoal', swatch: '#303030' },
@@ -247,7 +249,11 @@ function mermaidThemeVariables() {
     todayLineColor: colors[4]
   };
 }
-function availableThemes() { return omarchy ? [...themes, { id: 'omarchy', label: 'Omarchy', detail: `Current: ${omarchy.name}`, swatch: omarchy.colors.accent || '#7d82d9' }] : themes; }
+function availableThemes() {
+  const retroEnabled = preferences.get('labRetroEnabled', selectedTheme === 'retro-terminal');
+  const available = themes.filter(theme => theme.id !== 'retro-terminal' || retroEnabled);
+  return omarchy ? [...available, { id: 'omarchy', label: 'Omarchy', detail: `Current: ${omarchy.name}`, swatch: omarchy.colors.accent || '#7d82d9' }] : available;
+}
 // Tokens written to the root by the Omarchy palette. Theme changes clear just
 // these; a blanket style reset also dropped --text-size and the reader's
 // spacing preferences, forcing a full reflow with the wrong metrics.
@@ -269,6 +275,7 @@ function scheduleDiagramRefresh(delay = 160) {
   }, delay);
 }
 function applyTheme(id, persist = true) {
+  if (id === 'retro-terminal' && selectedTheme !== id && persist) preferences.set('labRetroPreviousTheme', selectedTheme);
   selectedTheme = id;
   for (const variable of inlineThemeVariables) root.style.removeProperty(variable);
   root.style.removeProperty('color-scheme');
