@@ -49,7 +49,7 @@ For native prerequisites, follow Tauri's [Linux](https://v2.tauri.app/start/prer
 | Fullscreen | F11 |
 | Close File / Quit | Ctrl+W / Ctrl+Q |
 
-On macOS, use Command in place of Ctrl for the listed shortcuts. The command window supports fuzzy search for commands, shortcuts, open documents and themes, plus arrow keys, Enter, and Escape. Select **Change theme…** to search themes in its Appearance submenu. The palette also exposes the File, Edit, View, Go, and Help actions, so it can serve as a keyboard-first replacement for the menu bar. There are System, Adwaita Light, Adwaita Dark, Nord, Catppuccin Mocha, Rosé Pine, and Solarized Light themes. Theme, remote-image, reading-font, and text-size preferences persist locally. Recent files store paths, not document contents; they can be cleared from the command window. **Load remote images** / **Block remote images** toggles whether documents may contact image hosts; blocked images appear as a local placeholder. **Use serif reading text** / **Use sans-serif reading text** switches the document face without touching the interface.
+On macOS, use Command in place of Ctrl for the listed shortcuts. The command window supports fuzzy search for commands, shortcuts, open documents and themes, plus arrow keys, Enter, and Escape. Select **Change theme…** to search themes in its Appearance submenu. The palette also exposes the File, Edit, View, Go, and Help actions, so it can serve as a keyboard-first replacement for the menu bar. Search for **Inspect app state** to open the live state-machine snapshot when diagnosing a UI issue. There are System, Adwaita Light, Adwaita Dark, Nord, Catppuccin Mocha, Rosé Pine, and Solarized Light themes. Theme, remote-image, reading-font, and text-size preferences persist locally. Recent files store paths, not document contents; they can be cleared from the command window. **Load remote images** / **Block remote images** toggles whether documents may contact image hosts; blocked images appear as a local placeholder. **Use serif reading text** / **Use sans-serif reading text** switches the document face without touching the interface.
 
 The outline supports collapsible sections and keyboard navigation: use Left/Right to collapse, expand, or move between parents and children, and Up/Down to move through headings. Long titles stay on one line and truncate with an ellipsis. As you read, the outline keeps the current section away from its edges. Hover or keyboard-focus a rendered diagram to reveal **Expand**, then use Fit or zoom controls to inspect it; Escape closes the viewer.
 
@@ -152,8 +152,9 @@ npm run test:ui
 `test:ui` includes picker-choice and preview-limit recovery regressions. Run
 `npm run test:picker` or `npm run test:limits` for those checks individually.
 `npm run test:renderer` checks the offline renderer and main-page bridge with
-intercepted network requests and mocked transport where needed. These browser
-checks do not substitute for real Tauri IPC validation.
+intercepted network requests and mocked transport where needed. `npm run
+test:state` exercises the explicit state-machine contracts and rejected-event
+paths. These browser checks do not substitute for real Tauri IPC validation.
 For reproducible release-build parser scaling measurements:
 
 ```sh
@@ -170,6 +171,8 @@ For real-webview, CSP, and cross-platform checks that the mocked UI tests cannot
 - `src/theme.rs`: XDG-aware Omarchy palette detection.
 - `src/main.rs`: desktop lifecycle, window/navigation policy, native dialogs, commands, file launching.
 - `ui/core.js`: shared DOM, IPC, path, and preference helpers.
+- `ui/state.js`: dependency-free state-machine runtime, snapshots and inspector.
+- `ui/machines.js`: explicit surface, mode, find, companion, preview, menu, modal and save machines.
 - `ui/theme.js`: theme definitions, contrast/palette derivation, Mermaid colours.
 - `ui/preview.js`: preview rendering, lazy KaTeX/Mermaid loading, diagram lifecycle.
 - `ui/editor.js`: editor shell, document lifecycle, outline and dialogs.
@@ -179,6 +182,7 @@ For real-webview, CSP, and cross-platform checks that the mocked UI tests cannot
 - `ui/vendor/`: vendored preview dependencies; licenses are listed in `THIRD_PARTY_NOTICES.md`.
 - `tests/` and `docs/manual-verification.md`: automated and manual verification.
 - `docs/ENGINEERING-NOTES.md`: architecture, native rendering and performance guardrails, known limitations.
+- `docs/STATE-MACHINES.md`: state-machine inventory, invariants, inspection and migration path.
 - `docs/ROADMAP.md`: known future work.
 - `docs/performance-results.md`: current performance measurements and raw report links.
 

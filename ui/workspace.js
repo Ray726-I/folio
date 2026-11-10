@@ -42,6 +42,7 @@ async function activateDocument(doc, capture = true) {
   for (const entry of outlineEntries) if (doc.view?.outline?.includes(entry.offset)) toggleOutlineEntry(entry, false);
   $('find-input').value = doc.view?.find || ''; $('find-bar').hidden = !doc.view?.findOpen;
   if (doc.view?.findOpen) { updateFind(); findIndex = doc.view.findIndex; }
+  syncFindMachine(); syncCompanionMachine();
   focusPane('main'); updateTitle();
   renderTabs(); persistWorkspace(); scheduleCompanionRender(); activated = true; return true;
   } finally {

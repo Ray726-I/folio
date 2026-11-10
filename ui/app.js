@@ -47,14 +47,17 @@ const dirty = () => current.content !== current.saved;
 // until the next save attempt. Rendered visibly by updateTitle().
 let saveStatus = null;
 function saveState() {
-  const owner = focusedDocument(), ownerStatus = owner === current ? saveStatus : owner.saveStatus || owner.view?.saveStatus;
+  const owner = focusedDocument();
+  syncSaveMachine(owner);
   if (!owner.active) return { text: '', state: 'idle' };
-  if (ownerStatus === 'saving') return { text: 'Saving…', state: 'saving' };
-  if (ownerStatus && ownerStatus.error) return { text: 'Save failed', state: 'error' };
+  if (saveMachine.state === 'saving') return { text: 'Saving…', state: 'saving' };
+  if (saveMachine.state === 'error') return { text: 'Save failed', state: 'error' };
+  if (saveMachine.state === 'paused') return { text: 'Paused', state: 'paused' };
+  if (saveMachine.state === 'clean') return { text: 'Saved', state: 'saved' };
   // Compact dirty label: the short "Edited" keeps the indicator footprint
   // near the old Saved width so no wide gap is reserved. The full
   // "Unsaved changes" meaning lives in the accessible name and tooltip.
-  return owner.content !== owner.saved ? { text: 'Edited', state: 'dirty' } : { text: 'Saved', state: 'saved' };
+  return { text: 'Edited', state: 'dirty' };
 }
 function commandError(error) {
   if (error && typeof error === 'object') return { code: error.code || 'error', message: error.message || String(error) };
@@ -110,14 +113,14 @@ function updateTitle() {
   saveStateElement.dataset.state = state.state;
   // The short "Edited" label still announces the full meaning to assistive
   // technology and hover, so nothing is lost by staying compact.
-  const accessibleText = state.state === 'dirty' ? 'Unsaved changes' : state.text;
-  const stateTitle = state.state === 'error' && ownerStatus?.error ? saveStatus.error
-    : state.state === 'dirty' ? 'Unsaved changes' : '';
+  const accessibleText = state.state === 'dirty' ? 'Unsaved changes' : state.state === 'paused' ? 'Automatic saving paused' : state.text;
+  const stateTitle = state.state === 'error' && ownerStatus?.error ? ownerStatus.error
+    : state.state === 'dirty' ? 'Unsaved changes' : state.state === 'paused' ? 'Automatic saving paused — save to review.' : '';
   saveStateElement.title = stateTitle;
   const compactSaveLabel = `Save (Ctrl+S) — ${state.state === 'error' ? `Save failed: ${ownerStatus?.error || ''}` : accessibleText}`;
   saveButton.title = compactSaveLabel;
   saveButton.setAttribute('aria-label', compactSaveLabel);
-  saveStateElement.setAttribute('aria-label', state.state === 'error' && ownerStatus?.error ? `Save failed: ${saveStatus.error}` : `Save state: ${accessibleText || 'no document'}`);
+  saveStateElement.setAttribute('aria-label', state.state === 'error' && ownerStatus?.error ? `Save failed: ${ownerStatus.error}` : `Save state: ${accessibleText || 'no document'}`);
   clearTimeout(titleTimer);
   titleTimer = setTimeout(() => sendTitle(name, (owner.content !== owner.saved)), 120);
 }
@@ -159,9 +162,12 @@ function showDocument() {
   syncDockForViewport();
   $('folder-empty').hidden = current.active || !activeFolder;
   syncFolderSelection();
+  syncSurfaceMachine();
+  syncFindMachine();
 }
 function showWelcome() {
   editor?.destroy(); editor = null; editorDocument = null; cancelMermaidPending();
+  previewMachine.send('IDLE');
   $('welcome').hidden = false; document.querySelector('.headerbar').hidden = true; $('document-view').hidden = true; $('statusbar').hidden = true;
   $('home').disabled = true;
   $('preview').replaceChildren(); $('folder-empty').hidden = true;
@@ -172,7 +178,10 @@ function showWelcome() {
   document.body.classList.remove('focus-mode');
   document.querySelectorAll('.document-control').forEach(control => { control.hidden = true; });
   editorPresentation(false, false, false);
+  modeMachine.sync('reading', { readOnly: false, writable: true, transitioning: Boolean(transitionLocked), companion: false }, 'welcome');
   saveStatus = null; updateTitle(); updateStats();
+  syncSurfaceMachine();
+  syncFindMachine();
 }
 function goHome() {
   return enqueue(async () => {
@@ -806,6 +815,7 @@ function allCommands() {
   }
   commands.push(
     { label: 'Folio Lab', icon: 'theme', detail: 'Explore optional extras', action: openLab },
+    { label: 'Inspect app state', icon: 'view', detail: 'State machines, transitions and violations', action: () => FolioState.openInspector() },
     { label: 'Change theme…', icon: 'theme', detail: 'Choose a color theme', scope: 'themes' },
     { label: filePicker() === 'native' ? 'Use Folio file picker' : 'Use system file picker', icon: 'open', detail: filePicker() === 'native' ? 'Folio dialog with folders and typed paths' : 'System dialog for files and folders', action: toggleFilePicker },
     { label: 'Try a sample document', icon: 'file', action: () => newDocument(true) },
@@ -1013,7 +1023,13 @@ $('command-dialog').addEventListener('click', event => { if (event.target === $(
 $('palette-hint').addEventListener('click', () => openCommands());
 
 let matches = [], findIndex = -1, findSource = null;
-function openFind() { if (focusedPane === 'companion') return openCompanionFind(); if (!current.active) return; $('find-bar').hidden = false; syncDocumentChrome(); $('find-input').focus(); $('find-input').select(); updateFind(); syncFindControl(); }
+function openFind() {
+  if (focusedPane === 'companion') return openCompanionFind();
+  if (!current.active) return;
+  $('find-bar').hidden = false;
+  findMachine.send('FIND');
+  syncDocumentChrome(); $('find-input').focus(); $('find-input').select(); updateFind(); syncFindControl();
+}
 function clearHighlights() { editor?.clearHighlight?.(); }
 function documentSearchPattern(query) {
   const enabled=id=>$(id)?.getAttribute('aria-pressed')==='true';
@@ -1034,11 +1050,11 @@ function findMatches(query) {
 function findCountLabel(count) { return count >= 2000 ? '2,000+' : String(count); }
 function updateFind() {
   const query = $('find-input').value;
-  try { if(query)documentSearchPattern(query); $('find-input').removeAttribute('aria-invalid'); } catch { matches=[];findIndex=-1;$('find-input').setAttribute('aria-invalid','true');$('find-result').textContent='Invalid regular expression';clearHighlights();return; }
+  try { if(query)documentSearchPattern(query); $('find-input').removeAttribute('aria-invalid'); } catch { matches=[];findIndex=-1;$('find-input').setAttribute('aria-invalid','true');$('find-result').textContent='Invalid regular expression';clearHighlights();syncFindMachine();return; }
   matches = findMatches(query); findIndex = -1; findSource = current.content;
-  if (!query) { $('find-result').textContent = ''; clearHighlights(); return; }
+  if (!query) { $('find-result').textContent = ''; clearHighlights(); syncFindMachine(); return; }
   if (matches.length) nextFind(1);
-  else { $('find-result').textContent = 'No matches'; clearHighlights(); }
+  else { $('find-result').textContent = 'No matches'; clearHighlights(); syncFindMachine(); }
 }
 function refreshFindOffsets(direction) {
   // Edits can shift every match. Recompute from the live content before the
@@ -1054,6 +1070,7 @@ function refreshFindOffsets(direction) {
     matches.forEach((match, index) => { if (match.to <= anchor) last = index; });
     findIndex = last < 0 ? 0 : last + 1;
   }
+  syncFindMachine();
 }
 function revealSourceMatch(match) {
   const input = $('document-source');
@@ -1066,9 +1083,9 @@ function revealSourceMatch(match) {
 }
 function nextFind(direction) {
   const query = $('find-input').value;
-  if (!query) { matches = []; findIndex = -1; $('find-result').textContent = ''; clearHighlights(); return; }
+  if (!query) { matches = []; findIndex = -1; $('find-result').textContent = ''; clearHighlights(); syncFindMachine(); return; }
   if (findSource !== current.content) refreshFindOffsets(direction);
-  if (!matches.length) { findIndex = -1; $('find-result').textContent = 'No matches'; clearHighlights(); return; }
+  if (!matches.length) { findIndex = -1; $('find-result').textContent = 'No matches'; clearHighlights(); syncFindMachine(); return; }
   findIndex = (findIndex + direction + matches.length) % matches.length;
   const match = matches[findIndex];
   // Focus stays in the find field: the editor selection is revealed without
@@ -1078,6 +1095,7 @@ function nextFind(direction) {
   else editor?.selectRange(match.from, match.to, false);
   editor?.highlightRange?.(match.from, match.to);
   $('find-result').textContent = `${findIndex + 1} / ${findCountLabel(matches.length)}`;
+  syncFindMachine();
 }
 let findRefreshTimer = 0;
 function refreshFindAfterEdit() {
@@ -1087,12 +1105,13 @@ function refreshFindAfterEdit() {
   const previous = matches[findIndex];
   const anchor = previous ? previous.from : Math.max(0, editor?.getSelection()?.head ?? 0);
   matches = findMatches(query); findSource = current.content;
-  if (!matches.length) { findIndex = -1; $('find-result').textContent = 'No matches'; clearHighlights(); return; }
+  if (!matches.length) { findIndex = -1; $('find-result').textContent = 'No matches'; clearHighlights(); syncFindMachine(); return; }
   let index = matches.findIndex(match => match.from >= anchor);
   if (index < 0) index = matches.length - 1;
   findIndex = index;
   editor?.highlightRange?.(matches[findIndex].from, matches[findIndex].to);
   $('find-result').textContent = `${findIndex + 1} / ${findCountLabel(matches.length)}`;
+  syncFindMachine();
 }
 function scheduleFindRefresh() {
   if ($('find-bar').hidden) return;
@@ -1100,10 +1119,11 @@ function scheduleFindRefresh() {
   findRefreshTimer = setTimeout(refreshFindAfterEdit, 140);
 }
 function closeFind() {
+  findMachine.send('CLOSE');
   $('find-bar').hidden = true; $('replace-bar').hidden = true; syncDocumentChrome(); clearHighlights();
   if (documentMode === 'source') $('document-source').focus();
   else editor?.focus();
-  syncFindControl();
+  syncFindControl(); syncFindMachine();
 }
 function toggleFocus() { document.body.classList.toggle('focus-mode'); }
 function setDocumentWidth(full, persist = true) {
@@ -1137,6 +1157,8 @@ function closeAllMenus(returnFocus = false) {
       if (hadFocus) trigger?.focus();
     }
   }
+  if ([...document.querySelectorAll('.menu')].some(menu => !menu.hidden)) syncMenuMachine();
+  else menuMachine.send('CLOSE');
 }
 function setupMenu(triggerId, menuId) {
   const trigger = $(triggerId), menu = $(menuId);
@@ -1148,6 +1170,7 @@ function setupMenu(triggerId, menuId) {
     if (!wasHidden) return;
     menu.hidden = false;
     trigger.setAttribute('aria-expanded', 'true');
+    menuMachine.send('OPEN', { id: menuId, pointer: pointerOpen });
     // A pointer-opened menu takes focus itself. Focusing the first row would
     // paint a focus ring on an item the pointer is nowhere near; hover is the
     // only state a pointer user should see until they move. Keyboard opens
@@ -1175,7 +1198,7 @@ function setupMenu(triggerId, menuId) {
   menu.addEventListener('click', event => {
     if (!event.target.closest('.menu-item') || event.target.closest('#open-recent-button')) return;
     setTimeout(() => {
-      const dialogOpen = ['open-dialog', 'source-dialog', 'command-dialog', 'confirm-dialog', 'editor-action-dialog', 'help-dialog'].some(id => $(id)?.open);
+      const dialogOpen = ['open-dialog', 'source-dialog', 'command-dialog', 'confirm-dialog', 'editor-action-dialog', 'help-dialog', 'state-inspector'].some(id => $(id)?.open);
       const triggerForMenu = document.querySelector(`[aria-controls="${menuId}"]`);
       menu.hidden = true;
       triggerForMenu?.setAttribute('aria-expanded', 'false');
@@ -1426,7 +1449,7 @@ document.addEventListener('keydown', event => {
   const control = event.ctrlKey || event.metaKey;
   if (control && !event.altKey && event.shiftKey && event.key.toLowerCase() === 'a') { event.preventDefault(); openCommands('documents'); return; }
   if (event.defaultPrevented) return;
-  if ($('recovery-dialog').open || $('help-dialog').open || $('command-dialog').open || $('confirm-dialog').open || $('open-dialog').open || $('source-dialog').open || $('editor-action-dialog').open) return;
+  if ($('recovery-dialog').open || $('help-dialog').open || $('command-dialog').open || $('confirm-dialog').open || $('open-dialog').open || $('source-dialog').open || $('editor-action-dialog').open || $('state-inspector')?.open) return;
   if (event.key === 'Escape') {
     if (!$('find-bar').hidden) closeFind();
     else if (document.body.classList.contains('focus-mode')) document.body.classList.remove('focus-mode');

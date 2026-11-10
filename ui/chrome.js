@@ -21,6 +21,11 @@ function restoreSourceCaret() {
   }
 }
 function syncDocumentMode() {
+  // The machine is authoritative for mode, but older restore paths (and tests)
+  // still assign the variables directly. Reconcile before rendering so the
+  // snapshot, guards and UI always describe the same document.
+  if (modeMachine.state !== documentMode) modeMachine.sync(documentMode, { readOnly: documentReadOnly }, 'external');
+  else syncModeMachine();
   const protectedFile = current.writable === false;
   root.dataset.documentMode = documentMode;
   const locked = documentMode === 'reading' || !documentWritable();
@@ -81,7 +86,11 @@ function setDocumentMode(next) {
   if (focusedPane === 'companion') return;
   if (!current.active || transitionLocked || !['reading', 'edit', 'source'].includes(next)) return;
   if (next === 'edit' && current.writable === false) { toast('Filesystem permissions prevent editing. Use Save As to create a writable copy.'); return; }
-  if (documentMode === 'source') {
+  syncModeMachine();
+  const event = { reading: 'READING', edit: 'EDIT', source: 'SOURCE' }[next];
+  if (!modeMachine.can(event, { mode: next })) return;
+  const previousMode = documentMode;
+  if (previousMode === 'source') {
     const input = $('document-source');
     editor?.setSourceSelection?.(sourceCaret(input));
     editor?.checkpoint?.();
@@ -89,14 +98,14 @@ function setDocumentMode(next) {
     editor?.checkpoint(); editor?.captureSelection?.();
   }
   const reader = $('reader-scroll'), source = $('document-source');
-  const previous = documentMode === 'source' ? source : reader;
+  const previous = previousMode === 'source' ? source : reader;
   const range = Math.max(0, previous.scrollHeight - previous.clientHeight);
   const fraction = range ? previous.scrollTop / range : 0;
   const readerTop = reader.scrollTop;
-  const crossingSource = (documentMode === 'source') !== (next === 'source');
-  const leavingSource = documentMode === 'source' && next !== 'source';
-  const enteringSource = documentMode !== 'source' && next === 'source';
-  documentMode = next;
+  const crossingSource = (previousMode === 'source') !== (next === 'source');
+  const leavingSource = previousMode === 'source' && next !== 'source';
+  const enteringSource = previousMode !== 'source' && next === 'source';
+  if (!modeMachine.send(event, { mode: next })) return;
   if (enteringSource) editor?.setSourceOnly?.(true);
   if (leavingSource) editor?.setSourceOnly?.(false);
   syncDocumentMode(); closeAllMenus();
@@ -111,11 +120,16 @@ function setDocumentMode(next) {
 function toggleDocumentReadOnly() {
   if (focusedPane === 'companion') return;
   if (transitionLocked || current.writable === false) return;
-  documentReadOnly = !documentReadOnly; syncDocumentMode();
+  syncModeMachine();
+  if (!modeMachine.send('TOGGLE_LOCK', { source: 'user' })) return;
+  syncDocumentMode();
 }
 function resetDocumentPresentation(next) {
-  documentMode = next ?? (current.active && current.writable !== false && preferences.get('openInEditMode', true) !== false ? 'edit' : 'reading');
-  documentReadOnly = false;
+  const target = next ?? (current.active && current.writable !== false && preferences.get('openInEditMode', true) !== false ? 'edit' : 'reading');
+  modeMachine.sync(['reading', 'edit', 'source'].includes(target) ? target : 'reading', {
+    readOnly: false, writable: current.writable !== false, transitioning: Boolean(transitionLocked), companion: focusedPane === 'companion'
+  }, 'reset');
+  documentMode = modeMachine.state; documentReadOnly = false;
 }
 function recordDocumentNavigation(path) {
   if (!path || navigatingHistory || samePath(documentNavigation[documentNavigationIndex] || '', path)) return;
@@ -148,6 +162,7 @@ function closeRecentMenu() {
   if (menu.contains(document.activeElement)) $('open-recent-button').focus();
   menu.hidden = true;
   $('open-recent-button').setAttribute('aria-expanded', 'false');
+  if (menuMachine.state === 'open') menuMachine.send('SUBMENU', { submenu: null });
 }
 function positionRecentMenu() {
   const menu = $('open-recent-menu');
@@ -176,6 +191,7 @@ function openRecentMenu(focus = 'item') {
   if (menu.hidden) renderRecentMenu();
   menu.hidden = false;
   $('open-recent-button').setAttribute('aria-expanded', 'true');
+  if (menuMachine.state === 'open') menuMachine.send('SUBMENU', { submenu: 'open-recent-menu' });
   positionRecentMenu();
   if (focus === 'item') menu.querySelector('button')?.focus();
   else if (focus === 'menu') { menu.tabIndex = -1; menu.focus({ preventScroll: true }); }
@@ -258,6 +274,7 @@ function openPreferencesPanel() {
   menu.hidden = false;
   positionPreferencesPanel();
   $('view-menu-button').setAttribute('aria-expanded', 'true');
+  menuMachine.send('OPEN', { id: 'view-menu' });
   $('preference-font').focus();
 }
 function closePreferencesPanel(returnFocus = false) {
@@ -376,7 +393,7 @@ async function editClipboard(action) {
     surface.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
   } else document.execCommand(action);
 }
-function openReplace() { openFind(); $('replace-bar').hidden = false; syncDocumentMode(); }
+function openReplace() { openFind(); findMachine.send('REPLACE'); $('replace-bar').hidden = false; syncDocumentMode(); syncFindMachine(); }
 function replaceMatches(all) {
   if (!documentWritable() || documentMode === 'reading' || !editor) return;
   const query = $('find-input').value, replacement = $('replace-input').value;

@@ -7,6 +7,7 @@ const autoSaveTimers = new Map();
 function focusedDocument() { return focusedPane === 'companion' && companionDocument ? companionDocument : current; }
 function focusPane(pane) {
   focusedPane = pane; $('document-view').dataset.focusedPane = pane;
+  companionMachine.update({ focused: pane === 'companion' }, 'focus');
   $('reading-companion').setAttribute('aria-label', `Reading companion${pane === 'companion' ? ', focused' : ''}`);
   syncDocumentMode();
   renderedTitleKey = null; updateTitle();
@@ -21,6 +22,7 @@ function refreshCompanionOutline() {
 function showReadingCompanion(doc = current, follows = doc === current) {
   if (!doc.active) return;
   companionDocument = doc; companionFollows = follows;
+  companionMachine.send(follows ? 'FOLLOW' : 'PIN', { documentId: doc.documentId || null });
   updateCompanionSyncControl();
   $('reading-companion').hidden = false; $('pane-divider').hidden = false;
   $('document-view').classList.add('has-companion'); scheduleCompanionRender(0);
@@ -28,15 +30,18 @@ function showReadingCompanion(doc = current, follows = doc === current) {
 }
 function closeReadingCompanion() {
   clearTimeout(companionTimer); clearTimeout(companionMaxTimer); companionMaxTimer = 0; ++companionGeneration; companionAbort?.abort(); cancelMermaidPending('companion');
+  companionMachine.send('CLOSE');
   companionDocument = null; cancelAnimationFrame(companionSyncFrame); companionSyncFrame = 0; updateCompanionSyncControl(); $('reading-companion').hidden = true; $('pane-divider').hidden = true;
   $('document-view').classList.remove('has-companion'); focusPane('main'); $('reader-scroll').focus();
   // The companion borrows the outline list for its own items; rebuild the
   // document rows now rather than leaving them stale until the next debounce.
   if (typeof refreshEditorOutline === 'function') refreshEditorOutline();
+  syncCompanionMachine();
 }
 function scheduleCompanionRender(delay = 180) {
-  if (!companionDocument) return;
+  if (!companionDocument) { syncCompanionMachine(); return; }
   if (companionFollows) companionDocument = current;
+  syncCompanionMachine();
   updateCompanionSyncControl();
   ++companionGeneration;
   const run = () => { clearTimeout(companionTimer); clearTimeout(companionMaxTimer); companionTimer = companionMaxTimer = 0; renderReadingCompanion().catch(toast); };
@@ -52,6 +57,7 @@ function prefixCompanionIds(root) {
 }
 async function renderReadingCompanion() {
   if (companionFollows) companionDocument = current;
+  syncCompanionMachine();
   const doc = companionDocument; if (!doc?.active) return;
   const generation = ++companionGeneration, revision = doc.revision, content = doc.content, theme = diagramThemeRevision;
   const valid = () => generation === companionGeneration && companionDocument === doc && doc.revision === revision && doc.content === content && theme === diagramThemeRevision;
@@ -140,7 +146,7 @@ function initializePanes() {
   reader.addEventListener('focusin', event => { if (!event.target.closest('#companion-sync-control') && focusedPane !== 'companion') focusPane('companion'); });
   reader.addEventListener('pointerdown', event => { if (!event.target.closest('#companion-sync-control') && focusedPane !== 'companion') focusPane('companion'); });
   $('companion-close').onclick=closeReadingCompanion;
-  $('companion-edit').onclick=()=>enqueue(async()=>{const doc=companionDocument, previous=current; await activateDocument(doc); companionFollows=false; companionDocument=previous; updateCompanionSyncControl(); scheduleCompanionRender(0);focusPane('main');editor?.focus();});
+  $('companion-edit').onclick=()=>enqueue(async()=>{const doc=companionDocument, previous=current; await activateDocument(doc); companionFollows=false; companionDocument=previous; syncCompanionMachine(); updateCompanionSyncControl(); scheduleCompanionRender(0);focusPane('main');editor?.focus();});
   $('companion-find').querySelector('input').oninput=e=>{const query=e.target.value.toLowerCase();const nodes=[...$('companion-preview').querySelectorAll('p,h1,h2,h3,h4,h5,h6,li,pre,td')].filter(n=>query&&n.textContent.toLowerCase().includes(query));$('companion-find').querySelector('span').textContent=`${nodes.length} matching blocks`;nodes[0]?.scrollIntoView({block:'center'});};
   reader.onclick=e=>{const anchor=e.target.closest('a');if(anchor){e.preventDefault();if(anchor.getAttribute('href')?.startsWith('#'))document.getElementById(anchor.getAttribute('href').slice(1))?.scrollIntoView();else { const href = anchor.getAttribute('href'); if (/^(https?:|mailto:)/i.test(href)) invoke('open_link', {url:href}).catch(toast); else { const doc = companionDocument; enqueue(async () => { const path = await invoke('resolve_document_link', {documentId:doc.documentId,link:href}); await openPath(path); }); } }}};
   main.addEventListener('scroll', scheduleCompanionSync, { passive: true });

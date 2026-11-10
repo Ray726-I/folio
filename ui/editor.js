@@ -191,14 +191,18 @@ function editValue({ title, value, placeholder = '' }) {
 async function mountUnifiedEditor() {
   if (!current.active) {
     editor?.destroy(); editor = null; editorDocument = null;
-    $('preview').replaceChildren(); return;
+    $('preview').replaceChildren();
+    previewMachine.send('IDLE');
+    return;
   }
   if (editorDocument === current && editor) {
     if (editor.getText() !== current.content) editor.replaceContent(current.content);
     if (editorPath !== current.path) { editorPath = current.path; editor.refreshMedia(); }
+    previewMachine.sync('ready', { documentId: current.documentId || null, reason: null }, 'editor');
     return;
   }
   const documentAtOpen = current, generation = ++renderGeneration;
+  previewMachine.send('MOUNT', { documentId: documentAtOpen.documentId || null });
   editor?.destroy(); editor = null; cancelMermaidPending();
   $('preview').replaceChildren();
   $('preview').classList.add('is-mounting');
@@ -207,6 +211,7 @@ async function mountUnifiedEditor() {
     await loadAsset('vendor/editor/editor.js');
     await loadAsset('vendor/editor/editor.css', true);
   } catch (error) {
+    previewMachine.send('FAIL', { reason: 'assets' });
     finishMounting();
     throw error;
   }
@@ -235,7 +240,9 @@ async function mountUnifiedEditor() {
     shown.textContent = current.content;
     $('preview').replaceChildren(shown);
     $('editor-notice').hidden = false;
+    $('editor-notice').textContent = 'This document is too large or complex to format. Its complete Markdown is shown below, read-only; saving still writes the file unchanged.';
     editorDocument = current; editorPath = current.path; fallbackCheckedContent = current.content;
+    previewMachine.send('FALLBACK', { reason: String(limited) });
     finishMounting();
     status('');
     return;
@@ -350,11 +357,15 @@ async function mountUnifiedEditor() {
     shown.textContent = current.content;
     $('preview').replaceChildren(shown);
     editor = null; editorDocument = null;
+    previewMachine.send('FAIL', { reason: 'editor' });
+    $('editor-notice').hidden = false;
+    $('editor-notice').textContent = 'This document could not be opened in the editor. Its Markdown is shown read-only; your file is unchanged.';
     finishMounting();
     toast('This document could not be opened in the editor. Its Markdown is shown read-only; your file is unchanged.');
     return;
   }
   syncDocumentMode();
+  previewMachine.send('READY');
   finishMounting();
   $('folder-empty').hidden = true; refreshEditorOutline(); status('');
 }

@@ -3739,6 +3739,10 @@ dialog {
   color:var(--fg);
   font-weight:600;
 }
+.save-state[data-state="paused"] {
+  color:var(--yellow);
+  font-weight:600;
+}
 .save-state[data-state="error"] {
   color:var(--red);
   font-weight:600;
@@ -4410,6 +4414,7 @@ body.focus-mode .app-menubar { display:none; }
 .document-body>.headerbar { flex:none; }
 .save-state[data-state="dirty"]::before { content:'•'; color:var(--accent); }
 .save-state[data-state="error"]::before { content:'!'; font-weight:700; }
+.save-state[data-state="paused"]::before { content:'⏸'; font-weight:700; }
 .headerbar .save-state[data-state="error"] { width:auto; min-width:90px; max-width:160px; font-size:11px; }
 /* Locked documents retain the rendered heading, without editing widgets. */
 .ProseMirror[contenteditable="false"] .folio-heading-source,.ProseMirror[contenteditable="false"] .editor-trailing-input,.ProseMirror[contenteditable="false"] .folio-empty-hint { display:none; }
@@ -4680,3 +4685,10 @@ body[data-selection-pane="reader-scroll"] #companion-scroll,body[data-selection-
 .reading-guide-marker { position:fixed; z-index:20; pointer-events:none; border-left:3px solid var(--accent); border-radius:2px; background:color-mix(in srgb,var(--accent) 12%,transparent); }
 @media print { .reading-guide-toolbar, .reading-guide-marker { display:none!important; } }
 @media (max-width:600px) { .lab-dialog { width:calc(100vw - 20px); height:calc(100vh - 20px); } .lab-content { padding:20px; } }
+
+/* State inspector: the same dialog language as the source snapshot, sized for
+   a readable transition log rather than a full document. */
+.state-inspector { width:min(760px, calc(100vw - 32px)); }
+.state-inspector > p { margin:0 0 12px; color:var(--muted); font-size:13px; }
+.state-inspector-output { min-height:320px; max-height:min(58vh, 520px); margin:0; padding:14px 16px; overflow:auto; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); font:12px/1.65 'JetBrains Mono', ui-monospace, monospace; white-space:pre-wrap; }
+.state-inspector-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:14px; }
