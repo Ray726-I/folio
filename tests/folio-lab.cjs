@@ -10,7 +10,7 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.keyboard.press('Escape');
     await page.keyboard.press('Control+Shift+p');
     await page.locator('#command-search').fill('Folio Lab');
-    await page.locator('#command-dialog').getByText('Folio Lab', { exact: true }).click();
+    await page.locator('#command-dialog').getByText('Folio Lab…', { exact: true }).click();
     await page.waitForFunction(() => document.getElementById('lab-dialog').open);
     await page.keyboard.press('Escape');
     await page.locator('#menu-view-button').click();

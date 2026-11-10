@@ -29,15 +29,16 @@ function activateRetroTheme() {
   };
 }
 function activateReadingGuide() {
-  $('reader-scroll').before($('reading-guide-template').content.cloneNode(true));
+  const guideReader = $('reader-scroll'), guidePane = guideReader.closest('.pane-layout') || guideReader;
+  guidePane.before($('reading-guide-template').content.cloneNode(true));
   document.body.classList.add('lab-reading-guide');
 // The marker is a separate overlay: it never changes the editor's document DOM.
-const guideReader = $('reader-scroll'), guideMarker = $('reading-guide-marker');
+const guideMarker = $('reading-guide-marker');
 const controller = new AbortController(), signal = controller.signal;
 let guideTimer = 0;
 let guideParagraph = null, guideFrame = 0, guideFollowScroll = false, guideProgrammaticScroll = false;
 function guideEnabled() {
-  return document.body.classList.contains('lab-reading-guide') && root.dataset.documentMode === 'reading' && current.active;
+  return document.body.classList.contains('lab-reading-guide') && root.dataset.documentMode === 'reading' && current.active && focusedPane !== 'companion';
 }
 function guideParagraphs() {
   return [...$('preview').querySelectorAll('p')].filter(node => node.textContent.trim() && node.getClientRects().length);
@@ -101,12 +102,14 @@ const previewObserver = new MutationObserver(() => scheduleGuide());
 previewObserver.observe($('preview'), { childList: true, subtree: true });
 const rootObserver = new MutationObserver(() => scheduleGuide());
 rootObserver.observe(root, { attributes: true, attributeFilter: ['data-document-mode', 'data-theme', 'data-reading-font', 'data-document-width'] });
+const paneObserver = new MutationObserver(() => scheduleGuide());
+paneObserver.observe($('document-view'), { attributes: true, attributeFilter: ['data-focused-pane'] });
 const bodyObserver = new MutationObserver(() => scheduleGuide());
 bodyObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
 scheduleGuide();
 
 return () => {
-  controller.abort(); resizeObserver.disconnect(); previewObserver.disconnect(); rootObserver.disconnect(); bodyObserver.disconnect();
+  controller.abort(); resizeObserver.disconnect(); previewObserver.disconnect(); rootObserver.disconnect(); paneObserver.disconnect(); bodyObserver.disconnect();
   cancelAnimationFrame(guideFrame); clearTimeout(guideTimer);
   $('reading-guide-toolbar')?.remove(); guideMarker.remove();
   document.body.classList.remove('lab-reading-guide');

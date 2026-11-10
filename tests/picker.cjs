@@ -163,7 +163,7 @@ async function runPalette(page, query) {
     await page.keyboard.press('ArrowDown');
     assert.equal(await page.evaluate(() => document.activeElement?.id), 'open-folder', 'Open folder… is keyboard-reachable');
     await page.keyboard.press('Escape');
-    assert.equal((await page.locator('#open-file .menu-text').textContent()).trim(), 'Open File…', 'native Open advertises files only');
+    assert.equal((await page.locator('#open-file .menu-text').textContent()).trim(), 'Open file…', 'native Open advertises files only');
     assert.match(await page.locator('#open-file').getAttribute('title'), /file/i, 'native Open title names files');
     assert.doesNotMatch(await page.locator('#open-file').getAttribute('title'), /folder/i, 'native Open title does not promise folders');
 
@@ -301,7 +301,7 @@ async function runPalette(page, query) {
     assert.equal(await page.locator('#open-menu #open-file').isVisible(), true, 'Open file or folder… remains reachable in Folio mode');
     assert.equal(await page.locator('#open-menu #open-folder').isVisible(), true, 'File menu keeps Open Folder available with either picker');
     await page.keyboard.press('Escape');
-    assert.equal((await page.locator('#open-file .menu-text').textContent()).trim(), 'Open File…', 'File menu keeps a conventional file action');
+    assert.equal((await page.locator('#open-file .menu-text').textContent()).trim(), 'Open file…', 'File menu keeps a conventional file action');
     assert.match(await page.locator('#open-file').getAttribute('title'), /file or folder/i, 'Folio Open advertises both');
     await runPalette(page, 'Open folder');
     await page.keyboard.press('Enter');

@@ -20,7 +20,7 @@ function initializeTabScrolling() {
   const list=$('tab-list');
   const buttons=[];
   for(const [id,label,direction] of [['tab-scroll-previous','Scroll tabs left',-1],['tab-scroll-next','Scroll tabs right',1]]) {
-    const button=document.createElement('button');button.id=id;button.className='icon-button tab-scroll';button.type='button';button.textContent=direction<0?'‹':'›';button.title=label;button.setAttribute('aria-label',label);
+    const button=document.createElement('button');button.id=id;button.className='icon-button tab-scroll';button.type='button';button.innerHTML=`<svg class="icon" aria-hidden="true" style="transform:rotate(${direction<0?180:0}deg)"><use href="#i-chevron"/></svg>`;button.title=label;button.setAttribute('aria-label',label);
     button.onclick=()=>list.scrollBy({left:direction*Math.max(120,list.clientWidth*.7),behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
     direction<0?list.before(button):list.after(button);buttons.push(button);
   }
@@ -58,10 +58,14 @@ function initializeDocumentAffordances() {
     button.innerHTML=`<svg class="icon" aria-hidden="true"><use href="#${action.icon}"/></svg>`;
     if(action.mark) button.setAttribute('aria-pressed','false');
     if(action.overflow) button.setAttribute('aria-haspopup','menu');
-    button.addEventListener('pointerdown',event=>{event.preventDefault();editor?.captureSelection?.();});
-    button.addEventListener('click',()=>{
+    const run=()=>{
       if(!documentWritable())return;
-      if(action.overflow) { editor?.openBlockMenu?.(button.getBoundingClientRect()); return; }
+      if(action.overflow) {
+        // Hover may already have opened the picker; a click must not close and
+        // reopen it under the pointer.
+        if(!document.querySelector('.folio-slash-menu'))editor?.openBlockMenu?.(button.getBoundingClientRect(), button);
+        return;
+      }
       editor?.command(action.command,action.id==='link'?{select:'label'}:undefined);
       // A command can move the logical range while the native selection stays
       // collapsed (for example Link selects the URL placeholder). Re-assert the
@@ -73,7 +77,32 @@ function initializeDocumentAffordances() {
       // next frame re-reads it and re-measures the anchor as well.
       refreshFormatState();
       requestAnimationFrame(()=>{refreshFormatState();schedule();});
+    };
+    // Run pointer activation on pointerdown: preventDefault keeps the document
+    // selection alive, and WebKit may not deliver a click after that default is
+    // cancelled. Keyboard activation still arrives as a detail-0 click.
+    button.addEventListener('pointerdown',event=>{
+      if(event.button!==0)return;
+      event.preventDefault();
+      editor?.captureSelection?.();
+      run();
     });
+    button.addEventListener('click',event=>{ if(event.detail===0)run(); });
+    if(action.overflow) {
+      let hoverTimer=0;
+      const openOnHover=()=>{
+        hoverTimer=0;
+        if(bubble.hidden||!documentWritable()||document.querySelector('.folio-slash-menu'))return;
+        editor?.captureSelection?.();
+        editor?.openBlockMenu?.(button.getBoundingClientRect(), button);
+      };
+      button.addEventListener('pointerenter',event=>{
+        if(event.pointerType==='touch')return;
+        clearTimeout(hoverTimer);
+        hoverTimer=setTimeout(openOnHover,110);
+      });
+      button.addEventListener('pointerleave',()=>{clearTimeout(hoverTimer);hoverTimer=0;});
+    }
     formatButtons.set(action.id,button);
     bubble.append(button);
   }
@@ -110,9 +139,32 @@ function initializeDocumentAffordances() {
     const range=selection.getRangeAt(0);
     // Anchor to the first line of the selection, not the union rectangle of a
     // tall multiline range, so the toolbar tracks what the eye reads first.
-    const rects=[...range.getClientRects()].filter(rect=>rect.width>0&&rect.height>0);
-    const first=rects[0]||range.getBoundingClientRect();
-    if(!first.width||!first.height||first.bottom<0||first.top>innerHeight){hideFormatToolbar();return;}
+    // A block-level selection also reports a full-column line box before the
+    // real text rect; probing the first selected text node avoids centring the
+    // toolbar over empty space when the selected line is short.
+    let first=null;
+    try {
+      const start=range.startContainer;
+      const walker=document.createTreeWalker(start,NodeFilter.SHOW_TEXT);
+      for(let node=start.nodeType===Node.TEXT_NODE?start:walker.nextNode();node;node=walker.nextNode()) {
+        if(!range.intersectsNode(node)) continue;
+        const probe=document.createRange();
+        const offset=node===start?range.startOffset:0;
+        probe.setStart(node,Math.min(offset,node.textContent.length));
+        probe.setEnd(node,node.textContent.length);
+        const probeRects=[...probe.getClientRects()].filter(rect=>rect.width>0&&rect.height>0);
+        if(probeRects.length){first=probeRects[0];break;}
+        if(offset>=node.textContent.length) {
+          const caret=probe.getBoundingClientRect();
+          if(caret.height){first={left:caret.left,right:caret.left,top:caret.top,bottom:caret.bottom,width:0,height:caret.height};break;}
+        }
+      }
+    } catch {}
+    if(!first) {
+      const rects=[...range.getClientRects()].filter(rect=>rect.width>0&&rect.height>0);
+      first=rects[0]||range.getBoundingClientRect();
+    }
+    if(first.width===undefined||!first.height||first.bottom<0||first.top>innerHeight){hideFormatToolbar();return;}
     bubble.hidden=false;
     const width=bubble.offsetWidth,height=bubble.offsetHeight,gap=9,margin=8;
     // Pane-aware: the reader pane's box already excludes the companion pane,
@@ -125,7 +177,13 @@ function initializeDocumentAffordances() {
     const maxLeft=fitsPane?pane.right-margin-width:Math.min(pane.right-margin-width,innerWidth-width-8);
     const center=first.left+first.width/2;
     const left=Math.max(minLeft,Math.min(maxLeft,center-width/2));
-    const above=first.top-gap-height,below=first.bottom+gap;
+    const above=first.top-gap-height;
+    // If the first line is too close to the pane top, prefer below the whole
+    // selection rather than covering the next selected line with the toolbar.
+    const allRects=[...range.getClientRects()].filter(rect=>rect.width>0&&rect.height>0);
+    const belowFirst=first.bottom+gap;
+    const nextLine=allRects.find(rect=>rect!==first&&rect.top>first.top+2&&rect.top<belowFirst+height&&rect.bottom>belowFirst);
+    const below=nextLine?Math.max(...allRects.map(rect=>rect.bottom))+gap:belowFirst;
     const useBelow=above<pane.top+margin&&below+height<=pane.bottom-margin;
     const top=Math.max(pane.top+margin,Math.min(pane.bottom-margin-height,useBelow?below:above));
     bubble.style.left=`${Math.round(left)}px`;
@@ -138,6 +196,9 @@ function initializeDocumentAffordances() {
   const schedule=()=>{if(!bubbleFrame)bubbleFrame=requestAnimationFrame(updateBubble);};
   document.addEventListener('selectionchange',schedule);window.addEventListener('scroll',schedule,true);window.addEventListener('resize',schedule);
   new MutationObserver(schedule).observe(root,{attributes:true,attributeFilter:['data-document-mode']});
+  // Formatting can rebuild the paragraph DOM and leave the toolbar hidden
+  // without a second selectionchange; reschedule after editor mutations too.
+  new MutationObserver(schedule).observe($('preview'),{childList:true,subtree:true});
   bubble.onkeydown=event=>{if(event.key==='Escape'){event.preventDefault();hideFormatToolbar();editor?.focus();}};
   document.addEventListener('keydown',event=>{
     if(event.key!=='Escape'||bubble.hidden)return;

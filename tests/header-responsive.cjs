@@ -12,6 +12,7 @@ const { openEditor } = require('./editor-browser.cjs');
         const r = document.querySelector(selector).getBoundingClientRect(); return [selector, { left:r.left, right:r.right }];
       })));
       const titleVisible = boxes['.window-title'].right - boxes['.window-title'].left > 1;
+      assert.equal(titleVisible, true, `no-tab header shows the document title at ${width}px`);
       assert.ok(!titleVisible || boxes['.header-start'].right <= boxes['.window-title'].left + 1, `left header overlaps title at ${width}px`);
       assert.ok(!titleVisible || boxes['.window-title'].right <= boxes['.header-end'].left + 1, `title overlaps controls at ${width}px`);
       assert.ok(boxes['.header-end'].right <= width, `header overflows at ${width}px`);

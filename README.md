@@ -24,7 +24,7 @@ For native prerequisites, follow Tauri's [Linux](https://v2.tauri.app/start/prer
 | Command window (commands, themes, files) | Ctrl+Shift+P (Command+Shift+P on macOS) |
 | Quick open (fuzzy search folder files and open tabs) | Ctrl+P |
 | All documents (search open tabs) | Ctrl+Shift+A (Command+Shift+A on macOS) |
-| Open File / Open Folder | Ctrl+O / Ctrl+Shift+O |
+| Open file / Open folder | Ctrl+O / Ctrl+Shift+O |
 | Show or hide the file tree | Ctrl+B |
 | New document / reopen closed tab | Ctrl+N or Ctrl+T / Ctrl+Shift+T |
 | Next / previous tab (wraps in both directions) | Ctrl+Tab / Ctrl+Shift+Tab |
@@ -41,13 +41,13 @@ For native prerequisites, follow Tauri's [Linux](https://v2.tauri.app/start/prer
 | Reset app zoom | Ctrl+0 |
 | Increase / decrease document text size | Ctrl+Shift+= / Ctrl+Shift+- |
 | Reset document text size | Ctrl+Shift+0 |
-| Find / Find and Replace (current document) | Ctrl+F / Ctrl+H |
+| Find / Find and replace (current document) | Ctrl+F / Ctrl+H |
 | Search folder contents (document Find without a folder) | Ctrl+Shift+F |
 | Load or block remote images | Command window |
 | Switch serif / sans reading text | Command window |
-| Focus mode | View → Toggle Focus Mode; Escape exits |
+| Focus mode | View → Toggle focus mode; Escape exits |
 | Fullscreen | F11 |
-| Close File / Quit | Ctrl+W / Ctrl+Q |
+| Close file / Quit | Ctrl+W / Ctrl+Q |
 
 On macOS, use Command in place of Ctrl for the listed shortcuts. The command window supports fuzzy search for commands, shortcuts, open documents and themes, plus arrow keys, Enter, and Escape. Select **Change theme…** to search themes in its Appearance submenu. The palette also exposes the File, Edit, View, Go, and Help actions, so it can serve as a keyboard-first replacement for the menu bar. Search for **Inspect app state** to open the live state-machine snapshot when diagnosing a UI issue. There are System, Adwaita Light, Adwaita Dark, Nord, Catppuccin Mocha, Rosé Pine, and Solarized Light themes. Theme, remote-image, reading-font, and text-size preferences persist locally. Recent files store paths, not document contents; they can be cleared from the command window. **Load remote images** / **Block remote images** toggles whether documents may contact image hosts; blocked images appear as a local placeholder. **Use serif reading text** / **Use sans-serif reading text** switches the document face without touching the interface.
 
@@ -59,7 +59,7 @@ Folio uses its built-in file/folder picker by default. In the command window,
 choose **Use system file picker** to use your operating system's dialogs, or
 **Use Folio file picker** to switch back. This choice persists locally.
 With the system picker selected, Open opens a Markdown file; use **Open folder…**
-in the command window for a folder. Save and Save As always use the system dialog.
+in the command window for a folder. Save and Save as always use the system dialog.
 Cancelling a picker leaves the current document untouched. After selecting a
 destination, any unsaved changes still require Save, Discard, or Cancel.
 
@@ -103,7 +103,7 @@ Saves write a temporary sibling file and rename it atomically. Content fingerpri
 
 The application menu bar contains **File, Edit, View, Go, Help**. The document row below it shows tabs, mode, preferences, save state and additional document actions. The full path is available in the tab tooltip and through Copy document path. The mode button toggles **Read** and **Edit**; the adjacent caret opens the full mode menu, including **Source** and **Open as read-only**. Documents open in **Edit** without automatically placing a text caret; click the document to begin editing. The opening mode is independent of the previous document’s mode or read-only toggle. Uncheck **Open documents in Edit mode** in document preferences to open in **Read** instead. **Edit** enables the existing formatted Markdown editor; **Source** edits the exact raw Markdown in the same buffer and undo history. New blank documents start in **Edit** with the empty outline collapsed; headings restore the outline when that dock is enabled. Selecting prose in Edit shows Bold, Italic, Link and Inline code actions. Code blocks offer Copy on hover or focus; Tab from a focused code block reaches Copy. The status bar shows reading progress for long documents. Switching modes preserves unsaved changes and does not rewrite the file. Untouched rich-editor blocks keep their original source text, while edited blocks serialize canonically.
 
-**Open as read-only** protects the document independently of its presentation. Filesystem permissions appear separately and prevent entering **Edit**; **Source** remains inspectable, and Save As can create a writable copy. Selection, copying, heading navigation, exact source snapshots and explicitly loading images remain available. Documents above the rich-editor complexity threshold retain the existing complete, read-only source fallback.
+**Open as read-only** protects the document independently of its presentation. Filesystem permissions appear separately and prevent entering **Edit**; **Source** remains inspectable, and Save as can create a writable copy. Selection, copying, heading navigation, exact source snapshots and explicitly loading images remain available. Documents above the rich-editor complexity threshold retain the existing complete, read-only source fallback.
 
 The sliders control font family, font size, line height, content width, paragraph spacing, appearance and Markdown styling. Existing themes, full-width layout and exact snapshots remain available. These presentation preferences persist locally across documents. The three-dot menu provides path copying, reveal, rename, duplicate, PDF printing, HTML export and close. PDF export uses the operating system print dialog's PDF destination. HTML export uses Folio's sanitized native renderer and blocks remote images; math and Mermaid retain their source representation in the standalone HTML.
 

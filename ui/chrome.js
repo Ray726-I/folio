@@ -55,7 +55,7 @@ function syncDocumentMode() {
   for (const button of document.querySelectorAll('button[data-document-mode]')) {
     button.setAttribute('aria-checked', String(button.dataset.documentMode === documentMode));
     button.disabled = protectedFile && button.dataset.documentMode === 'edit';
-    button.title = button.disabled ? 'This file is not writable. Use Save As to create a writable copy.' : '';
+    button.title = button.disabled ? 'This file is not writable. Use Save as to create a writable copy.' : '';
   }
   $('lock-document').disabled = protectedFile;
   $('lock-document').setAttribute('aria-checked', String(documentReadOnly || protectedFile));
@@ -85,7 +85,7 @@ function toggleDocumentMode() { setDocumentMode(nextDocumentMode()); }
 function setDocumentMode(next) {
   if (focusedPane === 'companion') return;
   if (!current.active || transitionLocked || !['reading', 'edit', 'source'].includes(next)) return;
-  if (next === 'edit' && current.writable === false) { toast('Filesystem permissions prevent editing. Use Save As to create a writable copy.'); return; }
+  if (next === 'edit' && current.writable === false) { toast('Filesystem permissions prevent editing. Use Save as to create a writable copy.'); return; }
   syncModeMachine();
   const event = { reading: 'READING', edit: 'EDIT', source: 'SOURCE' }[next];
   if (!modeMachine.can(event, { mode: next })) return;
@@ -347,13 +347,13 @@ function initializePreferencesPanel() {
 }
 
 function showHelp(shortcuts = false) {
-  $('help-title').textContent = shortcuts ? 'Keyboard Shortcuts' : 'About Folio';
+  $('help-title').textContent = shortcuts ? 'Keyboard shortcuts' : 'About Folio';
   $('help-dialog').classList.toggle('shortcuts', shortcuts);
   const content = $('help-content'); content.replaceChildren();
   if (shortcuts) {
     let table;
-    for (const [label, key] of [['Open File', 'Ctrl+O'], ['Open Folder', 'Ctrl+Shift+O'], ['Quick open folder file', 'Ctrl+P'], ['New document', 'Ctrl+N / Ctrl+T'], ['Reopen closed tab', 'Ctrl+Shift+T'], ['Save / Save As', 'Ctrl+S / Ctrl+Shift+S'], ['Undo / Redo', 'Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y'], ['Cut / Copy / Paste', 'Ctrl+X / Ctrl+C / Ctrl+V'], ['Select All', 'Ctrl+A'], ['Find / Replace', 'Ctrl+F / Ctrl+H'], ['Search folder contents', 'Ctrl+Shift+F'], ['File Explorer', 'Ctrl+B'], ['Bold / Italic in Edit mode', 'Ctrl+B / Ctrl+I (in document)'], ['Read / Edit / Source', 'Ctrl+1 / Ctrl+2 / Ctrl+3'], ['Next / Previous tab', 'Ctrl+Tab / Ctrl+Shift+Tab'], ['Toggle reading companion', 'Ctrl+\\'], ['Switch reading panes', 'F6'], ['Table navigation / next row', 'Tab / Shift+Tab / Enter'], ['Command window', 'Ctrl+Shift+P'], ['All documents (search open tabs)', 'Ctrl+Shift+A'], ['Fullscreen', 'F11'], ['Zoom in / out / reset', 'Ctrl++ / Ctrl+- / Ctrl+0'], ['Document text size', 'Ctrl+Shift++ / Ctrl+Shift+- / Ctrl+Shift+0'], ['Close File / Quit', 'Ctrl+W / Ctrl+Q']]) {
-      const group = label === 'Open File' ? 'Files' : label === 'Undo / Redo' ? 'Editing' : label === 'File Explorer' ? 'Navigation and view' : null;
+    for (const [label, key] of [['Open file', 'Ctrl+O'], ['Open folder', 'Ctrl+Shift+O'], ['Quick open folder file', 'Ctrl+P'], ['New document', 'Ctrl+N / Ctrl+T'], ['Reopen closed tab', 'Ctrl+Shift+T'], ['Save / Save as', 'Ctrl+S / Ctrl+Shift+S'], ['Undo / Redo', 'Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y'], ['Cut / Copy / Paste', 'Ctrl+X / Ctrl+C / Ctrl+V'], ['Select all', 'Ctrl+A'], ['Find / replace', 'Ctrl+F / Ctrl+H'], ['Search folder contents', 'Ctrl+Shift+F'], ['File explorer', 'Ctrl+B'], ['Bold / italic in Edit mode', 'Ctrl+B / Ctrl+I (in document)'], ['Read / Edit / Source', 'Ctrl+1 / Ctrl+2 / Ctrl+3'], ['Next / previous tab', 'Ctrl+Tab / Ctrl+Shift+Tab'], ['Toggle reading companion', 'Ctrl+\\'], ['Switch reading panes', 'F6'], ['Table navigation / next row', 'Tab / Shift+Tab / Enter'], ['Command window', 'Ctrl+Shift+P'], ['All documents (search open tabs)', 'Ctrl+Shift+A'], ['Fullscreen', 'F11'], ['Zoom in / out / reset', 'Ctrl++ / Ctrl+- / Ctrl+0'], ['Document text size', 'Ctrl+Shift++ / Ctrl+Shift+- / Ctrl+Shift+0'], ['Close file / Quit', 'Ctrl+W / Ctrl+Q']]) {
+      const group = label === 'Open file' ? 'Files' : label === 'Undo / Redo' ? 'Editing' : label === 'File explorer' ? 'Navigation and view' : null;
       if(group){const heading=document.createElement('h3');heading.textContent=group;table=document.createElement('table');content.append(heading,table);}
       const row = table.insertRow(); row.insertCell().textContent = label; row.insertCell().textContent = key;
     }

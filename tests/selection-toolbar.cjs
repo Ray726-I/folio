@@ -53,7 +53,24 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.equal(shown.separators, 3, 'actions are grouped by separators');
     assert.equal(shown.bold.pressed, 'false', 'plain text is not bold');
     const pointer = await page.evaluate(() => {
-      const first = getSelection().getRangeAt(0).getClientRects()[0];
+      const range = getSelection().getRangeAt(0);
+      let first = range.getClientRects()[0];
+      // A block-level selection reports a full-column line box before the
+      // actual text rect; the toolbar anchors to the first selected text.
+      const start = range.startContainer;
+      const walker = document.createTreeWalker(start, NodeFilter.SHOW_TEXT);
+      let node = start.nodeType === Node.TEXT_NODE ? start : walker.nextNode();
+      while (node) {
+        if (range.intersectsNode(node)) {
+          const probe = document.createRange();
+          const offset = node === start ? range.startOffset : 0;
+          probe.setStart(node, Math.min(offset, node.textContent.length));
+          probe.setEnd(node, node.textContent.length);
+          const rects = [...probe.getClientRects()].filter(rect => rect.width > 0 && rect.height > 0);
+          if (rects.length) { first = rects[0]; break; }
+        }
+        node = walker.nextNode();
+      }
       const bubble = document.querySelector('.selection-format');
       const box = bubble.getBoundingClientRect();
       const expected = Math.max(14, Math.min(box.width - 14, first.left + first.width / 2 - box.left));
@@ -162,6 +179,16 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.keyboard.press('Escape');
     await page.waitForTimeout(250);
     assert.equal(await page.locator('.folio-slash-menu').count(), 0, 'Escape closes the block picker');
+
+    // Hovering the overflow button opens the picker without a click, and the
+    // editor root is an anchor rather than a trigger: outside clicks dismiss.
+    await selectSource('keyboard', 8);
+    await page.locator('.selection-format-button[data-action="more"]').hover();
+    await page.locator('.folio-slash-menu').waitFor({ state: 'visible', timeout: 2500 });
+    assert.equal(await page.locator('.folio-slash-menu').count(), 1, 'hover opens the block picker');
+    await page.locator('#reader-scroll').click({ position: { x: 40, y: 300 } });
+    await page.waitForTimeout(150);
+    assert.equal(await page.locator('.folio-slash-menu').count(), 0, 'outside click dismisses the hover-opened picker');
     assert.deepEqual(session.errors, []);
     console.log('PASS: selection toolbar states, positioning, persistence and Escape');
   } finally { await session.close(); }

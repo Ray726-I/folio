@@ -188,7 +188,7 @@
       dialog.setAttribute('aria-labelledby', 'state-inspector-title');
       const head = document.createElement('div'); head.className = 'source-dialog-head';
       const title = document.createElement('h2'); title.id = 'state-inspector-title'; title.textContent = 'App state';
-      const close = document.createElement('button'); close.type = 'button'; close.className = 'icon-button'; close.setAttribute('aria-label', 'Close app state'); close.textContent = '×';
+      const close = document.createElement('button'); close.type = 'button'; close.className = 'icon-button'; close.setAttribute('aria-label', 'Close app state'); close.title = 'Close app state'; close.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>';
       close.addEventListener('click', () => dialog.close());
       head.append(title, close);
       const lede = document.createElement('p'); lede.textContent = 'Live state machines, recent transitions and invariant violations.';

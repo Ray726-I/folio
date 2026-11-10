@@ -25,12 +25,18 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.keyboard.press('Escape');
     await page.evaluate(() => setDocumentMode('reading'));
     await page.waitForFunction(() => document.getElementById('reading-guide-position')?.textContent.includes('1 of 2'));
+    const guideLayout = await page.locator('#reading-guide-toolbar').evaluate(el => {
+      const toolbar = el.getBoundingClientRect(), body = el.closest('.document-body').getBoundingClientRect();
+      return { parent: el.parentElement?.className, width: Math.round(toolbar.width), bodyWidth: Math.round(body.width) };
+    });
+    assert.equal(guideLayout.parent, 'document-body', 'guide toolbar sits above the pane layout, not inside it');
+    assert.ok(Math.abs(guideLayout.width - guideLayout.bodyWidth) < 2, 'guide toolbar spans the document body');
     await page.locator('#menu-view-button').click();
     await page.locator('#application-view-menu').getByRole('menuitem', { name: 'Folio Lab' }).click();
     await page.getByRole('button', { name: 'Disable Reading Guide' }).click();
     assert.equal(await page.locator('#reading-guide-toolbar').count(), 0, 'disabling removes guide controls');
     assert.equal(await page.locator('#reading-guide-marker').count(), 0, 'disabling removes marker');
-    assert.deepEqual(await page.evaluate(() => window.labObserverCounts), { created: 4, disconnected: 4 }, 'disabling disconnects extension observers');
+    assert.deepEqual(await page.evaluate(() => window.labObserverCounts), { created: 5, disconnected: 5 }, 'disabling disconnects extension observers');
     assert.equal(await page.evaluate(() => {
       const event = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true });
       return $('reader-scroll').dispatchEvent(event);

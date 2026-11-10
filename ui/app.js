@@ -18,11 +18,11 @@ function syncOpenAffordance() {
   const native = filePicker() === 'native';
   const open = $('open-file'), label = native ? 'Open a Markdown file (Ctrl+O)' : 'Open a file or folder (Ctrl+O)';
   open.title = label; open.setAttribute('aria-label', label);
-  open.querySelector('span').textContent = 'Open File…';
+  open.querySelector('span').textContent = 'Open file…';
   $('open-folder').hidden = false;
   const fileOption = $('open-file');
   if (fileOption) {
-    const fileLabel = 'Open File…';
+    const fileLabel = 'Open file…';
     fileOption.querySelector('.menu-text').textContent = fileLabel;
     fileOption.setAttribute('aria-label', fileLabel.replace('…', '') + ' (Ctrl+O)');
   }
@@ -137,11 +137,13 @@ function countWords(text) {
   return words;
 }
 function updateStats() {
-  const words = countWords(current.content);
+  const words = countWords(current.content), active = Boolean(current.active);
   $('word-count').textContent = `${words.toLocaleString()} ${words === 1 ? 'word' : 'words'}`;
+  $('word-count').hidden = !active;
   $('reading-time').textContent = words ? `${Math.max(1, Math.ceil(words / 220))} min read` : '';
+  $('reading-time').hidden = !active || !words;
   const readingDivider = $('reading-time').previousElementSibling;
-  if (readingDivider?.classList.contains('status-divider')) readingDivider.hidden = !words;
+  if (readingDivider?.classList.contains('status-divider')) readingDivider.hidden = !active || !words;
 }
 let statsTimer;
 function scheduleStats() { clearTimeout(statsTimer); statsTimer = setTimeout(updateStats, 180); }
@@ -182,6 +184,7 @@ function showWelcome() {
   saveStatus = null; updateTitle(); updateStats();
   syncSurfaceMachine();
   syncFindMachine();
+  renderTabs();
 }
 function goHome() {
   return enqueue(async () => {
@@ -493,8 +496,10 @@ function pickerHint(base) {
 }
 async function browseTo(path) {
   const restoreFocus = $('open-items').contains(document.activeElement);
-  pickerListing = await invoke('browse_directory', { path }); pickerSelection = null;
-  $('open-path').value = pickerListing.path;
+  pickerListing = await invoke('browse_directory', { path });
+  if (!pickerListing || typeof pickerListing !== 'object' || !Array.isArray(pickerListing.entries)) throw new Error('The folder could not be opened.');
+  pickerSelection = null;
+  $('open-path').value = typeof pickerListing.path === 'string' ? pickerListing.path : path || '';
   $('open-parent').disabled = !pickerListing.parent;
   pickerHint('Select a Markdown file or folder');
   $('open-items').replaceChildren();
@@ -695,7 +700,7 @@ async function openFolderPath(path, confirmed = false) {
     await renderPreview();
     showDocument(); $('reader-scroll').scrollTop = 0; status('');
     $('folder-empty').querySelector('h1').textContent = folderEntries.some(entry => !entry.directory) ? 'Folder opened' : 'No Markdown files';
-    $('folder-empty').querySelector('p').textContent = folderEntries.some(entry => !entry.directory) ? 'Open File Explorer (Ctrl+B) or use Quick open (Ctrl+P) to choose a Markdown file.' : 'This folder has no Markdown files. Open another folder to browse it.';
+    $('folder-empty').querySelector('p').textContent = folderEntries.some(entry => !entry.directory) ? 'Open file explorer (Ctrl+B) or use Quick open (Ctrl+P) to choose a Markdown file.' : 'This folder has no Markdown files. Open another folder to browse it.';
     const limits = [];
     if (listing.skipped) limits.push(`${listing.skipped} unreadable ${listing.skipped === 1 ? 'entry was' : 'entries were'} skipped`);
     if (listing.truncated) limits.push('only the first 5,000 entries are shown');
@@ -713,7 +718,7 @@ function requestOpenLocation(path) {
 }
 async function save(saveAs = false, force = false, owner = current, automatic = false) {
   if (!owner.active || owner.closing) return false;
-  if (!saveAs && ((owner === current ? documentReadOnly : owner.view?.readOnly) || owner.writable === false)) { toast('This document is read-only. Use Save As to create a writable copy.'); return false; }
+  if (!saveAs && ((owner === current ? documentReadOnly : owner.view?.readOnly) || owner.writable === false)) { toast('This document is read-only. Use Save as to create a writable copy.'); return false; }
   if (owner === current) editor?.checkpoint();
   const snapshot = owner.content, savedRevision = owner.revision || 0;
   const setSaveStatus = value => { owner.saveStatus = value; if (owner.view) owner.view.saveStatus = value; if (owner === current) saveStatus = value; if (owner === focusedDocument()) updateTitle(); };
@@ -795,7 +800,7 @@ function allCommands() {
     { label: 'Recover documents…', icon: 'refresh', action: reviewRecovery },
     { label: 'Reopen closed tab', icon: 'refresh', action: () => enqueue(reopenDocument) },
     { label: 'Welcome screen', icon: 'home', action: goHome },
-    { label: 'All documents', icon: 'tab-search', shortcut: 'Ctrl+Shift+A', detail: 'Search open tabs', scope: 'documents' },
+    { label: 'All documents…', icon: 'tab-search', shortcut: 'Ctrl+Shift+A', detail: 'Search open tabs', scope: 'documents' },
     { label: 'Quit', icon: 'close', shortcut: 'Ctrl+Q', action: requestClose }
   ];
   if (current.active) {
@@ -814,8 +819,8 @@ function allCommands() {
     );
   }
   commands.push(
-    { label: 'Folio Lab', icon: 'theme', detail: 'Explore optional extras', action: openLab },
-    { label: 'Inspect app state', icon: 'view', detail: 'State machines, transitions and violations', action: () => FolioState.openInspector() },
+    { label: 'Folio Lab…', icon: 'theme', detail: 'Explore optional extras', action: openLab },
+    { label: 'Inspect app state…', icon: 'view', detail: 'State machines, transitions and violations', action: () => FolioState.openInspector() },
     { label: 'Change theme…', icon: 'theme', detail: 'Choose a color theme', scope: 'themes' },
     { label: filePicker() === 'native' ? 'Use Folio file picker' : 'Use system file picker', icon: 'open', detail: filePicker() === 'native' ? 'Folio dialog with folders and typed paths' : 'System dialog for files and folders', action: toggleFilePicker },
     { label: 'Try a sample document', icon: 'file', action: () => newDocument(true) },
@@ -825,7 +830,7 @@ function allCommands() {
     { label: 'Reading mode', icon: 'read', action: () => setDocumentMode('reading') },
     { label: 'Edit mode', icon: 'edit', action: () => setDocumentMode('edit') },
     { label: 'Source mode', icon: 'code', action: () => setDocumentMode('source') },
-    { label: 'Inspect Markdown', icon: 'code', action: openSourceSnapshot },
+    { label: 'Inspect Markdown…', icon: 'code', action: openSourceSnapshot },
     { label: 'Undo', icon: 'undo', shortcut: 'Ctrl+Z', action: () => enqueue(() => undoRedo()) },
     { label: 'Redo', icon: 'redo', shortcut: 'Ctrl+Shift+Z / Ctrl+Y', action: () => enqueue(() => undoRedo(true)) },
     { label: 'Cut', icon: 'edit', shortcut: 'Ctrl+X', action: () => runAppAction('cut') },

@@ -4301,14 +4301,18 @@ export function createRichEditor(parent, options) {
       window.getSelection()?.removeAllRanges();
       syncFolioHighlight();
     }
-    if (activePopup && !activePopup.menu.contains(event.target) && !activePopup.trigger?.contains(event.target)) closePopup();
+    // The editor root is an anchor for the slash picker, not a trigger button.
+    // Treating it as a trigger kept the menu open for every click in the
+    // document; only a real trigger element may hold the popup open.
+    const holdsTrigger = activePopup?.trigger && activePopup.trigger !== view.dom && activePopup.trigger.contains(event.target);
+    if (activePopup && !activePopup.menu.contains(event.target) && !holdsTrigger) closePopup();
   };
   document.addEventListener('pointerdown', dismissPopup, true);
   return {
     view,
     headings: () => headingMetadata.read(model),
     context: () => currentContext(view.state),
-    openBlockMenu(anchor) { openSlashMenu(view.dom, { attached: true, anchor }); },
+    openBlockMenu(anchor, trigger) { openSlashMenu(trigger || view.dom, { attached: true, anchor }); },
     captureSelection() {
       captureDOMSelection();
     },
