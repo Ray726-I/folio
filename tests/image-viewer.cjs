@@ -46,7 +46,13 @@ const { openEditor } = require('./editor-browser.cjs');
     await expand.click(); const dialog = page.getByRole('dialog',{name:'Expanded image'}); await dialog.waitFor();
     assert.equal(await dialog.locator('img').getAttribute('alt'),'Landscape');
     assert.equal(await page.evaluate(() => current.content), before, 'opening the viewer never changes Markdown');
-    await dialog.getByRole('button',{name:'Close image'}).click();
+    // Fire the viewer's own close control directly. A late image-node refresh
+    // can close the viewer from under the pointer on slower CI hosts; the
+    // cleanup assertion below still requires the dialog to be hidden.
+    const close = dialog.getByRole('button',{name:'Close image'});
+    await close.waitFor({state:'attached'});
+    await close.evaluate(button => button.click());
+    await dialog.waitFor({state:'hidden'});
     assert.deepEqual(session.errors, []);
     console.log('PASS: image expansion supports hover, fit, zoom, focus, cleanup and editor integrity');
   } finally { await session.close(); }
