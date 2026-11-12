@@ -67,12 +67,21 @@ const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n
     await mathSource.waitFor({ state: 'visible' });
     assert.equal(await page.evaluate(() => editor.isSource()), false, 'math edit stays in formatted mode');
     assert.ok((await mathSource.textContent()).includes('x^2'));
-    await mathSource.evaluate(element => window.getSelection().selectAllChildren(element));
+    await mathSource.evaluate(element => { element.focus(); window.getSelection().selectAllChildren(element); });
+    // selectionchange alone does not adopt a programmatic DOM range. Capture
+    // it through the public editor API so the insert replaces the formula even
+    // when a slow host has not dispatched a DOM selection update yet.
+    await page.evaluate(() => editor.captureSelection());
     await page.waitForFunction(() => { const selection = editor.getSelection(); return selection.anchor !== selection.head; });
     await page.keyboard.insertText('$$\n\\frac{1}{\n$$');
     await page.keyboard.press('Escape');
+    // Escape commits the source presentation back into the rich document.
+    // Wait for that remount before inspecting the formula: the source card can
+    // remain the visible node for a frame on slower CI hosts.
+    await page.locator('.folio-source-edit').waitFor({ state: 'hidden' });
     assert.ok((await text()).includes('\\frac{1}{'));
-    await page.locator('#preview .math-error').waitFor();
+    await page.waitForFunction(() => [...document.querySelectorAll('#preview .math-formula')]
+      .some(formula => formula.classList.contains('math-error')), null, { timeout: 30000 });
     await page.keyboard.press('Control+z'); assert.equal(await text(), beforeMath);
     // Image source stays editable through the context menu.
     await openMarkdown(page.locator('.image-widget'));
