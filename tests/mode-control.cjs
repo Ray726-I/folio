@@ -61,6 +61,9 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.equal(current.menuHidden, false, 'the caret still opens the dropdown');
     assert.equal(current.expanded, 'true');
     await page.getByRole('menuitemradio', { name: 'Source', exact: true }).click();
+    // The menu closes under the pointer; move clear of the split control so a
+    // lingering :hover tint cannot stand in for the selected-mode colour.
+    await page.mouse.move(0, 0);
     current = await state();
     assert.equal(current.mode, 'source');
     assert.equal(current.label, 'Source');
