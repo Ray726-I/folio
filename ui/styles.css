@@ -325,20 +325,16 @@
   opacity:.5
 }
 
-/* A checked task reads brighter than an open one, so how far through a list
-   you are is legible at a glance. The checkbox itself keeps its own states. */
-.markdown .task-item:has(>input:not(:checked)) {
-  color:color-mix(in srgb,var(--fg) 58%,transparent)
+/* Style the task's own content, not its list item: nested tasks have their
+   own completion state and must not inherit a parent's strike-through. */
+.markdown .task-item:has(>input:checked) > .list-content > :not(ul):not(ol) {
+  color:color-mix(in srgb,var(--fg) 93%,var(--bg));
+  text-decoration:line-through;
+  text-decoration-color:color-mix(in srgb,currentColor 55%,transparent);
+  text-decoration-thickness:1px
 }
-
-.markdown .task-item:has(>input:checked) {
-  color:var(--fg)
-}
-
-/* Reading mode renders task rows without the editor's node-view class; the
-   task marker on the checkbox identifies them there. */
-.markdown li:has(>input[data-task-index]:not(:checked)) {
-  color:color-mix(in srgb,var(--fg) 58%,transparent)
+.markdown .task-item:has(>input:checked) > .list-content > :not(ul):not(ol) :is(strong,b,em) {
+  color:inherit
 }
 
 /* Author <progress>/<meter> bars: a slim themed track with an accent fill,
@@ -3796,6 +3792,7 @@ dialog {
 
 /* Two levels: application menus above the document toolbar. */
 .app-menubar { display:flex; align-items:center; flex:none; gap:0; min-height:38px; padding:0 18px 0 8px; border-bottom:1px solid var(--line); background:var(--surface); user-select:none; z-index:40; }
+.app-menubar[hidden] { display:none; }
 .menubar-button { padding:7px 8px; border:0; border-radius:5px; background:transparent; color:var(--fg); font:400 13px var(--font-ui); cursor:pointer; }
 .menubar-button:hover { background:var(--hover); }
 .menubar-button[aria-expanded="true"] {

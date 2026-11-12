@@ -42,6 +42,7 @@ pub struct Registry {
     pub transfers: HashMap<String, (String, String, String)>,
     pub encoding: HashMap<String, (bool, bool)>,
     pub recovery_origins: HashMap<String, (Option<String>, Option<String>)>,
+    closing: std::collections::HashSet<String>,
 }
 pub fn fresh_id() -> String {
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -55,9 +56,249 @@ pub fn fresh_id() -> String {
         NEXT.fetch_add(1, Ordering::Relaxed)
     )
 }
+/// Deterministic, platform-independent sequential quit coordinator.
+///
+/// Quit closes one workspace at a time through the existing per-window close
+/// review. A window advances only after the native Destroyed event, never on a
+/// command result. Cancellation, error or timeout stops the sequence; windows
+/// already closed stay closed and the remaining ones stay open.
+#[derive(Debug, PartialEq, Eq)]
+pub enum QuitStart {
+    Ignored,
+    NoWindows,
+    Busy,
+    Review { token: u64, label: String },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum QuitStep {
+    Ignored,
+    Next { token: u64, label: String },
+    Complete { token: u64 },
+    Cancel { token: u64, label: String },
+}
+
+struct QuitSequence {
+    token: u64,
+    current: String,
+    remaining: std::collections::VecDeque<String>,
+    /// Set when close_window has validated this exact token/label and is about
+    /// to request native destruction. Timeout must not revoke an admitted close.
+    admitted: bool,
+}
+
+#[derive(Default)]
+pub struct QuitCoordinator {
+    next_token: u64,
+    /// Window creation is serialized with the quit snapshot so a workspace
+    /// cannot be registered between "snapshot labels" and "sequence active".
+    creating: usize,
+    sequence: Option<QuitSequence>,
+    exiting: bool,
+    /// Windows whose ordinary CloseRequested/close_window path was already
+    /// reviewed. They are allowed to finish the last-window exit without
+    /// being mistaken for an unreviewed native termination.
+    normal_close: std::collections::HashSet<String>,
+}
+
+impl QuitCoordinator {
+    fn next_token(&mut self) -> u64 {
+        self.next_token = self.next_token.saturating_add(1);
+        self.next_token
+    }
+
+    pub fn begin_window_creation(&mut self) -> bool {
+        if self.sequence.is_some() || self.exiting {
+            return false;
+        }
+        self.creating = self.creating.saturating_add(1);
+        true
+    }
+
+    pub fn finish_window_creation(&mut self) {
+        self.creating = self.creating.saturating_sub(1);
+    }
+
+    pub fn begin(&mut self, labels: Vec<String>) -> QuitStart {
+        if self.exiting || self.sequence.is_some() {
+            return QuitStart::Ignored;
+        }
+        if self.creating > 0 {
+            return QuitStart::Busy;
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut labels: Vec<String> = labels
+            .into_iter()
+            .filter(|label| seen.insert(label.clone()))
+            .collect();
+        if labels.is_empty() {
+            // No workspace can be left behind: this is a terminal state, and
+            // new window creation must be rejected until the process exits.
+            self.exiting = true;
+            return QuitStart::NoWindows;
+        }
+        self.exiting = false;
+        let token = self.next_token();
+        let current = labels.remove(0);
+        self.sequence = Some(QuitSequence {
+            token,
+            current: current.clone(),
+            remaining: labels.into(),
+            admitted: false,
+        });
+        QuitStart::Review {
+            token,
+            label: current,
+        }
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.sequence.is_some()
+    }
+
+    pub fn is_current(&self, label: &str) -> bool {
+        self.sequence
+            .as_ref()
+            .is_some_and(|sequence| sequence.current == label)
+    }
+
+    /// Atomically validate a quit token for this exact window and mark the
+    /// close as admitted. After this succeeds, timeout cannot revoke it.
+    /// A duplicate or stale close is rejected.
+    pub fn admit_close(&mut self, token: u64, label: &str) -> bool {
+        let Some(sequence) = &mut self.sequence else {
+            return false;
+        };
+        if sequence.token != token || sequence.current != label || sequence.admitted {
+            return false;
+        }
+        sequence.admitted = true;
+        true
+    }
+
+    /// Native destruction failed after admission. Stop the sequence so the
+    /// window can stay open and rewrite its live recovery.
+    pub fn close_failed(&mut self, token: u64, label: &str) -> bool {
+        let Some(sequence) = &self.sequence else {
+            return false;
+        };
+        if sequence.token != token || sequence.current != label {
+            return false;
+        }
+        self.sequence = None;
+        true
+    }
+
+    /// Called only after the window is actually destroyed. A missing current
+    /// window advances the sequence; a missing queued window is skipped. When
+    /// the last participant disappears, complete instead of producing a
+    /// commit with no window left to acknowledge it.
+    pub fn window_closed(&mut self, label: &str) -> QuitStep {
+        self.normal_close.remove(label);
+        let Some(mut sequence) = self.sequence.take() else {
+            return QuitStep::Ignored;
+        };
+        let token = sequence.token;
+        if sequence.current == label {
+            if let Some(next) = sequence.remaining.pop_front() {
+                sequence.current = next.clone();
+                sequence.admitted = false;
+                self.sequence = Some(sequence);
+                QuitStep::Next { token, label: next }
+            } else {
+                self.exiting = true;
+                QuitStep::Complete { token }
+            }
+        } else {
+            sequence.remaining.retain(|item| item != label);
+            self.sequence = Some(sequence);
+            QuitStep::Ignored
+        }
+    }
+
+    /// The target window declined or failed to close. Stop before touching any
+    /// further window; no approval is inferred from a token.
+    pub fn cancel_window(&mut self, token: u64, label: &str) -> bool {
+        let Some(sequence) = &self.sequence else {
+            return false;
+        };
+        if sequence.token != token || sequence.current != label || sequence.admitted {
+            return false;
+        }
+        self.sequence = None;
+        true
+    }
+
+    /// Timeout invalidates the token without approving or destroying anything.
+    /// Once close_window admitted the close, expiry is ignored: destruction is
+    /// already irreversible and the frontend must not be unlocked mid-close.
+    pub fn expire(&mut self, token: u64, label: &str) -> QuitStep {
+        let Some(sequence) = &self.sequence else {
+            return QuitStep::Ignored;
+        };
+        if sequence.token != token || sequence.current != label || sequence.admitted {
+            return QuitStep::Ignored;
+        }
+        self.sequence = None;
+        QuitStep::Cancel {
+            token,
+            label: label.into(),
+        }
+    }
+
+    pub fn normal_close_approved(&mut self, label: &str) {
+        self.normal_close.insert(label.into());
+    }
+
+    pub fn normal_close_cancelled(&mut self, label: &str) {
+        self.normal_close.remove(label);
+    }
+
+    /// Only our own completed sequence, an empty workspace, or a set of windows
+    /// that already completed the ordinary close review may leave the process.
+    /// A window still being created must never be lost to an exit.
+    pub fn allows_exit(&self, labels: &[String]) -> bool {
+        self.creating == 0
+            && (self.exiting
+                || (self.sequence.is_none()
+                    && (labels.is_empty()
+                        || labels.iter().all(|label| self.normal_close.contains(label)))))
+    }
+}
+
 impl Registry {
     pub fn owner(&self, id: &str) -> &str {
         self.owners.get(id).map(String::as_str).unwrap_or("main")
+    }
+    /// Reject a discard-recovery list unless every ID is currently owned by
+    /// this window. Callers hold the registry lock so ownership cannot change
+    /// between validation and admitting the close.
+    pub fn validate_owned(&self, window: &str, ids: &[String]) -> Result<(), String> {
+        for id in ids {
+            if self.transfers.contains_key(id) {
+                return Err("This document is moving to another window.".into());
+            }
+            self.id_for(window, Some(id), false)?;
+        }
+        Ok(())
+    }
+    /// Mark a window as closing so no document can start moving out after the
+    /// discard list was validated but before native destruction.
+    pub fn begin_close(&mut self, window: &str) -> Result<(), String> {
+        if self
+            .transfers
+            .values()
+            .any(|(source, destination, _)| source == window || destination == window)
+        {
+            return Err(
+                "Wait for the document to finish moving before closing this window.".into(),
+            );
+        }
+        self.closing.insert(window.into());
+        Ok(())
+    }
+    pub fn end_close(&mut self, window: &str) {
+        self.closing.remove(window);
     }
     pub fn id_for(&self, window: &str, id: Option<&str>, mutate: bool) -> Result<String, String> {
         let id = id
@@ -138,6 +379,9 @@ impl Registry {
         id: &str,
         token: &str,
     ) -> Result<(), String> {
+        if self.closing.contains(source) || self.closing.contains(destination) {
+            return Err("This window is closing.".into());
+        }
         self.id_for(source, Some(id), true)?;
         self.transfers
             .insert(id.into(), (source.into(), destination.into(), token.into()));
@@ -422,5 +666,255 @@ mod tests {
         assert!(registry.check_destination(&a, &path).is_ok());
         registry.close(&a).unwrap();
         assert_ne!(registry.open(&path).unwrap().0, a);
+    }
+    #[test]
+    fn discard_recovery_ids_must_belong_to_the_closing_window() {
+        let mut registry = Registry::default();
+        let main_doc = registry.new_document_for("main");
+        let other_doc = registry.new_document_for("workspace-a");
+        assert!(registry
+            .validate_owned("main", std::slice::from_ref(&main_doc))
+            .is_ok());
+        assert!(registry
+            .validate_owned("main", std::slice::from_ref(&other_doc))
+            .is_err());
+        assert!(registry
+            .validate_owned("main", &["missing-document".into()])
+            .is_err());
+        registry
+            .begin_transfer("main", "workspace-a", &main_doc, "token")
+            .unwrap();
+        assert!(registry
+            .validate_owned("main", std::slice::from_ref(&main_doc))
+            .is_err());
+    }
+    #[test]
+    fn closing_window_rejects_new_transfers() {
+        let mut registry = Registry::default();
+        let id = registry.new_document_for("main");
+        registry.begin_close("main").unwrap();
+        assert!(registry
+            .begin_transfer("main", "workspace-a", &id, "token")
+            .is_err());
+        registry.end_close("main");
+        assert!(registry
+            .begin_transfer("main", "workspace-a", &id, "token")
+            .is_ok());
+        // Destination is equally terminal: closing it would abandon a tab that
+        // is already in flight to it.
+        assert!(registry.begin_close("workspace-a").is_err());
+        assert!(registry.begin_close("main").is_err());
+        registry
+            .finish_transfer("workspace-a", &id, "token")
+            .unwrap();
+        assert!(registry.begin_close("workspace-a").is_ok());
+        let other = registry.new_document_for("main");
+        assert!(registry
+            .begin_transfer("main", "workspace-a", &other, "token-2")
+            .is_err());
+        registry.end_close("workspace-a");
+    }
+    fn quit_labels() -> Vec<String> {
+        vec!["main".into(), "workspace-a".into()]
+    }
+    #[test]
+    fn sequential_quit_advances_only_after_actual_destruction() {
+        let mut quit = QuitCoordinator::default();
+        let QuitStart::Review { token, label } = quit.begin(quit_labels()) else {
+            panic!("expected a review request");
+        };
+        assert_eq!(label, "main");
+        assert!(quit.is_active());
+        assert!(quit.is_current("main"));
+        assert_eq!(quit.begin(quit_labels()), QuitStart::Ignored);
+        assert_eq!(quit.window_closed("workspace-a"), QuitStep::Ignored);
+        assert!(quit.is_current("main"));
+        assert_eq!(quit.window_closed("main"), QuitStep::Complete { token });
+        assert!(!quit.is_active());
+        assert!(quit.allows_exit(&[]));
+    }
+    #[test]
+    fn sequential_quit_moves_to_the_next_window_after_destruction() {
+        let mut quit = QuitCoordinator::default();
+        let QuitStart::Review { token, label } = quit.begin(quit_labels()) else {
+            panic!("expected a review request");
+        };
+        assert_eq!(label, "main");
+        assert_eq!(
+            quit.window_closed("main"),
+            QuitStep::Next {
+                token,
+                label: "workspace-a".into(),
+            }
+        );
+        assert!(quit.is_current("workspace-a"));
+        assert_eq!(
+            quit.window_closed("workspace-a"),
+            QuitStep::Complete { token }
+        );
+    }
+    #[test]
+    fn quit_cancel_and_timeout_never_infer_approval() {
+        let mut quit = QuitCoordinator::default();
+        let QuitStart::Review { token, label: _ } = quit.begin(quit_labels()) else {
+            panic!("expected a review request");
+        };
+        assert!(!quit.cancel_window(token, "workspace-a"));
+        assert!(quit.cancel_window(token, "main"));
+        assert!(!quit.is_active());
+        assert_eq!(quit.window_closed("main"), QuitStep::Ignored);
+        assert!(!quit.allows_exit(&["main".into(), "workspace-a".into()]));
+
+        let QuitStart::Review { token, label } = quit.begin(quit_labels()) else {
+            panic!("expected a new review request");
+        };
+        assert_eq!(
+            quit.expire(token, "main"),
+            QuitStep::Cancel {
+                token,
+                label: label.clone(),
+            }
+        );
+        assert!(!quit.is_active());
+        assert_eq!(quit.expire(token, "main"), QuitStep::Ignored);
+        assert!(!quit.allows_exit(&["main".into(), "workspace-a".into()]));
+    }
+    #[test]
+    fn window_creation_and_quit_snapshot_are_mutually_exclusive() {
+        let mut quit = QuitCoordinator::default();
+        assert!(quit.begin_window_creation());
+        assert_eq!(quit.begin(quit_labels()), QuitStart::Busy);
+        assert!(
+            !quit.allows_exit(&[]),
+            "a pending window creation must block last-window exit"
+        );
+        quit.finish_window_creation();
+        let QuitStart::Review { token, label } = quit.begin(quit_labels()) else {
+            panic!("expected a review request");
+        };
+        assert!(
+            !quit.begin_window_creation(),
+            "new windows are blocked while quitting"
+        );
+        quit.cancel_window(token, &label);
+        assert!(quit.begin_window_creation());
+        quit.finish_window_creation();
+    }
+    #[test]
+    fn no_window_and_completed_quit_are_terminal_for_new_creation() {
+        let mut quit = QuitCoordinator::default();
+        assert_eq!(quit.begin(Vec::new()), QuitStart::NoWindows);
+        assert!(quit.allows_exit(&[]));
+        assert!(
+            !quit.begin_window_creation(),
+            "NoWindows is terminal; a new window must not race app.exit"
+        );
+        assert_eq!(quit.begin(quit_labels()), QuitStart::Ignored);
+
+        let mut completed = QuitCoordinator::default();
+        let QuitStart::Review { token, label } = completed.begin(vec!["main".into()]) else {
+            panic!("expected a review request");
+        };
+        assert!(completed.admit_close(token, &label));
+        assert_eq!(
+            completed.window_closed(&label),
+            QuitStep::Complete { token }
+        );
+        assert!(completed.allows_exit(&[]));
+        assert!(!completed.begin_window_creation());
+    }
+    #[test]
+    fn admitted_close_cannot_be_revoked_by_timeout_or_cancel() {
+        let mut quit = QuitCoordinator::default();
+        let QuitStart::Review { token, label } = quit.begin(quit_labels()) else {
+            panic!("expected a review request");
+        };
+        assert!(quit.admit_close(token, &label));
+        assert!(
+            !quit.admit_close(token, &label),
+            "duplicate close is rejected"
+        );
+        assert_eq!(
+            quit.expire(token, &label),
+            QuitStep::Ignored,
+            "expiry must not revoke admitted destruction"
+        );
+        assert!(!quit.cancel_window(token, &label));
+        assert_eq!(
+            quit.window_closed(&label),
+            QuitStep::Next {
+                token,
+                label: "workspace-a".into(),
+            }
+        );
+    }
+    #[test]
+    fn advancing_to_the_next_window_resets_admission() {
+        let mut quit = QuitCoordinator::default();
+        let QuitStart::Review { token, label } = quit.begin(quit_labels()) else {
+            panic!("expected a review request");
+        };
+        assert!(quit.admit_close(token, &label));
+        assert_eq!(
+            quit.window_closed(&label),
+            QuitStep::Next {
+                token,
+                label: "workspace-a".into(),
+            }
+        );
+        assert!(
+            quit.admit_close(token, "workspace-a"),
+            "the next window must be independently admissible"
+        );
+        assert_eq!(
+            quit.expire(token, "workspace-a"),
+            QuitStep::Ignored,
+            "its own admitted close is still not revocable by timeout"
+        );
+        assert_eq!(
+            quit.window_closed("workspace-a"),
+            QuitStep::Complete { token }
+        );
+
+        let mut retry = QuitCoordinator::default();
+        let QuitStart::Review { token, label } = retry.begin(quit_labels()) else {
+            panic!("expected a new review request");
+        };
+        assert!(retry.admit_close(token, &label));
+        assert!(matches!(retry.window_closed(&label), QuitStep::Next { .. }));
+        assert!(
+            retry.cancel_window(token, "workspace-a"),
+            "cancel works for the non-admitted next window"
+        );
+        assert!(!retry.is_active());
+    }
+    #[test]
+    fn failed_admitted_close_stops_the_sequence() {
+        let mut quit = QuitCoordinator::default();
+        let QuitStart::Review { token, label } = quit.begin(quit_labels()) else {
+            panic!("expected a review request");
+        };
+        assert!(quit.admit_close(token, &label));
+        assert!(quit.close_failed(token, &label));
+        assert!(!quit.is_active());
+        assert_eq!(
+            quit.window_closed(&label),
+            QuitStep::Ignored,
+            "a failed close must not advance after rollback"
+        );
+    }
+    #[test]
+    fn normal_window_close_is_distinguished_from_an_unreviewed_app_exit() {
+        let mut quit = QuitCoordinator::default();
+        quit.normal_close_approved("main");
+        assert!(!quit.allows_exit(&["main".into(), "workspace-a".into()]));
+        quit.normal_close_approved("workspace-a");
+        assert!(quit.allows_exit(&["main".into(), "workspace-a".into()]));
+        assert!(quit.allows_exit(&[]));
+        quit.normal_close_cancelled("workspace-a");
+        assert!(!quit.allows_exit(&["main".into(), "workspace-a".into()]));
+        let mut empty = QuitCoordinator::default();
+        assert_eq!(empty.begin(Vec::new()), QuitStart::NoWindows);
+        assert!(empty.allows_exit(&[]));
     }
 }

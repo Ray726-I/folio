@@ -1376,6 +1376,43 @@ mod tests {
         assert_eq!(unchecked, original.replace("- [x] Tables", "- [ ] Tables"));
     }
 
+    /// Escape a filesystem path for an angle-bracketed CommonMark link
+    /// destination. On Windows the path contains backslashes, and CommonMark
+    /// consumes a backslash before ASCII punctuation. The `\.tmp` segment that
+    /// `tempfile` creates would otherwise become `.tmp` after parsing, so the
+    /// image would name a path that does not exist. Escaping backslashes (and
+    /// the angle-bracket delimiters) round-trips the exact path.
+    fn markdown_image_destination(path: &Path) -> String {
+        let path = path.to_string_lossy();
+        let mut escaped = String::with_capacity(path.len());
+        for character in path.chars() {
+            if matches!(character, '\\' | '<' | '>') {
+                escaped.push('\\');
+            }
+            escaped.push(character);
+        }
+        escaped
+    }
+
+    #[test]
+    fn markdown_image_fixture_preserves_windows_style_absolute_paths() {
+        // This literal path is parsed the same way on every host: the parser
+        // does not know about the host filesystem. It reproduces the Windows
+        // temp-path shape, including the `tempfile` `.tmp` prefix.
+        let path = Path::new(r"C:\Users\runneradmin\AppData\Local\Temp\.tmpAbC123\notes\image.png");
+        let destination = markdown_image_destination(path);
+        let source = format!("![image](<{destination}>)");
+        let arena = Arena::new();
+        let root = parse_document(&arena, &source, &markdown_options());
+        let parsed = root
+            .descendants()
+            .find_map(|node| match &node.data().value {
+                NodeValue::Image(link) => Some(link.url.clone()),
+                _ => None,
+            });
+        assert_eq!(parsed.as_deref(), path.to_str());
+    }
+
     #[test]
     fn local_images_cannot_escape_document_directory() {
         let directory = tempfile::tempdir().unwrap();
@@ -1391,8 +1428,9 @@ mod tests {
         assert!(local_image(&absolute, Some(&base), false)
             .unwrap()
             .starts_with("data:image/png;base64,"));
+        let destination = markdown_image_destination(&absolute_image);
         let (rendered, _) =
-            render_with_blocks(&format!("![image](<{absolute}>)"), Some(&base), false);
+            render_with_blocks(&format!("![image](<{destination}>)"), Some(&base), false);
         assert!(rendered.contains("data:image/png;base64,"), "{rendered}");
         assert!(local_image(
             &directory.path().join("secret.png").to_string_lossy(),

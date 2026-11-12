@@ -3120,6 +3120,46 @@ export function createRichEditor(parent, options) {
   dropLine.hidden = true;
   dropLine.setAttribute('aria-hidden', 'true');
   document.body.append(dropLine);
+  // Chrome lives in a fixed viewport layer outside the reader's scroll DOM.
+  // A wheel gesture over a handle therefore has no scroll chain to the reader
+  // (and can never reach a horizontally scrolled table wrapper): the moment a
+  // handle lands under a stationary cursor, scrolling appears to stop. Forward
+  // the gesture explicitly: vertical motion scrolls the reading pane, while
+  // horizontal motion pans the hovered table. Menus keep their own scrolling.
+  let handleDrag = null;
+  function wheelScrollPixels(event, vertical, scroller) {
+    const raw = vertical ? event.deltaY : event.deltaX;
+    if (event.deltaMode === 1) return raw * 16;
+    if (event.deltaMode === 2) return raw * (vertical ? scroller.clientHeight : scroller.clientWidth);
+    return raw;
+  }
+  function forwardTableChromeWheel(event) {
+    if (handleDrag || event.ctrlKey || event.metaKey) return;
+    const reader = view?.dom.closest('.reader-scroll');
+    if (!reader) return;
+    const vertical = wheelScrollPixels(event, true, reader);
+    const horizontal = wheelScrollPixels(event, false, reader);
+    if (!vertical && !horizontal) return;
+    const wrapper = actionInfo()?.wrapper;
+    let handled = false;
+    if (horizontal && wrapper?.isConnected && wrapper.scrollWidth > wrapper.clientWidth) {
+      const before = wrapper.scrollLeft;
+      wrapper.scrollLeft = before + horizontal;
+      handled = wrapper.scrollLeft !== before;
+    }
+    if (vertical) {
+      const before = reader.scrollTop;
+      reader.scrollTop = before + vertical;
+      handled = handled || reader.scrollTop !== before;
+    } else if (horizontal && !handled && reader.scrollWidth > reader.clientWidth) {
+      reader.scrollLeft += horizontal;
+      handled = true;
+    }
+    if (handled) event.preventDefault();
+  }
+  for (const control of [handlesLayer, addRowBtn, addColBtn]) {
+    control.addEventListener('wheel', forwardTableChromeWheel, { passive: false });
+  }
   // Hover anchor: the table (and row/column/edge zone) under the pointer.
   // Hovering positions chrome but never dispatches — no selection change, no
   // source mutation — so merely pointing at a table is always free. Actions
@@ -3432,7 +3472,6 @@ export function createRichEditor(parent, options) {
       refocusHandle(kind, Math.max(0, Math.min(info.width - 1, index + step)));
     }
   }
-  let handleDrag = null;
   function createDragPreview(drag) {
     const { info, kind, from } = drag;
     const cells = [];

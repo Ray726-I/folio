@@ -94,14 +94,12 @@ pub fn rename(document: &OpenDocument, name: &str) -> Result<OpenDocument, Strin
         .parent()
         .ok_or("Invalid document path")?
         .join(name);
-    // A hard link creates the destination exclusively on all desktop platforms;
-    // unlike rename(), it cannot silently replace an existing document.
-    fs::hard_link(&document.path, &destination)
+    // A no-replace rename creates the destination exclusively, preserves the
+    // document's bytes and identity, and works on FAT/exFAT where hard links
+    // are unavailable. If the filesystem cannot perform an exclusive rename,
+    // the move fails closed instead of risking a non-atomic hard-link fallback.
+    crate::native_move::no_replace(&document.path, &destination)
         .map_err(|error| format!("Could not rename document: {error}"))?;
-    if let Err(error) = fs::remove_file(&document.path) {
-        let _ = fs::remove_file(&destination);
-        return Err(format!("Could not rename document: {error}"));
-    }
     let mut renamed = document.clone();
     renamed.path = destination;
     Ok(renamed)
@@ -473,6 +471,24 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&renamed.path).unwrap(),
             "\u{feff}# Edited\r\n"
+        );
+    }
+
+    #[test]
+    fn rename_moves_the_document_smoke() {
+        // Smoke test for the normal path. On a normal filesystem this does not
+        // prove hard-link independence; that requires separate linkat(2) fault
+        // injection.
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("note.md");
+        fs::write(&path, "Portable\n").unwrap();
+        let (document, _) = load(&path).unwrap();
+        let renamed = rename(&document, "renamed.md").unwrap();
+        assert!(!path.exists());
+        assert_eq!(
+            fs::read_to_string(&renamed.path).unwrap(),
+            "Portable\n",
+            "the rename must preserve the original bytes"
         );
     }
 

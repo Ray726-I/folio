@@ -1,44 +1,39 @@
 const assert = require('node:assert/strict');
 const { openEditor } = require('./editor-browser.cjs');
 
-// A checked task line reads brighter than an open one, so progress through a
-// list is legible at a glance. The checkbox keeps its own checked/unchecked
-// states; only the line's text colour changes.
-const source = `# Tasks
-
-- [x] Source file
-- [ ] Renderer comparison
+const source = `- [x] Done **bold**
+  - [ ] Child open
+- [ ] Open task
 `;
-
-const alphaOf = color => {
-  const rgba = /rgba?\(\s*[\d.]+\s*[, ]\s*[\d.]+\s*[, ]\s*[\d.]+\s*(?:[,/]\s*([\d.]+))?\s*\)/.exec(color);
-  if (rgba) return rgba[1] === undefined ? 1 : Number(rgba[1]);
-  const slash = /\/\s*([\d.]+)\s*\)/.exec(color);
-  return slash ? Number(slash[1]) : 1;
-};
 
 (async () => {
   for (const reading of [false, true]) {
     const session = await openEditor(source, undefined, { reading });
-    const { page } = session;
     try {
-      await page.waitForFunction(() => document.querySelectorAll('#preview li input[type="checkbox"]').length === 2);
-      await page.evaluate(() => document.fonts.ready);
-      await page.waitForTimeout(200);
-      const rows = await page.evaluate(() => [...document.querySelectorAll('#preview li')]
-        .filter(li => li.querySelector('input[type="checkbox"]'))
-        .map(li => ({ checked: li.querySelector('input').checked, color: getComputedStyle(li).color })));
-      const mode = reading ? 'reading' : 'edit';
-
-      assert.equal(rows.length, 2, `${mode}: both task rows render`);
-      const checked = rows.find(row => row.checked);
-      const open = rows.find(row => !row.checked);
-      assert.ok(checked && open, `${mode}: one checked and one open task`);
-      assert.notEqual(checked.color, open.color, `${mode}: checked and open lines must not share one colour`);
-      assert.equal(alphaOf(checked.color), 1, `${mode}: a checked line is fully opaque, got ${checked.color}`);
-      assert.ok(alphaOf(open.color) < 0.9, `${mode}: an open line is dimmed, got ${open.color}`);
+      for (const theme of ['graphite', 'solarized']) {
+        await session.page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+        const rows = await session.page.evaluate(() => [...document.querySelectorAll('#preview li.task-item')].map(li => {
+          const text = li.querySelector(':scope > .list-content > p');
+          const style = getComputedStyle(text);
+          return { color: style.color, decoration: style.textDecorationLine, checked: li.querySelector(':scope > input').checked };
+        }));
+        const label = `${reading ? 'reading' : 'edit'} ${theme}`;
+        assert.equal(rows.length, 3, label);
+        assert.deepEqual(rows.map(row => row.checked), [true, false, false], label);
+        assert.notEqual(rows[0].color, rows[2].color, `${label}: completed text is muted`);
+        assert.equal(rows[1].color, rows[2].color, `${label}: nested open text stays normal`);
+        assert.match(rows[0].decoration, /line-through/, `${label}: completed text is struck through`);
+        assert.equal(rows[1].decoration, 'none', `${label}: nested open text is not struck through`);
+        assert.equal(rows[2].decoration, 'none', `${label}: open text is not struck through`);
+      }
+      if (!reading) {
+        await session.page.locator('#preview li.task-item > input').nth(2).click({ force: true });
+        await session.page.waitForFunction(() => document.querySelectorAll('#preview li.task-item > input')[2].checked);
+        const decoration = await session.page.locator('#preview li.task-item > .list-content > p').nth(2).evaluate(el => getComputedStyle(el).textDecorationLine);
+        assert.match(decoration, /line-through/, 'toggling a task updates its styling');
+      }
       assert.deepEqual(session.errors, []);
     } finally { await session.close(); }
   }
-  console.log('PASS: checked task lines are brighter than open ones in both edit and reading modes.');
+  console.log('PASS: task completion styling in edit and reading modes.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

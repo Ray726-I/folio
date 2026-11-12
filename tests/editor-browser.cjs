@@ -115,6 +115,7 @@ async function openEditor(source, viewport = { width: 1180, height: 900 }, optio
     window.__TAURI__ = { core: { invoke: async (command, args = {}) => {
       window.calls.push({ command, args });
       if (command === 'bootstrap') return { paths: ['/tmp/test.md'], platform: 'linux', theme: null };
+      if (command === 'sync_native_menu') return true;
       if (command === 'open_document') {
         const gate = window.openGates.get(args.path);
         if (gate) {

@@ -2,7 +2,7 @@
 // Canonical buffer snapshots are copied when queued, never read from a later active tab.
 class RecoveryWriter {
   constructor(invoke, warning, timers = globalThis) { this.invoke = invoke; this.warning = warning; this.timers = timers; this.states = new Map(); }
-  state(id) { if (!this.states.has(id)) this.states.set(id, { pending: null, running: null, quiet: null, maximum: null, retired: false }); return this.states.get(id); }
+  state(id) { if (!this.states.has(id)) this.states.set(id, { pending: null, running: null, quiet: null, maximum: null, retired: false, error: null }); return this.states.get(id); }
   clear(state) { this.timers.clearTimeout(state.quiet); this.timers.clearTimeout(state.maximum); state.quiet = state.maximum = null; }
   changed(doc) {
     if (!doc.documentId) return;
@@ -12,15 +12,16 @@ class RecoveryWriter {
     state.quiet = this.timers.setTimeout(() => this.flush(doc), 1000);
     if (!state.maximum) state.maximum = this.timers.setTimeout(() => this.flush(doc), 5000);
   }
-  async flush(doc) {
+  async flush(doc, strict = false) {
     if (!doc.documentId) return;
     const state = this.state(doc.documentId); this.clear(state);
-    if (state.running) { await state.running; if (state.pending && !state.retired) return this.flush(doc); return; }
-    if (!state.pending || state.retired) return;
+    if (state.running) { await state.running; if (strict && state.error) throw state.error; if (state.pending && !state.retired) return this.flush(doc, strict); return; }
+    if (!state.pending || state.retired) { if (strict && state.error) throw state.error; return; }
     const snapshot = state.pending; state.pending = null;
-    state.running = Promise.resolve().then(() => this.invoke('recovery_write', snapshot)).catch(error => { this.warning(String(error?.message || error)); }).finally(() => { state.running = null; });
+    state.running = Promise.resolve().then(() => this.invoke('recovery_write', snapshot)).then(result => { state.error = null; return result; }).catch(error => { state.error = error; this.warning(String(error?.message || error)); if (strict) throw error; }).finally(() => { state.running = null; });
     await state.running;
-    if (state.pending && !state.retired) return this.flush(doc);
+    if (strict && state.error) throw state.error;
+    if (state.pending && !state.retired) return this.flush(doc, strict);
   }
   async saved(doc, revision) {
     await this.flush(doc);

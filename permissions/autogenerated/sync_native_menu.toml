@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sync-native-menu"
+description = "Enables the sync_native_menu command without any pre-configured scope."
+commands.allow = ["sync_native_menu"]
+
+[[permission]]
+identifier = "deny-sync-native-menu"
+description = "Denies the sync_native_menu command without any pre-configured scope."
+commands.deny = ["sync_native_menu"]

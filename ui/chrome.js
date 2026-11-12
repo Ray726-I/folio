@@ -93,6 +93,7 @@ function syncDocumentMode() {
     if (action === 'back') button.disabled = documentNavigationIndex <= 0;
     if (action === 'forward') button.disabled = documentNavigationIndex >= documentNavigation.length - 1;
   });
+  if (typeof scheduleNativeMenuSync === 'function') scheduleNativeMenuSync();
 }
 // The caret menu owns Source; the primary control stays a Read/Edit toggle so
 // writing mode and reading mode are one click apart.
@@ -177,6 +178,7 @@ function renderRecentMenu() {
     button.onclick = () => { closeAllMenus(); requestOpen(path); }; menu.append(button);
   }
   if (!menu.children.length) { const text = document.createElement('p'); text.className = 'menu-description'; text.textContent = 'No recent files'; menu.append(text); }
+  if (typeof scheduleNativeMenuSync === 'function') scheduleNativeMenuSync();
 }
 let recentMenuCloseTimer;
 function closeRecentMenu() {
@@ -375,13 +377,21 @@ function showHelp(shortcuts = false) {
   $('help-dialog').classList.toggle('shortcuts', shortcuts);
   const content = $('help-content'); content.replaceChildren();
   if (shortcuts) {
+    const mac = ['macos', 'darwin'].includes(String(nativePlatform || '').toLowerCase());
+    const nativeMacMenu = mac && $('app-menubar').hidden;
     let table;
-    for (const [label, key] of [['Open file', 'Ctrl+O'], ['Open folder', 'Ctrl+Shift+O'], ['Quick open folder file', 'Ctrl+P'], ['New document', 'Ctrl+N / Ctrl+T'], ['Reopen closed tab', 'Ctrl+Shift+T'], ['Save / Save as', 'Ctrl+S / Ctrl+Shift+S'], ['Undo / Redo', 'Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y'], ['Cut / Copy / Paste', 'Ctrl+X / Ctrl+C / Ctrl+V'], ['Select all', 'Ctrl+A'], ['Find / replace', 'Ctrl+F / Ctrl+H'], ['Search folder contents', 'Ctrl+Shift+F'], ['File explorer', 'Ctrl+B'], ['Bold / italic in Edit mode', 'Ctrl+B / Ctrl+I (in document)'], ['Read / Edit / Source', 'Ctrl+1 / Ctrl+2 / Ctrl+3'], ['Next / previous tab', 'Ctrl+Tab / Ctrl+Shift+Tab'], ['Toggle reading companion', 'Ctrl+\\'], ['Switch reading panes', 'F6'], ['Table navigation / next row', 'Tab / Shift+Tab / Enter'], ['Command window', 'Ctrl+Shift+P'], ['All documents (search open tabs)', 'Ctrl+Shift+A'], ['Fullscreen', 'F11'], ['Zoom in / out / reset', 'Ctrl++ / Ctrl+- / Ctrl+0'], ['Document text size', 'Ctrl+Shift++ / Ctrl+Shift+- / Ctrl+Shift+0'], ['Close file / Quit', 'Ctrl+W / Ctrl+Q']]) {
+    for (const [label, key] of [['Open file', 'Ctrl+O'], ['Open folder', 'Ctrl+Shift+O'], ['Quick open folder file', 'Ctrl+P'], ['New document', 'Ctrl+N / Ctrl+T'], ['Reopen closed tab', 'Ctrl+Shift+T'], ['Save / Save as', 'Ctrl+S / Ctrl+Shift+S'], ['Undo / Redo', 'Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y'], ['Cut / Copy / Paste', 'Ctrl+X / Ctrl+C / Ctrl+V'], ['Select all', 'Ctrl+A'], ['Find / replace', mac ? 'Ctrl+F / Edit menu for replace' : 'Ctrl+F / Ctrl+H'], ['Search folder contents', 'Ctrl+Shift+F'], ['File explorer', 'Ctrl+B'], ['Bold / italic in Edit mode', 'Ctrl+B / Ctrl+I (in document)'], ['Read / Edit / Source', 'Ctrl+1 / Ctrl+2 / Ctrl+3'], ['Next / previous tab', mac ? 'Control+Tab / Control+Shift+Tab' : 'Ctrl+Tab / Ctrl+Shift+Tab'], ['Toggle reading companion', 'Ctrl+\\'], ['Switch reading panes', 'F6'], ['Table navigation / next row', 'Tab / Shift+Tab / Enter'], ['Command window', 'Ctrl+Shift+P'], ['All documents (search open tabs)', 'Ctrl+Shift+A'], ['Fullscreen', 'F11'], ['Zoom in / out / reset', 'Ctrl++ / Ctrl+- / Ctrl+0'], ['Document text size', 'Ctrl+Shift++ / Ctrl+Shift+- / Ctrl+Shift+0'], ['Close file / Quit', mac ? (nativeMacMenu ? 'File menu / Command+Q' : 'File menu (Close file / Quit)') : 'Ctrl+W / Ctrl+Q']]) {
       const group = label === 'Open file' ? 'Files' : label === 'Undo / Redo' ? 'Editing' : label === 'File explorer' ? 'Navigation and view' : null;
       if(group){const heading=document.createElement('h3');heading.textContent=group;table=document.createElement('table');content.append(heading,table);}
       const row = table.insertRow(); row.insertCell().textContent = label; row.insertCell().textContent = key;
     }
-    const note = document.createElement('p'); note.textContent = 'On macOS, use Command in place of Ctrl. Escape exits focus mode.'; content.append(note);
+    const note = document.createElement('p');
+    note.textContent = mac
+      ? (nativeMacMenu
+        ? 'On macOS, use Command in place of Ctrl for most shortcuts. Tab switching uses Control+Tab / Control+Shift+Tab because Command+Tab switches apps. Command+H is macOS Hide, Command+W closes the window, and Command+Q quits the app. Find more actions in the Edit and File menus. Escape exits focus mode.'
+        : 'On macOS, use Command in place of Ctrl for most shortcuts. Tab switching uses Control+Tab / Control+Shift+Tab because Command+Tab switches apps. Command+H is macOS Hide, Command+W closes the window, and Command+Q quits the app. Use the in-window Edit and File menus for Find and replace, Close file and Quit. Escape exits focus mode.')
+      : 'On macOS, use Command in place of Ctrl. Escape exits focus mode.';
+    content.append(note);
   } else { const p = document.createElement('p'); p.textContent = 'Folio 0.1.0 · A quiet place for Markdown. Read, edit and keep your files on your own disk. Built with Rust and Tauri. MIT licensed.'; content.append(p); }
   $('help-dialog').showModal(); $('help-close').focus();
 }
@@ -440,7 +450,7 @@ function runAppAction(action) {
   if (focusedPane === 'companion') { if (action === 'find') return openCompanionFind(); if (action === 'close') return closeReadingCompanion(); if (['undo','redo','cut','paste','replace','rename','duplicate'].includes(action)) return; }
   const actions = {
     open: openEntry, folder: openFolderEntry, new: () => newDocument(), home: goHome,
-    'new-window': () => invoke('new_window'), 'move-window': () => enqueue(moveDocumentToNewWindow), companion: () => showReadingCompanion(), recovery: reviewRecovery, commands: openCommands, save: () => requestSave(), 'save-as': () => requestSave(true), close: closeDocument, quit: requestClose,
+    'new-window': () => invoke('new_window'), 'move-window': () => enqueue(moveDocumentToNewWindow), companion: () => showReadingCompanion(), recovery: reviewRecovery, commands: openCommands, save: () => requestSave(), 'save-as': () => requestSave(true), close: closeDocument, quit: requestQuit,
     undo: () => { undoRedo(); syncDocumentMode(); }, redo: () => { undoRedo(true); syncDocumentMode(); },
     cut: () => editClipboard('cut'), copy: () => editClipboard('copy'), paste: () => editClipboard('paste'), 'select-all': () => editClipboard('select-all'),
     find: openFind, 'folder-search': openFolderSearch, replace: openReplace, files: () => toggleDock('files'), outline: () => toggleDock('outline'),

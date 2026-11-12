@@ -117,6 +117,7 @@ function scheduleAutomaticSave(doc) {
 async function moveDocumentToNewWindow(doc = focusedDocument()) {
   if (!doc.documentId || transitionLocked) return false;
   if (doc === current) rememberDocument();
+  const wasLocked = transitionLocked;
   try {
     doc.transferring = true; setTransitionLocked(true); clearTimeout(autoSaveTimers.get(doc.documentId)); autoSaveTimers.delete(doc.documentId);
     await documentSaves.get(doc.documentId); await recoveryWriter.flush(doc);
@@ -139,10 +140,11 @@ async function moveDocumentToNewWindow(doc = focusedDocument()) {
       }
     }
     renderTabs(); persistWorkspace(); return true;
-  } finally { doc.transferring = false; setTransitionLocked(false); if (documents.has(doc.documentId)) scheduleAutomaticSave(doc); }
+  } finally { doc.transferring = false; setTransitionLocked(wasLocked); if (documents.has(doc.documentId)) scheduleAutomaticSave(doc); }
 }
 async function mountTransferredDocument({ token, document: captured }) {
   if (!captured || typeof captured !== 'object' || typeof captured.content !== 'string') throw new Error('The transferred document could not be opened.');
+  const wasLocked = transitionLocked;
   setTransitionLocked(true);
   outlineFollowSuspended = true;
   try {
@@ -157,7 +159,7 @@ async function mountTransferredDocument({ token, document: captured }) {
     if (findOpen) { updateFind(); findIndex = Number.isInteger(current.view?.findIndex) ? current.view.findIndex : -1; }
     syncDocumentChrome(); syncFindMachine(); syncCompanionMachine(); if (typeof syncFindControl === 'function') syncFindControl();
     await invoke('finish_window_transfer', { token, documentId: current.documentId });
-  } finally { setTransitionLocked(false); outlineFollowSuspended = false; updateActiveOutline({ instant: true }); }
+  } finally { setTransitionLocked(wasLocked); outlineFollowSuspended = false; updateActiveOutline({ instant: true }); }
   if (!document.activeElement || document.activeElement === document.body) $('reader-scroll').focus({ preventScroll: true });
   scheduleAutomaticSave(current);
 }

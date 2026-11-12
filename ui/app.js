@@ -453,12 +453,13 @@ window.matchMedia('(max-width:640px)').addEventListener('change', event => {
   renderNavigationDock();
 });
 let confirmQueue = Promise.resolve();
-function ask(title, message, choices) {
+function ask(title, message, choices, registerCancel = null) {
   const show = () => new Promise(resolve => {
     const dialog = $('confirm-dialog'); $('confirm-title').textContent = title; $('confirm-message').textContent = message; $('confirm-actions').replaceChildren();
-    const finish = value => { dialog.close(); dialog.removeEventListener('cancel', cancel); resolve(value); };
+    const finish = value => { dialog.close(); dialog.removeEventListener('cancel', cancel); if (registerCancel) registerCancel(null); resolve(value); };
     const cancel = event => { event.preventDefault(); finish('cancel'); };
     dialog.addEventListener('cancel', cancel);
+    if (registerCancel) registerCancel(() => finish('cancel'));
     for (const choice of choices) {
       const button = document.createElement('button'); button.className = `button ${choice.style || ''}`; button.textContent = choice.label; button.onclick = () => finish(choice.value); $('confirm-actions').append(button);
     }
@@ -481,7 +482,11 @@ async function allowDiscard() {
   return result === 'discard';
 }
 function enqueue(action) {
+  // A quit-owned or close-owned window must not run any other
+  // lifecycle/autosave-adjacent action that could replace or unlock it.
+  if (quitCloseState || windowCloseOwned) return Promise.resolve(false);
   queue = queue.then(async () => {
+    if (quitCloseState || windowCloseOwned) return false;
     busy = true; $('open-file').disabled = true; $('save').disabled = true;
     try { return await action(); } catch (error) { status(''); toast(error); return false; }
     finally { busy = false; $('open-file').disabled = false; $('save').disabled = false; }
@@ -824,6 +829,7 @@ function newDocument(sample = false) {
     // Same protection as Home: the backend document is replaced before the
     // native reset resolves, so reject edits to the outgoing document now and
     // release the temporary guard after the new editor is in place or fails.
+    const wasLocked = transitionLocked;
     try {
       rememberDocument();
       setTransitionLocked(true);
@@ -836,7 +842,9 @@ function newDocument(sample = false) {
       setLineEnding(null);
       showDocument(); focusPane('main'); $('reader-scroll').scrollTop = 0; await refreshEditorSurface(); scheduleCompanionRender(0); if (!sample) editor?.focus();
     } finally {
-      setTransitionLocked(false);
+      // Restore the outer lock instead of unconditionally releasing a quit
+      // sequence (or another nested transition) that owns this window.
+      setTransitionLocked(wasLocked);
     }
   });
 }
@@ -864,7 +872,7 @@ function allCommands() {
     { label: 'Reopen closed tab', icon: 'refresh', action: () => enqueue(reopenDocument) },
     { label: 'Welcome screen', icon: 'home', action: goHome },
     { label: 'All documents…', icon: 'tab-search', shortcut: 'Ctrl+Shift+A', detail: 'Search open tabs', scope: 'documents' },
-    { label: 'Quit', icon: 'close', shortcut: 'Ctrl+Q', action: requestClose }
+    { label: 'Quit', icon: 'close', shortcut: 'Ctrl+Q', action: requestQuit }
   ];
   if (current.active) {
     commands.push(
@@ -1605,14 +1613,41 @@ document.addEventListener('keydown', event => {
   else if (key === 'f') { event.preventDefault(); event.shiftKey ? openFolderSearch() : openFind(); }
   else if (key === 'h') { event.preventDefault(); openReplace(); }
   else if (key === 'w') { event.preventDefault(); closeDocument(); }
-  else if (key === 'q') { event.preventDefault(); requestClose(); }
+  else if (key === 'q') { event.preventDefault(); requestQuit(); }
 });
-async function requestClose() { return enqueue(async () => {
-  const protectWorkspace = documents.size > 0;
-  try { if (protectWorkspace) setTransitionLocked(true); if (protectWorkspace ? await reviewWindowClose() : await allowDiscard()) await invoke('close_window'); }
-  catch (error) { for (const doc of documents.values()) if (doc.content !== doc.saved) { doc.revision = (doc.revision || 0) + 1; recoveryWriter.changed(doc); await recoveryWriter.flush(doc); } throw error; }
-  finally { if (protectWorkspace) setTransitionLocked(false); }
-}); }
+let quitRequestInFlight = false;
+// Ask the backend to run its sequential per-window close/quit sequence. This
+// must not close the focused window or bypass the remaining workspaces.
+async function requestQuit() {
+  if (quitRequestInFlight) return false;
+  quitRequestInFlight = true;
+  try { await invoke('request_quit'); return true; }
+  catch (error) { toast(error); return false; }
+  finally { quitRequestInFlight = false; }
+}
+async function requestClose(event) {
+  const token = event?.payload?.quitToken;
+  if (Number.isFinite(token)) return closeForQuit(token);
+  return enqueue(async () => {
+    // A queued close must re-check at execution time: a transfer/open/new
+    // transition may have acquired the window after this close was queued.
+    if (transitionLocked) return false;
+    const protectWorkspace = documents.size > 0;
+    let accepted = false;
+    try {
+      if (protectWorkspace) setTransitionLocked(true);
+      const review = protectWorkspace ? await reviewWindowClose() : { approved: await allowDiscard(), discards: [] };
+      if (!review.approved) { await ensureDirtyRecovery(); return false; }
+      // Recovery is retired by the backend only after native Destroyed.
+      await invoke('close_window', review.discards.length ? { discardRecovery: review.discards } : {});
+      accepted = true;
+      windowCloseOwned = true;
+      return true;
+    }
+    catch (error) { await ensureDirtyRecovery(); throw error; }
+    finally { if (protectWorkspace && !accepted) setTransitionLocked(false); }
+  });
+}
 
 const SAMPLE = `# A quiet place for your words
 
@@ -1675,10 +1710,12 @@ async function start() {
   if (!window.__TAURI__) { toast('Open Folio from your app menu to enable file access.'); return; }
   await Promise.all([
     listen('request-close', requestClose),
+    listen('quit-sequence-cancelled', event => cancelQuitClose(event.payload?.quitToken)),
     listen('open-files', event => { for (const path of Array.isArray(event.payload) ? event.payload : []) if (typeof path === 'string' && path) requestOpenLocation(path); }),
     listen('system-theme', event => { omarchy = event.payload; if (selectedTheme === 'omarchy') applyTheme('omarchy', false); else if ($('command-dialog').open) renderCommands(); })
   ]);
   const state = (await invoke('bootstrap')) || {}; setPlatform(state.platform); nativePlatform = state.platform; omarchy = state.theme;
+  await initializeNativeMenu();
   if (preferences.get('theme', null) === null && omarchy?.colors) selectedTheme = 'omarchy';
   applyTheme(selectedTheme, false);
   syncDockForViewport();

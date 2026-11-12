@@ -279,27 +279,127 @@ async function reopenDocument() {
     throw error;
   }
 }
-async function reviewWindowClose() {
+async function reviewWindowClose(registerCancel = null, isCancelled = () => false) {
   rememberDocument(); await Promise.allSettled([...documentSaves.values()]); const edited = [...documents.values()].filter(d => d.content !== d.saved);
   if (current.active && !documents.has(current.documentId) && current.content !== current.saved) edited.push(current);
-  if (!edited.length) return true;
+  if (!edited.length) return { approved: !isCancelled(), discards: [] };
   const names = edited.map(doc => doc.name);
   const many = names.length > 1;
   const listed = names.slice(0, 3).join(', ') + (names.length > 3 ? ` and ${names.length - 3} more` : '');
   const choice = await ask('Save changes before closing?',
     many ? `${names.length} documents have unsaved changes: ${listed}.` : `“${names[0]}” has changes that haven't been saved.`,
-    [{ label: 'Cancel', value: 'cancel' }, { label: many ? 'Discard all' : 'Discard', value: 'discard', style: 'destructive' }, { label: many ? 'Save all' : 'Save', value: 'save', style: 'suggested' }]);
-  if (choice === 'cancel') return false;
+    [{ label: 'Cancel', value: 'cancel' }, { label: many ? 'Discard all' : 'Discard', value: 'discard', style: 'destructive' }, { label: many ? 'Save all' : 'Save', value: 'save', style: 'suggested' }], registerCancel);
+  if (choice === 'cancel' || isCancelled()) return { approved: false, discards: [] };
   if (choice === 'discard') {
-    for (const doc of edited) { await recoveryWriter.flush(doc); if (doc.documentId) await invoke('recovery_saved', { documentId: doc.documentId, revision: doc.revision || 0 }); }
-    await Promise.all([...documents.values()].map(doc => recoveryWriter.flush(doc))); return true;
+    // Make every discarded buffer durable first, but do NOT retire recovery
+    // here. The backend retires it only after actual native destruction, so a
+    // later failure/cancel/timeout leaves the live dirty document recoverable.
+    for (const doc of edited) { if (isCancelled()) return { approved: false, discards: [] }; await recoveryWriter.flush(doc, true); }
+    if (isCancelled()) return { approved: false, discards: [] };
+    await Promise.all([...documents.values()].map(doc => recoveryWriter.flush(doc, true)));
+    if (isCancelled()) return { approved: false, discards: [] };
+    return {
+      approved: true,
+      discards: edited.filter(doc => doc.documentId).map(doc => ({ documentId: doc.documentId }))
+    };
   }
   for (const doc of edited) {
-    if (!(await save(false, false, doc))) return false;
+    if (isCancelled()) return { approved: false, discards: [] };
+    if (!(await save(false, false, doc))) return { approved: false, discards: [] };
     const live = documents.get(doc.documentId) || doc;
-    if (live.content !== live.saved) return false;
+    if (live.content !== live.saved) return { approved: false, discards: [] };
   }
-  await Promise.all([...documents.values()].map(doc => recoveryWriter.flush(doc))); return true;
+  if (isCancelled()) return { approved: false, discards: [] };
+  await Promise.all([...documents.values()].map(doc => recoveryWriter.flush(doc, true)));
+  return { approved: !isCancelled(), discards: [] };
+}
+
+// Application quit is sequential: the backend targets one window at a time
+// through the ordinary request-close review. A window remains locked from that
+// review through its actual destruction; only cancel/error/timeout unlocks it.
+let quitCloseState = null;
+// A normal accepted close keeps ownership/lock until native destruction too;
+// unlike quit there is no sequence token, but it must block further lifecycle
+// actions and autosave while the asynchronous destroy is pending.
+let windowCloseOwned = false;
+
+function abortQuitClose(state = quitCloseState) {
+  if (!state || quitCloseState !== state) return false;
+  quitCloseState = null;
+  if (state.locked) setTransitionLocked(false);
+  return true;
+}
+
+async function closeForQuit(token) {
+  if (quitCloseState) return false; // the backend serializes one window per token
+  if (busy || transitionLocked) {
+    // A normal close/open/new transition already owns this window. Do not
+    // layer a quit review over it; the backend must stop the sequence.
+    await invoke('quit_window_cancel', { token }).catch(() => {});
+    return false;
+  }
+  const state = { token, locked: false, cancelled: false };
+  quitCloseState = state;
+  const protectWorkspace = documents.size > 0;
+  let review = { approved: false, discards: [] };
+  try {
+    if (protectWorkspace) { setTransitionLocked(true); state.locked = true; }
+    review = protectWorkspace ? await reviewWindowClose(cancel => { state.cancelDialog = cancel; }, () => state.cancelled) : { approved: await allowDiscard(), discards: [] };
+  } catch (error) {
+    await ensureDirtyRecovery();
+    abortQuitClose(state);
+    await invoke('quit_window_cancel', { token }).catch(() => {});
+    toast(error);
+    return false;
+  }
+  if (state.cancelled) return false; // cancelQuitClose owns recovery rewrite + unlock
+  if (!review.approved) {
+    await ensureDirtyRecovery();
+    abortQuitClose(state);
+    await invoke('quit_window_cancel', { token }).catch(() => {});
+    return false;
+  }
+  const args = { quitToken: token };
+  if (review.discards.length) args.discardRecovery = review.discards;
+  try {
+    await invoke('close_window', args);
+    // The backend advances only after this window's native Destroyed event.
+    // Keep the lock/token until then; the process is about to remove this view.
+    return true;
+  } catch (error) {
+    await ensureDirtyRecovery();
+    abortQuitClose(state);
+    await invoke('quit_window_cancel', { token }).catch(() => {});
+    toast(error);
+    return false;
+  }
+}
+
+function cancelQuitClose(token) {
+  const state = quitCloseState;
+  if (!state || state.token !== token) return;
+  state.cancelled = true;
+  const cancel = state.cancelDialog;
+  state.cancelDialog = null;
+  // Resolve an open native dialog as Cancel so its caller cannot fall through
+  // to close_window after the token was invalidated.
+  if (cancel) cancel();
+  // Keep the window locked until a fresh recovery revision is durable; the
+  // cancelled review must not leave visible dirty work unprotected.
+  return (async () => {
+    try { await ensureDirtyRecovery(); }
+    finally { abortQuitClose(state); }
+  })();
+}
+
+async function ensureDirtyRecovery() {
+  const dirty = [...documents.values()].filter(doc => doc.content !== doc.saved);
+  if (current.active && !documents.has(current.documentId) && current.content !== current.saved) dirty.push(current);
+  for (const doc of dirty) {
+    doc.revision = (doc.revision || 0) + 1;
+    recoveryWriter.changed(doc);
+    await recoveryWriter.flush(doc);
+  }
 }
 
 async function reviewRecovery() {

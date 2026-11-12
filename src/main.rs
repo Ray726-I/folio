@@ -3,6 +3,8 @@
 mod document;
 mod file_operations;
 mod markdown;
+mod native_menu;
+mod native_move;
 mod recovery;
 mod renderer;
 mod theme;
@@ -12,6 +14,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use document::Document;
 #[cfg(target_os = "linux")]
 use gtk::{gdk::EventType, prelude::*};
+use native_menu::sync_native_menu;
 use renderer::{AcceptOutcome, CancelRequest, PickerKind, RenderRequest, RenderResult, Transport};
 use serde::Serialize;
 use std::{
@@ -49,6 +52,13 @@ struct AppState {
     renderer_creation: Mutex<()>,
     renderer_recycling: Mutex<bool>,
     renderer_handoff: Mutex<()>,
+    quit: Mutex<workspace::QuitCoordinator>,
+    /// Recovery records to clear once a close_window really reaches native
+    /// destruction. Never persisted before Destroyed.
+    window_recovery_cleanup: Mutex<std::collections::HashMap<String, Vec<DiscardDocument>>>,
+    /// Labels whose frontend finished `start()` and installed its event
+    /// listeners. A quit must not target a newly created webview before this.
+    window_ready: Mutex<std::collections::HashSet<String>>,
     /// Set once the main window has been shown, either by the frontend calling
     /// `ready` or by the startup fallback. Test-and-set keeps `ready`
     /// idempotent and the fallback from re-showing a visible window.
@@ -71,11 +81,49 @@ struct WindowTransfer {
     session: Option<serde_json::Value>,
     completion: std::sync::mpsc::Sender<()>,
 }
+
+#[derive(Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DiscardDocument {
+    document_id: String,
+}
+
+/// Holds the quit coordinator's creation gate for the whole synchronous window
+/// construction. Quit cannot snapshot labels while a new workspace is between
+/// creation and registration, and a quit already running rejects creation.
+struct WindowCreationGuard {
+    state: Arc<AppState>,
+}
+
+impl WindowCreationGuard {
+    fn begin(state: &Arc<AppState>) -> Result<Self, String> {
+        let mut quit = state.quit.lock().unwrap();
+        if !quit.begin_window_creation() {
+            return Err("Finish quitting before creating another window.".into());
+        }
+        drop(quit);
+        Ok(Self {
+            state: state.clone(),
+        })
+    }
+}
+
+impl Drop for WindowCreationGuard {
+    fn drop(&mut self) {
+        self.state.quit.lock().unwrap().finish_window_creation();
+    }
+}
+
+fn register_created_window(state: &AppState, label: &str) {
+    let _quit = state.quit.lock().unwrap();
+    workspace::register_window(label);
+}
 fn cleanup_workspace(state: &AppState, label: &str) {
     workspace::unregister_window(label);
     state.window_folders.lock().unwrap().remove(label);
     state.window_pending.lock().unwrap().remove(label);
     state.window_shown.lock().unwrap().remove(label);
+    state.window_ready.lock().unwrap().remove(label);
     let mut transfers = state.window_transfers.lock().unwrap();
     let mut registry = state.documents.lock().unwrap();
     transfers.retain(|destination, transfer| {
@@ -96,6 +144,7 @@ fn cleanup_workspace(state: &AppState, label: &str) {
         let _ = registry.close(&id);
     }
     registry.window_active.remove(label);
+    registry.end_close(label);
 }
 #[tauri::command(async)]
 fn new_window(
@@ -107,6 +156,10 @@ fn new_window(
 ) -> Result<String, String> {
     renderer::ensure_main(webview.label())?;
     let label = format!("workspace-{}", workspace::fresh_id());
+    // Creation and quit are serialized: quit cannot start while this window is
+    // between creation and registration, and this command cannot start once a
+    // quit sequence owns the app.
+    let _creation = WindowCreationGuard::begin(state.inner())?;
     let (sender, receiver) = std::sync::mpsc::channel();
     if let Some(id) = &document_id {
         let session = session.ok_or("Capture the document before moving it.")?;
@@ -143,7 +196,7 @@ fn new_window(
     } else if session.is_some() {
         return Err("A transfer snapshot requires a document ID.".into());
     }
-    workspace::register_window(&label);
+    register_created_window(&state, &label);
     let built =
         tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("index.html".into()))
             .title("Folio")
@@ -1294,6 +1347,14 @@ fn ready(
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     renderer::ensure_main(window.label())?;
+    // Listeners are installed before this command is invoked. Marking ready
+    // here keeps quit from targeting a webview whose event bridge does not
+    // exist yet.
+    state
+        .window_ready
+        .lock()
+        .unwrap()
+        .insert(window.label().into());
     let first = if window.label() == "main" {
         !state.shown.swap(true, Ordering::SeqCst)
     } else {
@@ -1366,7 +1427,31 @@ fn set_title(
 }
 
 #[tauri::command]
+fn request_quit(webview: tauri::Webview, app: tauri::AppHandle) -> Result<(), String> {
+    renderer::ensure_main(webview.label())?;
+    let _ = begin_guarded_quit(&app);
+    Ok(())
+}
+
+#[tauri::command]
+fn quit_window_cancel(
+    token: u64,
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    renderer::ensure_main(webview.label())?;
+    app.state::<Arc<AppState>>()
+        .quit
+        .lock()
+        .unwrap()
+        .cancel_window(token, webview.label());
+    Ok(())
+}
+
+#[tauri::command]
 fn close_window(
+    quit_token: Option<u64>,
+    discard_recovery: Option<Vec<DiscardDocument>>,
     webview: tauri::Webview,
     window: tauri::WebviewWindow,
     app: tauri::AppHandle,
@@ -1382,8 +1467,73 @@ fn close_window(
     {
         return Err("Wait for the document to finish moving before closing this window.".into());
     }
+    // Keep the metadata until Destroyed; clearing recovery before native
+    // destruction can erase the only copy of a dirty document.
+    let discard_recovery = discard_recovery.filter(|items| !items.is_empty());
+    {
+        let mut registry = state.documents.lock().unwrap();
+        // Lock ownership against transfers for the whole admit/destroy window.
+        registry.begin_close(webview.label())?;
+        if let Some(items) = &discard_recovery {
+            let ids: Vec<String> = items.iter().map(|item| item.document_id.clone()).collect();
+            if let Err(error) = registry.validate_owned(webview.label(), &ids) {
+                registry.end_close(webview.label());
+                return Err(error);
+            }
+        }
+    }
+    let admission = {
+        let mut quit = state.quit.lock().unwrap();
+        if quit.is_current(webview.label()) {
+            match quit_token {
+                Some(token) if quit.admit_close(token, webview.label()) => Ok(()),
+                Some(_) => Err("This quit request is no longer active.".to_string()),
+                None => Err("This window is being quit; provide the quit token.".to_string()),
+            }
+        } else if quit_token.is_some() {
+            Err("This quit request is no longer active.".to_string())
+        } else {
+            Ok(())
+        }
+    };
+    if let Err(error) = admission {
+        state.documents.lock().unwrap().end_close(webview.label());
+        return Err(error);
+    }
+    if let Some(items) = discard_recovery {
+        state
+            .window_recovery_cleanup
+            .lock()
+            .unwrap()
+            .insert(webview.label().into(), items);
+    }
     // Keep document ownership usable if the platform rejects destruction.
-    window.destroy().map_err(|error| error.to_string())?;
+    state
+        .quit
+        .lock()
+        .unwrap()
+        .normal_close_approved(webview.label());
+    if let Err(error) = window.destroy() {
+        state
+            .window_recovery_cleanup
+            .lock()
+            .unwrap()
+            .remove(webview.label());
+        state.documents.lock().unwrap().end_close(webview.label());
+        state
+            .quit
+            .lock()
+            .unwrap()
+            .normal_close_cancelled(webview.label());
+        if let Some(token) = quit_token {
+            state
+                .quit
+                .lock()
+                .unwrap()
+                .close_failed(token, webview.label());
+        }
+        return Err(error.to_string());
+    }
     cancel_window_renders(&app, state.inner(), webview.label());
     cleanup_workspace(&state, webview.label());
     if workspace::window_labels().is_empty() {
@@ -2622,6 +2772,11 @@ fn queue_paths(app: &tauri::AppHandle, paths: Vec<String>) {
         return;
     }
     let state = app.state::<Arc<AppState>>();
+    // An OS-open during a quit sequence must not inject work into a window
+    // that is being reviewed or closed. Cancel the open; the user can retry.
+    if state.quit.lock().unwrap().is_active() {
+        return;
+    }
     let labels = workspace::window_labels();
     let Some(label) = labels
         .iter()
@@ -2674,18 +2829,163 @@ pub(crate) fn is_app_navigation(url: &tauri::Url) -> bool {
 
 #[cfg(target_os = "macos")]
 fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
-    if let tauri::RunEvent::Opened { urls } = event {
-        let paths = urls
-            .iter()
-            .filter_map(|url| url.to_file_path().ok())
-            .map(|path| path.to_string_lossy().into_owned())
-            .collect();
-        queue_paths(app, paths);
+    match event {
+        tauri::RunEvent::Opened { urls } => {
+            let paths = urls
+                .iter()
+                .filter_map(|url| url.to_file_path().ok())
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect();
+            queue_paths(app, paths);
+        }
+        tauri::RunEvent::MenuEvent(event) => {
+            if native_menu::handle_event(app, event.id().as_ref()) {
+                begin_guarded_quit(app);
+            }
+        }
+        tauri::RunEvent::ExitRequested { api, .. } => handle_exit_requested(app, api),
+        _ => {}
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn handle_run_event(_app: &tauri::AppHandle, _event: tauri::RunEvent) {}
+fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
+    match event {
+        tauri::RunEvent::MenuEvent(event) => {
+            if native_menu::handle_event(app, event.id().as_ref()) {
+                begin_guarded_quit(app);
+            }
+        }
+        tauri::RunEvent::ExitRequested { api, .. } => handle_exit_requested(app, api),
+        _ => {}
+    }
+}
+
+/// How long one window may take to review and destroy itself before quit gives
+/// up and unlocks it. Timeout cancels; it never treats silence as approval.
+const QUIT_WINDOW_TIMEOUT: Duration = Duration::from_secs(60);
+
+fn quit_window_payload(token: u64) -> serde_json::Value {
+    serde_json::json!({ "quitToken": token })
+}
+
+fn watch_quit_window(app: tauri::AppHandle, token: u64, label: String) {
+    std::thread::spawn(move || {
+        std::thread::sleep(QUIT_WINDOW_TIMEOUT);
+        let step = app
+            .state::<Arc<AppState>>()
+            .quit
+            .lock()
+            .unwrap()
+            .expire(token, &label);
+        if let workspace::QuitStep::Cancel { token, label } = step {
+            // Unlock the still-open window. The token is already invalid, so a
+            // late close result cannot advance the sequence.
+            let _ = app.emit_to(
+                &label,
+                "quit-sequence-cancelled",
+                quit_window_payload(token),
+            );
+        }
+    });
+}
+
+fn start_quit_window_review(app: &tauri::AppHandle, token: u64, label: String) {
+    let state = app.state::<Arc<AppState>>();
+    if app.get_webview_window(&label).is_none() {
+        // The window vanished between snapshot and delivery. It is really gone,
+        // so withdraw it and continue with the next participant.
+        let step = state.quit.lock().unwrap().window_closed(&label);
+        apply_quit_step(app, step);
+        return;
+    }
+    if app
+        .emit_to(&label, "request-close", quit_window_payload(token))
+        .is_err()
+    {
+        // A live window we cannot address must not be silently skipped.
+        state.quit.lock().unwrap().cancel_window(token, &label);
+        return;
+    }
+    watch_quit_window(app.clone(), token, label);
+}
+
+fn apply_quit_step(app: &tauri::AppHandle, step: workspace::QuitStep) {
+    match step {
+        workspace::QuitStep::Ignored => {}
+        workspace::QuitStep::Next { token, label } => start_quit_window_review(app, token, label),
+        workspace::QuitStep::Complete { .. } => app.exit(0),
+        workspace::QuitStep::Cancel { token, label } => {
+            let _ = app.emit_to(
+                &label,
+                "quit-sequence-cancelled",
+                quit_window_payload(token),
+            );
+        }
+    }
+}
+
+/// The single entry point for a native-menu Quit (or any other app-level quit).
+///
+/// It closes one workspace at a time through the ordinary per-window close
+/// review. The next window is targeted only after the previous window's native
+/// Destroyed event. Cancel/error/timeout stops the sequence: earlier windows
+/// stay closed and the remaining ones stay open. No approval is inferred.
+pub(crate) fn begin_guarded_quit(app: &tauri::AppHandle) -> bool {
+    let state = app.state::<Arc<AppState>>();
+    let focused = app
+        .webview_windows()
+        .into_values()
+        .find(|window| window.is_focused().unwrap_or(false))
+        .map(|window| window.label().to_string());
+    let mut quit = state.quit.lock().unwrap();
+    // Snapshot labels under the same lock used by new_window registration.
+    let mut labels = workspace::window_labels();
+    labels.sort();
+    let ready = {
+        let ready = state.window_ready.lock().unwrap();
+        labels.iter().all(|label| ready.contains(label))
+    };
+    if !ready {
+        return false;
+    }
+    if let Some(focused) = focused {
+        if let Some(index) = labels.iter().position(|label| label == &focused) {
+            let label = labels.remove(index);
+            labels.insert(0, label);
+        }
+    }
+    let start = quit.begin(labels);
+    drop(quit);
+    match start {
+        workspace::QuitStart::Ignored | workspace::QuitStart::Busy => false,
+        workspace::QuitStart::NoWindows => {
+            app.exit(0);
+            true
+        }
+        workspace::QuitStart::Review { token, label } => {
+            start_quit_window_review(app, token, label);
+            true
+        }
+    }
+}
+
+fn handle_exit_requested(app: &tauri::AppHandle, api: tauri::ExitRequestApi) {
+    // On macOS, a predefined native Quit can terminate through AppKit without
+    // a reliable ExitRequested hook (tao does not implement
+    // applicationShouldTerminate). The custom menu Quit item must call
+    // `begin_guarded_quit`; this guard covers lifecycle paths that do report an
+    // exit request. OS/force termination remains unrecoverable by design and
+    // is protected only by the recovery snapshots.
+    let labels = workspace::window_labels();
+    let state = app.state::<Arc<AppState>>();
+    let allowed = state.quit.lock().unwrap().allows_exit(&labels);
+    if allowed {
+        return;
+    }
+    api.prevent_exit();
+    begin_guarded_quit(app);
+}
 
 fn main() {
     let arguments: Vec<_> = std::env::args().collect();
@@ -2713,6 +3013,22 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .manage(state)
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            {
+                // A menu setup error must not abort startup. If installing the
+                // replacement menu fails, remove the platform default menu so
+                // its unguarded Quit item is not left reachable; the in-window
+                // HTML menu remains available and the frontend can retry sync.
+                match native_menu::build(app.handle(), &Default::default())
+                    .and_then(|menu| app.set_menu(menu).map(|_| ()))
+                {
+                    Ok(()) => {}
+                    Err(error) => {
+                        eprintln!("Could not install the native menu: {error}");
+                        let _ = app.remove_menu();
+                    }
+                }
+            }
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 let mut previous = theme::current();
@@ -2808,18 +3124,61 @@ fn main() {
                 }
                 return;
             }
+            if let tauri::WindowEvent::Destroyed = event {
+                let app = window.app_handle().clone();
+                let state = app.state::<Arc<AppState>>();
+                let pending_recovery = state
+                    .window_recovery_cleanup
+                    .lock()
+                    .unwrap()
+                    .remove(window.label());
+                // close_window may already have unregistered this label; the
+                // coordinator still needs the real destruction notification.
+                if workspace::ensure_window(window.label()).is_ok() {
+                    cancel_window_renders(&app, state.inner(), window.label());
+                    cleanup_workspace(&state, window.label());
+                }
+                if let Some(items) = pending_recovery {
+                    // Only now, after native destruction, retire discarded
+                    // recovery. If this fails the draft remains recoverable.
+                    match recovery_store(&state, &app) {
+                        Ok(mut store) => {
+                            if let Some(store) = store.as_mut() {
+                                for item in items {
+                                    if let Err(error) = store.discard(&item.document_id) {
+                                        eprintln!(
+                                            "Could not retire recovery for {}: {error}",
+                                            item.document_id
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            eprintln!("Could not open recovery storage after close: {error}")
+                        }
+                    }
+                }
+                let step = state.quit.lock().unwrap().window_closed(window.label());
+                apply_quit_step(&app, step);
+                return;
+            }
             if workspace::ensure_window(window.label()).is_err() {
                 return;
             }
-            if let tauri::WindowEvent::Destroyed = event {
-                let app = window.app_handle();
-                let state = app.state::<Arc<AppState>>();
-                cancel_window_renders(app, state.inner(), window.label());
-                cleanup_workspace(&state, window.label());
-            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let _ = window.emit("request-close", ());
+                let app = window.app_handle().clone();
+                let state = app.state::<Arc<AppState>>();
+                // Only the window currently under quit review is owned by the
+                // sequence. Other windows may still close normally and then
+                // withdraw from the remaining quit queue.
+                if state.quit.lock().unwrap().is_current(window.label()) {
+                    return;
+                }
+                // Emit to this exact window; Window::emit would broadcast the
+                // close review to every workspace.
+                let _ = app.emit_to(window.label(), "request-close", ());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -2860,6 +3219,9 @@ fn main() {
             document_changed,
             set_title,
             close_window,
+            request_quit,
+            quit_window_cancel,
+            sync_native_menu,
             open_link,
             resolve_document_link,
             pick_open_target,
@@ -2876,6 +3238,15 @@ fn main() {
 #[cfg(test)]
 mod document_action_tests {
     use super::*;
+    #[test]
+    fn discard_metadata_ignores_untrusted_revision_and_unknown_ids_are_validated_elsewhere() {
+        let parsed: DiscardDocument = serde_json::from_value(serde_json::json!({
+            "documentId": "doc-1",
+            "revision": u64::MAX
+        }))
+        .unwrap();
+        assert_eq!(parsed.document_id, "doc-1");
+    }
     #[cfg(unix)]
     #[test]
     fn folder_search_accepts_a_symlinked_root() {
