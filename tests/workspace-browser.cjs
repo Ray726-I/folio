@@ -121,6 +121,13 @@ const { openEditor } = require('./editor-browser.cjs');
   assert.equal(await page.evaluate(() => current.saved), 'external update');
   await page.evaluate(() => {
    const original = window.__TAURI__.core.invoke;
+   window.__TAURI__.core.invoke = (cmd, args) => cmd === 'save_document' ? Promise.resolve({ path: '/saved-recovered.md', name: 'saved-recovered.md' }) : original(cmd, args);
+   editor.replaceContent('reopened edit'); requestSave();
+  });
+  await page.waitForFunction(() => current.content === current.saved && !busy);
+  assert.equal(await page.evaluate(() => current.closing), undefined, 'reopened tabs are not stuck in the closing state');
+  await page.evaluate(() => {
+   const original = window.__TAURI__.core.invoke;
    window.__TAURI__.core.invoke = (cmd, args) => cmd === 'recovery_discard' && args.documentId === current.documentId ? new Promise(resolve => { window.releaseDiscard = resolve; }) : original(cmd, args);
    window.closePending = closeWorkspaceDocument(current);
   });

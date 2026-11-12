@@ -39,6 +39,7 @@ pub enum PreviewLimitKind {
     HtmlBytes,
     ImageOccurrences,
     ImageBytes,
+    MathComplexity,
 }
 
 impl PreviewLimitKind {
@@ -51,6 +52,7 @@ impl PreviewLimitKind {
             Self::HtmlBytes => "html_bytes",
             Self::ImageOccurrences => "image_occurrences",
             Self::ImageBytes => "image_bytes",
+            Self::MathComplexity => "math_complexity",
         }
     }
 }
@@ -143,7 +145,101 @@ pub(crate) fn preflight(source: &str, limits: &RenderLimits) -> Result<(), Previ
             ),
         ));
     }
+    if math_scan_exceeds(source) {
+        return Err(PreviewLimitError::new(
+            PreviewLimitKind::MathComplexity,
+            "This document's math delimiters exceed the preview scanning budget. Simplify the math or split the document into smaller previews.",
+        ));
+    }
     Ok(())
+}
+
+/// Upper bound on raw byte distance and delimiter-candidate visits for
+/// Comrak 0.56's LaTeX and code-math scanners. Both scanners repeatedly walk
+/// the remaining input for every opener, so many unmatched openers are
+/// quadratic even when each individual scan is short.
+const MAX_MATH_SCAN_BYTES: usize = 256 * MIB;
+const MAX_MATH_SCAN_CANDIDATES: usize = 2_000_000;
+
+/// Estimate Comrak's math matching work in one reverse pass. For each opener
+/// we charge both the byte distance to the next matching closer (or EOF) and
+/// the delimiter candidates scanned (backslashes for LaTeX, dollars for code
+/// math). The candidate count catches compact adversarial runs that a
+/// byte-only budget underestimates. This is deliberately conservative:
+/// openers inside literal code/HTML and nested openers Comrak would skip also
+/// count, so some valid or code-only documents near the budgets can be
+/// rejected.
+fn math_scan_exceeds(source: &str) -> bool {
+    if !source.contains("\\(") && !source.contains("\\[") && !source.contains("$`") {
+        return false;
+    }
+    let bytes = source.as_bytes();
+    let mut next_parenthesis = None;
+    let mut next_bracket = None;
+    let mut next_code_dollar = None;
+    let mut parenthesis_candidates = None;
+    let mut bracket_candidates = None;
+    let mut code_candidates = None;
+    let mut backslashes_right = 0usize;
+    let mut dollars_right = 0usize;
+    let mut byte_work = 0usize;
+    let mut candidate_work = 0usize;
+    for index in (0..bytes.len()).rev() {
+        // Check openers before closers so a code-math `$` that is both a
+        // closing and an opening delimiter does not treat itself as its own
+        // closer.
+        if index + 1 < bytes.len() && bytes[index] == b'\\' {
+            let (closer, candidates) = match bytes[index + 1] {
+                b'(' => (next_parenthesis, parenthesis_candidates),
+                b'[' => (next_bracket, bracket_candidates),
+                _ => (None, None),
+            };
+            if bytes[index + 1] == b'(' || bytes[index + 1] == b'[' {
+                let distance = closer.map_or(bytes.len() - index, |close| close - index);
+                byte_work = byte_work.saturating_add(distance);
+                let candidate = candidates.map_or(backslashes_right, |count| {
+                    backslashes_right.saturating_sub(count)
+                });
+                candidate_work = candidate_work.saturating_add(candidate);
+            }
+        }
+        if index + 1 < bytes.len() && bytes[index] == b'$' && bytes[index + 1] == b'`' {
+            let distance = next_code_dollar.map_or(bytes.len() - index, |close| close - index);
+            byte_work = byte_work.saturating_add(distance);
+            let candidate =
+                code_candidates.map_or(dollars_right, |count| dollars_right.saturating_sub(count));
+            candidate_work = candidate_work.saturating_add(candidate);
+        }
+        if byte_work > MAX_MATH_SCAN_BYTES || candidate_work > MAX_MATH_SCAN_CANDIDATES {
+            return true;
+        }
+
+        // This position can close an opener further left.
+        if index > 0 {
+            match (bytes[index], bytes[index - 1]) {
+                (b')', b'\\') => {
+                    next_parenthesis = Some(index - 1);
+                    parenthesis_candidates = Some(backslashes_right);
+                }
+                (b']', b'\\') => {
+                    next_bracket = Some(index - 1);
+                    bracket_candidates = Some(backslashes_right);
+                }
+                (b'$', b'`') => {
+                    next_code_dollar = Some(index);
+                    code_candidates = Some(dollars_right);
+                }
+                _ => {}
+            }
+        }
+        if bytes[index] == b'\\' {
+            backslashes_right += 1;
+        }
+        if bytes[index] == b'$' {
+            dollars_right += 1;
+        }
+    }
+    false
 }
 
 #[derive(Clone, Copy)]
@@ -579,5 +675,18 @@ mod tests {
             }
         )
         .is_ok());
+    }
+
+    #[test]
+    fn math_budget_allows_a_few_long_scans_through_plain_text() {
+        let mut source = String::new();
+        for _ in 0..4 {
+            source.push_str("\\(missing\n\n");
+        }
+        source.push_str(&"x".repeat(17 * MIB));
+        assert!(
+            preflight(&source, &DEFAULT_RENDER_LIMITS).is_ok(),
+            "a few unmatched openers followed by plain text must stay previewable"
+        );
     }
 }

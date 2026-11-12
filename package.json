@@ -24,7 +24,7 @@
     "bench:editor": "node scripts/bench-editor.cjs",
     "test:native-ime": "bash tests/native-editor-ime.sh",
     "bench:interactions": "node scripts/bench-interactions.cjs",
-    "test:workspace": "node tests/companion-sync.cjs && node tests/interaction-polish.cjs && node tests/document-affordances.cjs && node tests/selection-toolbar.cjs && node tests/block-copy-menu.cjs && node tests/workspace-recovery.cjs && node tests/workspace-browser.cjs && node tests/workspace-failures.cjs && node tests/file-tree-operations.cjs && node tests/workspace-panes.cjs && node tests/two-row-header.cjs && node tests/workspace-tab-navigation.cjs && node tests/window-close-dialog.cjs && node tests/state-machines.cjs"
+    "test:workspace": "node tests/companion-sync.cjs && node tests/companion-math.cjs && node tests/companion-modal-guard.cjs && node tests/companion-command-actions.cjs && node tests/save-path-change-refresh.cjs && node tests/open-from-tree-focus.cjs && node tests/open-alias-transition-lock.cjs && node tests/autosave-status.cjs && node tests/interaction-polish.cjs && node tests/document-affordances.cjs && node tests/selection-toolbar.cjs && node tests/block-copy-menu.cjs && node tests/workspace-recovery.cjs && node tests/workspace-browser.cjs && node tests/workspace-failures.cjs && node tests/file-tree-operations.cjs && node tests/workspace-panes.cjs && node tests/two-row-header.cjs && node tests/workspace-tab-navigation.cjs && node tests/window-close-dialog.cjs && node tests/state-machines.cjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.12.4",

@@ -81,6 +81,14 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.locator('#folder-search-input').fill('match');
     await page.locator('#folder-search-results .grep-match').waitFor();
     assert.match(await page.locator('#folder-search-results').textContent(), /match.md/);
+    // Closing a dialog opened from a menu must not strand focus on <body>
+    // because the menu item that opened it is now hidden.
+    await page.locator('#menu-help-button').click();
+    await page.getByRole('menuitem', { name: 'Keyboard shortcuts', exact: true }).click();
+    await page.locator('#help-dialog').waitFor({ state: 'visible' });
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'menu-help-button', 'closing a menu-opened dialog returns focus to its menu trigger');
     assert.deepEqual(session.errors, []);
     await page.screenshot({ path: '/tmp/folio-application-menus.png' });
     console.log('PASS: application menus, Reading default, shared source history, permission guard, replace, preferences and document actions');

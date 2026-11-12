@@ -1,6 +1,6 @@
 'use strict';
 // Shell adapter. The engines live in the locally bundled editor/ modules.
-let editor = null, editorDocument = null, editorPath = null, outlineTimer, fallbackCheckedContent = null;
+let editor = null, editorDocument = null, editorPath = null, outlineTimer, fallbackCheckedContent = null, documentLimited = false;
 let outlineRevision = 0, outlineFallbackIdentity = 0;
 // Anything larger is shown read-only: ProseMirror would have to parse it in JS.
 const MAX_RICH_LENGTH = 2 * 1024 * 1024;
@@ -13,6 +13,7 @@ function setTransitionLocked(next) {
   editor?.setTransitionLocked(transitionLocked);
   if (typeof current !== 'undefined') syncDocumentMode();
 }
+function closeEditorPopups() { editor?.closePopups?.(); }
 function changeContent(content) { if (editor) editor.replaceContent(content); else { current.content = content; documentEdited(); updateTitle(); scheduleStats(); } }
 function undoRedo(redo = false) { return editor?.undo(redo) || false; }
 function editorPresentation(_show, locked, fallback) {
@@ -34,7 +35,7 @@ function revealSourceForEdit() {
   toast('This block’s exact source could not be located. Edit it from the source snapshot.');
 }
 function openSourceSnapshot() {
-  if (!current.active) return;
+  if (!current.active || $('source-dialog').open) return;
   // Without a mounted editor (over-limit documents) the snapshot still shows
   // the canonical buffer, so the exact bytes stay copyable.
   closeAllMenus();
@@ -66,6 +67,24 @@ function lineStartsFor(text) {
   const starts = [0];
   for (let index = 0; index < text.length; index++) if (text[index] === '\n') starts.push(index + 1);
   return starts;
+}
+function clearEditorOutline() {
+  outlineEntries = [];
+  // Mark the outline as not yet built so a later normal document can rebuild
+  // it; the rail stays disabled while documentLimited is true.
+  outlineStateDocument = null;
+  const list = $('outline-items'); list.replaceChildren();
+  const empty = document.createElement('p'); empty.className = 'sidebar-empty'; empty.textContent = 'Add a heading to build the outline.'; list.append(empty);
+  $('outline-count').textContent = 'No headings';
+  if (typeof dockVisible !== 'undefined' && dockTab === 'outline') dockVisible = false;
+  $('outline').hidden = true; $('outline-divider').hidden = true;
+  const tab = document.querySelector('[data-dock-tab="outline"]');
+  if (tab) {
+    tab.disabled = true;
+    tab.setAttribute('aria-pressed', 'false');
+    tab.title = 'Outline — add a heading first';
+  }
+  if (typeof renderNavigationDock === 'function') renderNavigationDock();
 }
 function refreshEditorOutline() {
   if (focusedPane === 'companion') { refreshCompanionOutline(); return; }
@@ -154,6 +173,15 @@ function refreshEditorOutline() {
   const domStale = $('outline-items').firstElementChild !== (outlineEntries[0]?.row ?? null);
   if (treeChanged || outlineStateDocument !== current || domStale) buildOutlineTree(previousEntries);
   if (!outlineEntries.length && !$('outline-items').querySelector('.sidebar-empty')) { const empty = document.createElement('p'); empty.className = 'sidebar-empty'; empty.textContent = 'Add a heading to build the outline.'; $('outline-items').append(empty); }
+  // A document without headings keeps the panel collapsed by design. Keep the
+  // rail's pressed/disabled state honest so it never looks open while hidden.
+  const outlineTab = document.querySelector('[data-dock-tab="outline"]');
+  if (outlineTab) {
+    const available = Boolean(current.active && outlineEntries.length);
+    outlineTab.disabled = !available;
+    outlineTab.setAttribute('aria-pressed', String(available && dockVisible && dockTab === 'outline' && !$('outline').hidden));
+    outlineTab.title = available ? 'Outline — click again to close' : 'Outline — add a heading first';
+  }
   const activeAtRefresh = outlineActiveIndex;
   requestAnimationFrame(() => { if (outlineActiveIndex === activeAtRefresh) updateActiveOutline(); });
 }
@@ -164,6 +192,7 @@ function refreshEditorOutline() {
 function editValue({ title, value, placeholder = '' }) {
   const dialog = $('editor-action-dialog'), form = $('editor-action-form');
   const input = $('editor-action-value'), openButton = $('editor-action-open');
+  if (dialog.open) { input.focus(); input.select(); return Promise.resolve(null); }
   $('editor-action-title').textContent = title || 'Edit';
   input.value = value || '';
   input.placeholder = placeholder;
@@ -190,7 +219,7 @@ function editValue({ title, value, placeholder = '' }) {
 
 async function mountUnifiedEditor() {
   if (!current.active) {
-    editor?.destroy(); editor = null; editorDocument = null;
+    editor?.destroy(); editor = null; editorDocument = null; documentLimited = false;
     $('preview').replaceChildren();
     previewMachine.send('IDLE');
     return;
@@ -229,6 +258,11 @@ async function mountUnifiedEditor() {
   }
   if (current !== documentAtOpen || generation !== renderGeneration) { finishMounting(); return; }
   if (limited) {
+    documentLimited = true; clearEditorOutline();
+    // The read-only projection is the only presentation for this document.
+    // Do not leave Edit/Source controls looking usable when no editor exists.
+    if (documentMode !== 'reading') documentMode = 'reading';
+    syncDocumentMode();
     // ProseMirror cannot represent this document within the editor budgets, so
     // a second text engine is not worth keeping for it. Show the complete
     // Markdown read-only, keep Save exact, and never truncate.
@@ -241,13 +275,16 @@ async function mountUnifiedEditor() {
     $('preview').replaceChildren(shown);
     $('editor-notice').hidden = false;
     $('editor-notice').textContent = 'This document is too large or complex to format. Its complete Markdown is shown below, read-only; saving still writes the file unchanged.';
+    if (typeof syncDocumentChrome === 'function') syncDocumentChrome();
     editorDocument = current; editorPath = current.path; fallbackCheckedContent = current.content;
     previewMachine.send('FALLBACK', { reason: String(limited) });
     finishMounting();
     status('');
     return;
   }
+  documentLimited = false;
   $('editor-notice').hidden = true;
+  syncDocumentMode();
   let extensionCache = null, extensionContent = null, extensionRemote = null;
   const codeHighlightCache = new Map();
   editorDocument = current; editorPath = current.path;
@@ -349,6 +386,7 @@ async function mountUnifiedEditor() {
   try {
     editor = window.FolioEditor.create(editorOptions);
     editor.restoreSession?.(current.view?.editor);
+    syncDocumentMode();
   } catch {
     // There is no second engine to retry into. Show the complete Markdown
     // read-only so the document is still inspectable and Save stays exact.
@@ -356,18 +394,23 @@ async function mountUnifiedEditor() {
     shown.className = 'document-over-limit';
     shown.textContent = current.content;
     $('preview').replaceChildren(shown);
-    editor = null; editorDocument = null;
+    editor = null; editorDocument = null; documentLimited = true; clearEditorOutline();
+    if (documentMode !== 'reading') documentMode = 'reading';
+    syncDocumentMode();
     previewMachine.send('FAIL', { reason: 'editor' });
     $('editor-notice').hidden = false;
     $('editor-notice').textContent = 'This document could not be opened in the editor. Its Markdown is shown read-only; your file is unchanged.';
-    finishMounting();
+    if (typeof syncDocumentChrome === 'function') syncDocumentChrome();
+    finishMounting(); status('');
     toast('This document could not be opened in the editor. Its Markdown is shown read-only; your file is unchanged.');
     return;
   }
   syncDocumentMode();
   previewMachine.send('READY');
   finishMounting();
-  $('folder-empty').hidden = true; refreshEditorOutline(); status('');
+  $('folder-empty').hidden = true; refreshEditorOutline();
+  if (typeof renderNavigationDock === 'function') renderNavigationDock();
+  status('');
 }
 
 $('lock-document').onclick = () => editor?.setLocked(!editor.isLocked());

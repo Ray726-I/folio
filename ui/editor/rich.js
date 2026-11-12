@@ -2173,6 +2173,7 @@ export function createRichEditor(parent, options) {
     // current selection. It reuses this picker rather than adding a second
     // popup system.
     const attached = options2.attached === true;
+    const focusMenu = options2.focusMenu !== false;
     const anchorRect = attached && options2.anchor ? options2.anchor : null;
     const initial = sourceSelection(view.state);
     const start = attached ? initial.head : initial.head - 1;
@@ -2200,7 +2201,7 @@ export function createRichEditor(parent, options) {
     const sublist = document.createElement('div'); sublist.className = 'folio-slash-sublist';
     submenu.append(subhead, sublist);
     menu.append(head, list, submenu);
-    let active = 0, activeSub = 0, openIndex = -1, focusArea = 'root';
+    let active = 0, activeSub = 0, openIndex = -1, focusArea = 'root', attachedKeydown = null;
     let displayed = SLASH_BLOCKS, filtered = false, lastQuery = '';
     let hoverTimer = 0, closeTimer = 0;
     const mode = { menu, trigger, update: renderRoot, keydown, cleanup };
@@ -2505,11 +2506,14 @@ export function createRichEditor(parent, options) {
     }
     function cleanup() {
       clearTimeout(hoverTimer); clearTimeout(closeTimer); hoverTimer = 0; closeTimer = 0;
+      if (attachedKeydown) document.removeEventListener('keydown', attachedKeydown, true);
+      attachedKeydown = null;
       window.removeEventListener('resize', onViewportChange);
       window.removeEventListener('blur', onViewportChange);
       document.removeEventListener('scroll', onViewportChange, true);
       trigger.removeAttribute('aria-controls');
       trigger.removeAttribute('aria-activedescendant');
+      trigger.removeAttribute('aria-expanded');
     }
     function keydown(event) {
       if (event.isComposing) return false;
@@ -2521,8 +2525,13 @@ export function createRichEditor(parent, options) {
         }
         return true;
       }
-      if (event.key === 'Tab' || event.key === 'Home' || event.key === 'End'
-          || event.key === 'PageUp' || event.key === 'PageDown') { closePopup(); return false; }
+      if (event.key === 'Tab') {
+        const returnTo = attached && trigger !== view.dom ? trigger : null;
+        closePopup();
+        returnTo?.focus({ preventScroll: true });
+        return false;
+      }
+      if (event.key === 'Home' || event.key === 'End' || event.key === 'PageUp' || event.key === 'PageDown') { closePopup(); return false; }
       if ((event.shiftKey || event.ctrlKey || event.metaKey || event.altKey)
           && ['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Enter'].includes(event.key)) {
         // Modified chords belong to editing/navigation, not the picker.
@@ -2578,13 +2587,25 @@ export function createRichEditor(parent, options) {
     document.body.append(menu);
     activePopup = mode;
     renderRoot();
+    if (activePopup !== mode) return;
     if (attached) {
       menu.tabIndex = -1;
       menu.addEventListener('keydown', event => {
         if (event.isComposing) return;
         if (keydown(event)) { event.preventDefault(); event.stopPropagation(); }
       });
-      requestAnimationFrame(() => { try { menu.focus({ preventScroll: true }); } catch {} });
+      // Escape must close the picker even if focus is still on the trigger
+      // during the frame before the menu takes focus. Hover-open keeps the
+      // caret in the document, so a keystroke also dismisses it instead of
+      // leaving it floating over the text being typed.
+      attachedKeydown = event => {
+        if (activePopup !== mode || menu.contains(event.target) || document.querySelector('dialog[open]')) return;
+        if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closePopup(); return; }
+        if (focusMenu || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
+        if (event.key.length === 1 || ['Backspace', 'Delete', 'Enter', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) closePopup();
+      };
+      document.addEventListener('keydown', attachedKeydown, true);
+      if (focusMenu) requestAnimationFrame(() => { try { menu.focus({ preventScroll: true }); } catch {} });
     }
   }
   // Task list: an ordinary list item toggles into an unchecked task, a task
@@ -4312,7 +4333,8 @@ export function createRichEditor(parent, options) {
     view,
     headings: () => headingMetadata.read(model),
     context: () => currentContext(view.state),
-    openBlockMenu(anchor, trigger) { openSlashMenu(trigger || view.dom, { attached: true, anchor }); },
+    openBlockMenu(anchor, trigger, focusMenu = true) { openSlashMenu(trigger || view.dom, { attached: true, anchor, focusMenu }); },
+    closePopups() { closePopup(); },
     captureSelection() {
       captureDOMSelection();
     },

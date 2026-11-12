@@ -9,10 +9,9 @@ const css=Function('diagramSurface',`${functionSource}; return mermaidThemeCSS()
 const selector=css.match(/^([^{}]+)\s*\{/ )?.[1];
 assert.ok(selector,'ER theme patch has a selector');
 
-// Mermaid 11 assigns IDs like entity-CUSTOMER-0 to ER entities.
-assert.ok(mermaid.includes('id:`entity-${t}-${this.entities.size}`'),'pinned Mermaid version uses the expected ER entity ID format');
-const entityId='entity-CUSTOMER-0';
-const idPrefix=selector.match(/\[id\^="([^"]+)"\]/)?.[1];
-assert.ok(idPrefix&&entityId.startsWith(idPrefix),`ER theme selector matches generated entity ID ${entityId}`);
+// Mermaid 11 renders ER attribute rows as .row-rect-odd/.row-rect-even
+// groups whose fill paths carry an inline hsl() colour.
+assert.ok(mermaid.includes('row-rect-'),'pinned Mermaid version uses ER row classes');
+assert.ok(selector.includes('.erDiagram .row-rect-odd')&&selector.includes('.erDiagram .row-rect-even'),'ER theme selector targets generated attribute rows');
 assert.match(selector,/path\[fill\^="hsl\("\]/,'ER theme selector targets generated attribute row paths');
-console.log('PASS: ER theme patch targets Mermaid entity IDs');
+console.log('PASS: ER theme patch targets Mermaid attribute row classes');

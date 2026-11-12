@@ -59,6 +59,9 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.waitForFunction(() => outlineActiveIndex === 35);
     assert.ok(Math.abs((await position()).relative - .5) < .02, 'document scrolling drives the same contextual following');
     await page.emulateMedia({ reducedMotion: 'no-preference' });
+    // The document is still at the top, so let the programmatic outline jump
+    // own the highlight while the list's smooth follow is measured.
+    await page.evaluate(() => suppressOutlineFollow(2000));
     await page.evaluate(() => setActiveOutline(20));
     await page.waitForFunction(() => {
       const list = $('outline-items'), bounds = list.getBoundingClientRect(), item = outlineEntries[20].button.getBoundingClientRect();

@@ -4716,3 +4716,30 @@ body[data-selection-pane="reader-scroll"] #companion-scroll,body[data-selection-
 .state-inspector > p { margin:0 0 12px; color:var(--muted); font-size:13px; }
 .state-inspector-output { min-height:320px; max-height:min(58vh, 520px); margin:0; padding:14px 16px; overflow:auto; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); font:12px/1.65 'JetBrains Mono', ui-monospace, monospace; white-space:pre-wrap; }
 .state-inspector-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:14px; }
+
+/* Reading companion find stays in the same compact control family as the
+   document find bar, without taking over the companion header. */
+#companion-find { display:flex; align-items:center; gap:8px; padding:6px 12px; border-bottom:1px solid var(--line); background:var(--surface); }
+#companion-find input { flex:1; min-width:0; padding:5px 9px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--fg); font:12px var(--font-ui); }
+#companion-find span { flex:none; color:var(--muted); font-size:11px; }
+
+/* At narrow widths the command label is the primary target; descriptions must
+   not squeeze it down to an unreadable fragment. */
+@media(max-width:560px) {
+  .command-item .command-detail { display:none; }
+}
+
+/* Coarse pointers need 44px formatting targets; wrapping keeps the toolbar
+   inside a narrow window instead of pushing controls off-screen. */
+@media(pointer:coarse) {
+  .selection-format { max-width:calc(100vw - 16px); flex-wrap:wrap; }
+}
+
+@media(pointer:coarse) {
+  .file-dialog-item { min-height:44px; }
+}
+
+/* Long header menus must scroll inside the viewport at the minimum window
+   height instead of clipping their final actions. */
+#document-more-menu, #document-mode-menu { max-height:calc(100vh - 90px); overflow-y:auto; }
+#tree-menu, #tab-context-menu { max-height:calc(100vh - 16px); overflow-y:auto; }

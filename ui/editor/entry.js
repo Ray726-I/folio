@@ -185,7 +185,8 @@ export function create(options) {
     getHeadings: () => richEditor?.headings() ?? null,
     sourceAtCoords: coords => sourceOnly ? null : richEditor?.sourceAtCoords(coords) ?? null,
     context: () => richEditor?.context?.() ?? null,
-    openBlockMenu: (anchor, trigger) => richEditor?.openBlockMenu?.(anchor, trigger),
+    openBlockMenu: (anchor, trigger, focusMenu = true) => richEditor?.openBlockMenu?.(anchor, trigger, focusMenu),
+    closePopups: () => richEditor?.closePopups?.(),
     stats: () => ({ ...editorStats(), edit: editDebug }),
     resetStats: resetEditorStats,
     debugSelection() {

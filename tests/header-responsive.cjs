@@ -39,6 +39,12 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.waitForFunction(() => !busy && current.content === current.saved);
     await page.setViewportSize({ width: 1180, height: 800 });
     assert.equal(await page.locator('#save').isVisible(), true, 'wide toolbar also uses the save icon');
+    await page.setViewportSize({ width: 600, height: 440 });
+    await page.locator('#document-more-button').click();
+    const menuBox = await page.locator('#document-more-menu').boundingBox();
+    assert.ok(menuBox.y + menuBox.height <= 440, 'the document actions menu stays inside the minimum window height');
+    await page.keyboard.press('Escape');
+    await page.setViewportSize({ width: 1180, height: 800 });
 
     await page.evaluate(() => goHome());
     await page.waitForFunction(() => document.querySelector('#document-view').hidden);

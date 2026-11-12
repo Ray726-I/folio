@@ -61,6 +61,10 @@ fn markdown_options() -> Options<'static> {
     extension.multiline_block_quotes = true;
     extension.alerts = true;
     extension.math_dollars = true;
+    // Native Comrak's LaTeX grammar is authoritative for preview/export. It
+    // intentionally differs from the rich editor's JS tokenizer for escaped
+    // backslashes and multiline inline math; see the parity tests below.
+    extension.math_latex = true;
     extension.math_code = true;
     extension.shortcodes = true;
     extension.wikilinks_title_after_pipe = true;
@@ -106,16 +110,17 @@ fn check_node_budget<'a>(
 /// for a structural budget reason.
 ///
 /// This runs the same preflight scan (source bytes, line count, blockquote
-/// nesting depth), parses the source with the same options used by the renderer
+/// nesting depth, and the conservative LaTeX math scanning budget), parses the
+/// source with the same options used by the renderer
 /// (`markdown_options()`, `render.r#unsafe = true`, `render.sourcepos = true`),
 /// and then checks the AST node budget. It returns the first failure, or `None`
 /// when the document is within those budgets.
 ///
 /// It deliberately does *not* render HTML, sanitize output, resolve images, or
 /// build edit blocks. That makes it a cheap approximation of the render budget:
-/// it covers source size, line count, nesting depth, and AST node count, but it
-/// does not predict the HTML-byte or image-byte limits that only rendering can
-/// discover.
+/// it covers source size, line count, nesting depth, LaTeX math scan work, and
+/// AST node count, but it does not predict the HTML-byte or image-byte limits
+/// that only rendering can discover.
 pub fn preview_check(source: &str, limits: &RenderLimits) -> Option<PreviewLimitError> {
     if let Err(error) = preflight(source, limits) {
         return Some(error);
@@ -977,6 +982,307 @@ mod tests {
         assert!(rendered.contains("data-math-style=\"inline\""));
         assert!(rendered.contains(">x^2<"));
         assert!(rendered.contains("data-math-style=\"display\">z^2"));
+    }
+
+    #[test]
+    fn bracket_tex_delimiters_render_as_math() {
+        let rendered = render(
+            "Inline \\(a+b\\) and display:\n\n\\[\nz^2\n\\]\n\n```\n\\(not math\\)\n```\n\nCode `\\(also code\\)`.\n",
+            None,
+        );
+        assert!(
+            rendered.contains("data-math-style=\"inline\""),
+            "{rendered}"
+        );
+        assert!(rendered.contains(">a+b<"), "{rendered}");
+        assert!(
+            rendered.contains("data-math-style=\"display\""),
+            "{rendered}"
+        );
+        assert!(rendered.contains("z^2"), "{rendered}");
+        assert!(rendered.contains("\\(not math\\)"), "{rendered}");
+        assert!(rendered.contains("\\(also code\\)"), "{rendered}");
+    }
+
+    #[test]
+    fn bracket_math_edit_blocks_keep_math_nodes() {
+        let source = "Inline \\(x\\) and:\n\n\\[\ny\n\\]\n";
+        let blocks = edit_blocks(source);
+        let nodes: Vec<_> = blocks.iter().flat_map(|block| &block.nodes).collect();
+        let math: Vec<_> = nodes.iter().filter(|node| node.kind == "math").collect();
+        assert_eq!(math.len(), 2, "{nodes:?}");
+        assert_eq!(math[0].text.as_deref(), Some("x"));
+        assert_eq!(&source[math[0].start..math[0].end], "\\(x\\)");
+        assert_eq!(math[1].text.as_deref(), Some("\ny\n"));
+        assert_eq!(&source[math[1].start..math[1].end], "\\[\ny\n\\]");
+    }
+
+    #[test]
+    fn indented_code_that_looks_like_a_fence_does_not_hide_later_math() {
+        let cases = [
+            (
+                "    ```\n    \\(backtick code\\)\n\nInline \\(x\\) after.\n",
+                ">x<",
+                "\\(backtick code\\)",
+            ),
+            (
+                "    ~~~\n    \\(tilde code\\)\n\nInline \\(y\\) after.\n",
+                ">y<",
+                "\\(tilde code\\)",
+            ),
+            (
+                "\t```\n\t\\(tab code\\)\n\nInline \\(z\\) after.\n",
+                ">z<",
+                "\\(tab code\\)",
+            ),
+        ];
+        for (source, expected_math, code_text) in cases {
+            let rendered = render(source, None);
+            assert!(
+                rendered.contains("data-math-style=\"inline\""),
+                "later inline math was not normalized for {source:?}: {rendered}"
+            );
+            assert!(
+                rendered.contains(expected_math),
+                "normalized math content missing for {source:?}: {rendered}"
+            );
+            assert!(
+                rendered.contains(code_text),
+                "indented code was rewritten as math for {source:?}: {rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn multiline_code_spans_keep_bracket_tex_literal() {
+        let rendered = render(
+            "A `code\nspan \\(not math\\)` stays code.\n\nInline \\(x\\) works.\n",
+            None,
+        );
+        assert!(
+            rendered.contains("\\(not math\\)"),
+            "multiline code span content was rewritten: {rendered}"
+        );
+        assert!(!rendered.contains("$not math$"), "{rendered}");
+        assert!(
+            rendered.contains("data-math-style=\"inline\""),
+            "later inline math was not normalized: {rendered}"
+        );
+        assert!(rendered.contains(">x<"), "{rendered}");
+    }
+
+    #[test]
+    fn block_math_lookahead_ignores_closers_inside_fences() {
+        let rendered = render("\\[\n\n```\n\\]\n```\n\nInline \\(x\\) works.\n", None);
+        assert!(
+            !rendered.contains("data-math-style=\"display\""),
+            "fenced code closed block math: {rendered}"
+        );
+        assert!(
+            rendered.contains("\\]"),
+            "fenced code content changed: {rendered}"
+        );
+        assert!(
+            rendered.contains("data-math-style=\"inline\""),
+            "later inline math was not normalized: {rendered}"
+        );
+        assert!(rendered.contains(">x<"), "{rendered}");
+    }
+
+    #[test]
+    fn block_math_lookahead_ignores_indented_code_closers() {
+        let rendered = render("\\[\n\n    \\]\n\nInline \\(x\\) works.\n", None);
+        assert!(
+            !rendered.contains("data-math-style=\"display\""),
+            "indented code closed block math: {rendered}"
+        );
+        assert!(
+            rendered.contains("\\]"),
+            "indented code content changed: {rendered}"
+        );
+        assert!(
+            rendered.contains("data-math-style=\"inline\""),
+            "later inline math was not normalized: {rendered}"
+        );
+        assert!(rendered.contains(">x<"), "{rendered}");
+    }
+
+    #[test]
+    fn quoted_and_list_fences_keep_bracket_tex_literal() {
+        let cases = [
+            (
+                "> ```\n> \\(quoted code\\)\n> ```\n\nInline \\(x\\) works.\n",
+                "\\(quoted code\\)",
+            ),
+            (
+                "- ```\n  \\(list code\\)\n  ```\n\nInline \\(y\\) works.\n",
+                "\\(list code\\)",
+            ),
+        ];
+        for (source, code_text) in cases {
+            let rendered = render(source, None);
+            assert!(
+                rendered.contains(code_text),
+                "fenced code content was rewritten: {rendered}"
+            );
+            assert!(
+                !rendered.contains("$quoted code$") && !rendered.contains("$list code$"),
+                "fenced code content became math: {rendered}"
+            );
+            assert!(
+                rendered.contains("data-math-style=\"inline\""),
+                "later inline math was not normalized: {rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn raw_html_pre_keeps_bracket_tex_literal() {
+        let rendered = render(
+            "<pre>\n\\(pre text\\)\n\\[pre display\\]\n</pre>\n\nInline \\(x\\) works.\n",
+            None,
+        );
+        assert!(
+            rendered.contains("\\(pre text\\)"),
+            "raw HTML pre content was rewritten: {rendered}"
+        );
+        assert!(
+            rendered.contains("\\[pre display\\]"),
+            "raw HTML pre display content was rewritten: {rendered}"
+        );
+        assert!(
+            rendered.contains("data-math-style=\"inline\""),
+            "later inline math was not normalized: {rendered}"
+        );
+        assert!(rendered.contains(">x<"), "{rendered}");
+    }
+
+    #[test]
+    fn many_unclosed_block_math_openers_hit_math_complexity_budget() {
+        let mut source = "\\[\n".repeat(10_000);
+        source.push_str("\nInline \\(x\\) works.\n");
+        let started = std::time::Instant::now();
+        let rendered = render(&source, None);
+        let elapsed = started.elapsed();
+        assert!(
+            rendered.contains("data-preview-limit=\"math_complexity\""),
+            "expected a bounded math diagnostic: {rendered}"
+        );
+        assert!(!rendered.contains("data-math-style"), "{rendered}");
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "adversarial block math was not bounded: took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn many_unmatched_inline_openers_hit_math_complexity_budget() {
+        let mut source = "\\(".repeat(20_000);
+        source.push_str(" text\n\nInline \\(x\\) works.\n");
+        let started = std::time::Instant::now();
+        let rendered = render(&source, None);
+        let elapsed = started.elapsed();
+        assert!(
+            rendered.contains("data-preview-limit=\"math_complexity\""),
+            "expected a bounded math diagnostic: {rendered}"
+        );
+        assert!(!rendered.contains("data-math-style"), "{rendered}");
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "adversarial inline math was not bounded: took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn many_unmatched_code_math_openers_hit_math_complexity_budget() {
+        let source = "$`a ".repeat(5_000);
+        let started = std::time::Instant::now();
+        let rendered = render(&source, None);
+        let elapsed = started.elapsed();
+        assert!(
+            rendered.contains("data-preview-limit=\"math_complexity\""),
+            "expected a bounded code-math diagnostic: {rendered}"
+        );
+        assert!(!rendered.contains("data-math-style"), "{rendered}");
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "adversarial code math was not bounded: took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn valid_latex_math_stays_below_the_budget() {
+        let mut source = String::new();
+        for index in 0..2_000 {
+            source.push_str("x \\(a");
+            source.push_str(&index.to_string());
+            source.push_str("\\) ");
+        }
+        let rendered = render(&source, None);
+        assert!(
+            !rendered.contains("data-preview-limit"),
+            "ordinary math was rejected: {rendered}"
+        );
+        assert!(
+            rendered.contains("data-math-style=\"inline\""),
+            "ordinary inline math did not render: {rendered}"
+        );
+    }
+
+    #[test]
+    fn literal_code_with_delimiters_is_conservatively_budgeted() {
+        let small = render("```text\n\\(literal, not math\n```\n", None);
+        assert!(
+            !small.contains("data-preview-limit"),
+            "a small code block must not hit the math budget: {small}"
+        );
+        assert!(small.contains("\\(literal, not math"), "{small}");
+
+        // The budget runs before parsing, so it cannot know these unmatched
+        // openers are inside a code fence. This is the documented conservative
+        // false positive: a pathological code-only document is rejected rather
+        // than risking Comrak's quadratic scanner.
+        let mut source = String::from("```text\n");
+        source.push_str(&"\\(literal\n".repeat(20_000));
+        source.push_str("```\n");
+        let rendered = render(&source, None);
+        assert!(
+            rendered.contains("data-preview-limit=\"math_complexity\""),
+            "expected the conservative code-only budget diagnostic: {rendered}"
+        );
+    }
+
+    #[test]
+    fn native_latex_escaped_backslash_differs_from_the_rich_model() {
+        // Comrak closes at the second backslash of `\\)` because its scanner
+        // does not skip escaped slashes. The rich editor's JS tokenizer skips
+        // the pair and closes at the final `\)`. Preview/export follow Comrak;
+        // this is a known grammar divergence, not exact editor parity.
+        let rendered = render("Inline \\(a\\\\) + b\\) tail.\n", None);
+        assert!(
+            rendered.contains(">a\\</span>"),
+            "native preview should close at the escaped-backslash pair: {rendered}"
+        );
+        assert!(rendered.contains("+ b) tail."), "{rendered}");
+    }
+
+    #[test]
+    fn native_latex_allows_multiline_inline_math_despite_rich_model() {
+        // Comrak's native inline math may cross a soft line break; the rich
+        // editor's JS tokenizer rejects newlines. Preview/export follow Comrak.
+        let rendered = render("Inline \\(a\n+b\\) tail.\n", None);
+        assert!(
+            rendered.contains(">a\n+b</span>"),
+            "native preview should keep the multiline math span: {rendered}"
+        );
+    }
+
+    #[test]
+    fn unmatched_latex_delimiters_render_literally() {
+        let rendered = render("\\(a + b and \\[c + d\n", None);
+        assert!(!rendered.contains("data-math-style"), "{rendered}");
+        assert!(rendered.contains("(a + b"), "{rendered}");
+        assert!(rendered.contains("[c + d"), "{rendered}");
     }
 
     #[test]

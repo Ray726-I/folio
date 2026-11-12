@@ -6,6 +6,11 @@ const { openEditor } = require('./editor-browser.cjs');
   try {
     const { page, errors } = session;
     assert.equal(await page.locator('#all-documents').isVisible(), false, 'All documents is not in the toolbar');
+    await page.locator('#document-more-button').hover();
+    await page.waitForFunction(() => !document.getElementById('document-more-menu').hidden);
+    assert.equal(await page.locator('#document-more-button').getAttribute('aria-expanded'), 'true', 'hover opens document actions');
+    await page.mouse.click(600, 400);
+    await page.waitForFunction(() => document.getElementById('document-more-menu').hidden);
     await page.locator('#document-more-button').click();
     await page.locator('#all-documents').click();
     assert.equal(await page.locator('#command-scope').textContent(), 'Open documents');

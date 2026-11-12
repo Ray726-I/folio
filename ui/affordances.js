@@ -58,9 +58,13 @@ function initializeDocumentAffordances() {
     button.innerHTML=`<svg class="icon" aria-hidden="true"><use href="#${action.icon}"/></svg>`;
     if(action.mark) button.setAttribute('aria-pressed','false');
     if(action.overflow) button.setAttribute('aria-haspopup','menu');
+    let hoverTimer=0;
     const run=()=>{
       if(!documentWritable())return;
       if(action.overflow) {
+        // A click supersedes the pending hover timer; otherwise a fast
+        // Escape could close the picker and the stale timer would reopen it.
+        clearTimeout(hoverTimer); hoverTimer=0;
         // Hover may already have opened the picker; a click must not close and
         // reopen it under the pointer.
         if(!document.querySelector('.folio-slash-menu'))editor?.openBlockMenu?.(button.getBoundingClientRect(), button);
@@ -89,12 +93,11 @@ function initializeDocumentAffordances() {
     });
     button.addEventListener('click',event=>{ if(event.detail===0)run(); });
     if(action.overflow) {
-      let hoverTimer=0;
       const openOnHover=()=>{
         hoverTimer=0;
         if(bubble.hidden||!documentWritable()||document.querySelector('.folio-slash-menu'))return;
         editor?.captureSelection?.();
-        editor?.openBlockMenu?.(button.getBoundingClientRect(), button);
+        editor?.openBlockMenu?.(button.getBoundingClientRect(), button, false);
       };
       button.addEventListener('pointerenter',event=>{
         if(event.pointerType==='touch')return;
@@ -127,7 +130,7 @@ function initializeDocumentAffordances() {
         // Block syntax cannot render inside a code block or a table cell.
         button.disabled=locked||Boolean(context?.table);
       } else {
-        button.disabled=!writable||Boolean(context?.code);
+        button.disabled=!writable||Boolean(context?.code)||(action.overflow&&Boolean(context?.table));
       }
     }
   }
@@ -193,12 +196,23 @@ function initializeDocumentAffordances() {
     bubble.style.setProperty('--pointer-left',`${Math.round(pointer)}px`);
     refreshFormatState();
   };
-  const schedule=()=>{if(!bubbleFrame)bubbleFrame=requestAnimationFrame(updateBubble);};
+  const schedule=()=>{
+    const selection=getSelection();
+    if(bubble.hidden&&(!selection||selection.isCollapsed))return;
+    if(!bubbleFrame)bubbleFrame=requestAnimationFrame(updateBubble);
+  };
   document.addEventListener('selectionchange',schedule);window.addEventListener('scroll',schedule,true);window.addEventListener('resize',schedule);
+  // Clicking chrome, a menu or the companion must not leave the formatting
+  // toolbar floating over unrelated UI; a new text selection re-shows it.
+  document.addEventListener('pointerdown',event=>{ if(!bubble.contains(event.target)&&!event.target.closest?.('#preview'))hideFormatToolbar(); },true);
   new MutationObserver(schedule).observe(root,{attributes:true,attributeFilter:['data-document-mode']});
   // Formatting can rebuild the paragraph DOM and leave the toolbar hidden
   // without a second selectionchange; reschedule after editor mutations too.
-  new MutationObserver(schedule).observe($('preview'),{childList:true,subtree:true});
+  new MutationObserver(() => {
+    const selection=getSelection();
+    if(bubble.hidden&&(!selection||selection.isCollapsed))return;
+    schedule();
+  }).observe($('preview'),{childList:true,subtree:true});
   bubble.onkeydown=event=>{if(event.key==='Escape'){event.preventDefault();hideFormatToolbar();editor?.focus();}};
   document.addEventListener('keydown',event=>{
     if(event.key!=='Escape'||bubble.hidden)return;
@@ -210,7 +224,11 @@ function initializeDocumentAffordances() {
   },true);
   const progress=document.createElement('span');progress.id='reading-progress';progress.setAttribute('aria-label','Reading progress');$('statusbar').querySelector('.status-start').append(progress);
   const updateProgress=()=>{const scroller=$(focusedPane==='companion'?'companion-scroll':'reader-scroll'),range=scroller.scrollHeight-scroller.clientHeight;progress.hidden=!current.active||documentMode==='source'||range<scroller.clientHeight;progress.textContent=` · ${Math.round(range>0?100*scroller.scrollTop/range:100)}%`;};
-  for(const id of ['reader-scroll','companion-scroll'])$(id).addEventListener('scroll',updateProgress,{passive:true});new ResizeObserver(updateProgress).observe($('preview'));updateProgress();
+  // Scroll events can arrive several times per frame. Read layout and paint
+  // the percentage at most once per frame instead of on every event.
+  let progressFrame=0;
+  const scheduleProgress=()=>{if(!progressFrame)progressFrame=requestAnimationFrame(()=>{progressFrame=0;updateProgress();});};
+  for(const id of ['reader-scroll','companion-scroll'])$(id).addEventListener('scroll',scheduleProgress,{passive:true});new ResizeObserver(scheduleProgress).observe($('preview'));updateProgress();
   // Chrome is never part of document selection. During cross-pane drags the
   // other reading surface is excluded as well, then restored at gesture end.
   let selectionOwner=null, selectionPoint=null;

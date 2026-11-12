@@ -186,9 +186,38 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.locator('.selection-format-button[data-action="more"]').hover();
     await page.locator('.folio-slash-menu').waitFor({ state: 'visible', timeout: 2500 });
     assert.equal(await page.locator('.folio-slash-menu').count(), 1, 'hover opens the block picker');
+    assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('ProseMirror')), true, 'hover does not steal editor focus');
     await page.locator('#reader-scroll').click({ position: { x: 40, y: 300 } });
     await page.waitForTimeout(150);
     assert.equal(await page.locator('.folio-slash-menu').count(), 0, 'outside click dismisses the hover-opened picker');
+    await selectSource('keyboard', 8);
+    await page.locator('.selection-format-button[data-action="more"]').hover();
+    await page.locator('.folio-slash-menu').waitFor({ state: 'visible', timeout: 2500 });
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    assert.equal(await page.locator('.folio-slash-menu').count(), 0, 'Escape closes a hover-opened picker and it stays closed');
+    await selectSource('keyboard', 8);
+    await page.locator('.selection-format-button[data-action="more"]').click();
+    await page.locator('.folio-slash-menu').waitFor({ state: 'visible' });
+    await page.keyboard.press('Control+Shift+p');
+    await page.waitForSelector('#command-dialog[open]');
+    assert.equal(await page.locator('.folio-slash-menu').count(), 0, 'opening the command window closes the block picker');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(250);
+    // Dismissal is synchronous, not deferred to the dialog's queued toggle
+    // event; otherwise a visible check racing that task still sees the picker.
+    await selectSource('keyboard', 8);
+    const synchronousDismissal = await page.evaluate(() => {
+      const button = document.querySelector('.selection-format-button[data-action="more"]');
+      editor.openBlockMenu(button.getBoundingClientRect(), button, false);
+      const opened = document.querySelectorAll('.folio-slash-menu').length;
+      openCommands();
+      const dismissed = document.querySelectorAll('.folio-slash-menu').length;
+      $('command-dialog').close();
+      return { opened, dismissed };
+    });
+    assert.equal(synchronousDismissal.opened, 1, 'block picker opens for the synchronous dismissal check');
+    assert.equal(synchronousDismissal.dismissed, 0, 'opening the command window dismisses the block picker in the same task');
     assert.deepEqual(session.errors, []);
     console.log('PASS: selection toolbar states, positioning, persistence and Escape');
   } finally { await session.close(); }

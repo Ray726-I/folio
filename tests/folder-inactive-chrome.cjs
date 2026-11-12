@@ -15,6 +15,8 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.equal(await page.getByRole('button', { name: 'Outline', exact: true }).getAttribute('aria-pressed'), 'false');
     assert.equal(await page.locator('[data-rail-action="find"]').isDisabled(), false);
     assert.equal(await page.getByRole('button', { name: 'Files', exact: true }).getAttribute('aria-pressed'), 'true');
+    await page.keyboard.press('Control+h');
+    assert.equal(await page.locator('#replace-bar').isHidden(), true, 'replace does not open without a document');
     await page.evaluate(() => openPath('/tmp/test.md'));
     await page.waitForFunction(() => current.active && editor);
     assert.equal(await page.getByRole('button', { name: 'Outline', exact: true }).isEnabled(), true);

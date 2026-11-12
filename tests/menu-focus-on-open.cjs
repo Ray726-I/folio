@@ -54,6 +54,19 @@ const ringedItems = page => page.evaluate(() => [...document.querySelectorAll('.
     await page.keyboard.press('Escape');
     assert.equal(await activeId(page), 'document-more-button', 'closing returns focus to its trigger');
 
+    // Hover-open must not move focus out of the document, and typing dismisses it.
+    await page.locator('#reader-scroll').focus();
+    await page.mouse.move(600, 400);
+    await page.locator('#document-more-button').hover();
+    await page.waitForFunction(() => !document.getElementById('document-more-menu').hidden);
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'reader-scroll', 'hover-open keeps document focus');
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.getElementById('document-more-menu').hidden);
+    await page.locator('#document-more-button').click();
+    await page.keyboard.press('ArrowUp');
+    assert.equal(await page.evaluate(() => document.activeElement?.textContent.trim().endsWith('Close document')), true, 'ArrowUp from the menu container reaches the last item');
+    await page.keyboard.press('Escape');
+
     assert.deepEqual(session.errors, []);
     console.log('PASS: pointer-opened menus show no focus ring until keyboard focus enters them.');
   } finally { await session.close(); }

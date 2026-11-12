@@ -31,7 +31,9 @@ function activateRetroTheme() {
 function activateReadingGuide() {
   const guideReader = $('reader-scroll'), guidePane = guideReader.closest('.pane-layout') || guideReader;
   guidePane.before($('reading-guide-template').content.cloneNode(true));
+  $('reading-guide-toolbar').hidden = !current.active;
   document.body.classList.add('lab-reading-guide');
+  if (typeof syncDocumentChrome === 'function') syncDocumentChrome();
 // The marker is a separate overlay: it never changes the editor's document DOM.
 const guideMarker = $('reading-guide-marker');
 const controller = new AbortController(), signal = controller.signal;
@@ -113,6 +115,7 @@ return () => {
   cancelAnimationFrame(guideFrame); clearTimeout(guideTimer);
   $('reading-guide-toolbar')?.remove(); guideMarker.remove();
   document.body.classList.remove('lab-reading-guide');
+  if (typeof syncDocumentChrome === 'function') syncDocumentChrome();
 };
 }
 const labExtensions = new Map([
@@ -136,7 +139,7 @@ function syncLab() {
   $('lab-guide').textContent = enabled ? 'Disable Reading Guide' : 'Enable Reading Guide';
   $('lab-guide').setAttribute('aria-pressed', String(enabled));
 }
-function openLab() { syncLab(); labDialog.showModal(); $('lab-close').focus(); }
+function openLab() { syncLab(); if (labDialog.open) { $('lab-close').focus(); return; } labDialog.showModal(); $('lab-close').focus(); }
 $('lab-search').addEventListener('input', event => {
   const query = event.target.value.trim().toLocaleLowerCase();
   let visible = 0;

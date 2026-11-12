@@ -11,8 +11,9 @@ let remoteImages = preferences.get('remoteImages', false) === true;
 let readingFont = ['serif', 'sans', 'mono'].includes(preferences.get('readingFont', 'sans')) ? preferences.get('readingFont', 'sans') : 'sans';
 const legacyOutline = preferences.get('outline', null);
 if (preferences.get('outlineWidth', null) === null && typeof legacyOutline === 'number') preferences.set('outlineWidth', legacyOutline);
-let outlineVisible = preferences.get('outlineVisible', typeof legacyOutline === 'boolean' ? legacyOutline : true), toastTimer;
-let wideLayout = preferences.get('wideLayout', false);
+const storedOutlineVisible = preferences.get('outlineVisible', null);
+let outlineVisible = typeof storedOutlineVisible === 'boolean' ? storedOutlineVisible : typeof legacyOutline === 'boolean' ? legacyOutline : true, toastTimer;
+let wideLayout = preferences.get('wideLayout', false) === true;
 function filePicker() { const value = preferences.get('filePicker', 'folio'); return value === 'native' ? 'native' : 'folio'; }
 function syncOpenAffordance() {
   const native = filePicker() === 'native';
@@ -45,7 +46,7 @@ const dirty = () => current.content !== current.saved;
 // Persistent save indicator state: null when it should mirror dirty/clean,
 // 'saving' while a save is in flight, or { error } after a rejected save
 // until the next save attempt. Rendered visibly by updateTitle().
-let saveStatus = null;
+let saveStatus = null, diskBannerDismissedFor = null;
 function saveState() {
   const owner = focusedDocument();
   syncSaveMachine(owner);
@@ -88,7 +89,7 @@ function updateTitle() {
   // these values, so when none of them changed there is nothing to write: the
   // name, dirty flag and save state are stable for the whole typing burst.
   const state = saveState();
-  const key = [name, owner.path || activeFolder?.path || '', owner.active ? 1 : 0,
+  const key = [name, owner.documentId || '', owner.path || activeFolder?.path || '', owner.active ? 1 : 0,
     (owner.content !== owner.saved) ? 1 : 0, state.text, state.state, ownerStatus?.error || '', documentMode, documentReadOnly, owner.writable].join('\u0000');
   if (key === renderedTitleKey) return;
   renderedTitleKey = key;
@@ -122,7 +123,7 @@ function updateTitle() {
   saveButton.setAttribute('aria-label', compactSaveLabel);
   saveStateElement.setAttribute('aria-label', state.state === 'error' && ownerStatus?.error ? `Save failed: ${ownerStatus.error}` : `Save state: ${accessibleText || 'no document'}`);
   clearTimeout(titleTimer);
-  titleTimer = setTimeout(() => sendTitle(name, (owner.content !== owner.saved)), 120);
+  titleTimer = setTimeout(() => sendTitle(name || 'Folio', (owner.content !== owner.saved)), 120);
 }
 function countWords(text) {
   let words = 0, inWord = false;
@@ -153,27 +154,37 @@ function setLineEnding(lineEnding) {
 }
 function showDocument() {
   $('welcome').hidden = true; document.querySelector('.headerbar').hidden = false; $('document-tabs').hidden = false; $('document-view').hidden = false; $('statusbar').hidden = false;
+  // A folder-only surface has no document to search; never leave a document
+  // find/replace row floating over it.
+  if (!current.active) { $('find-bar').hidden = true; $('replace-bar').hidden = true; }
   $('home').disabled = false;
   document.querySelectorAll('.document-control').forEach(control => { control.hidden = !current.active; });
   if (!current.active) editorPresentation(false, false, false);
   $('disk-banner').hidden = true; saveStatus = current.saveStatus || null; updateTitle(); updateStats();
   // Opening a file keeps whichever dock mode is open, so picking from the tree
-  // does not yank the tree away from under the pointer.
+  // does not yank the tree away from under the pointer. For a folder-only view
+  // the explorer is the whole point, so open it after any narrow auto-close.
+  syncDockForViewport();
   if (!current.active && activeFolder) setFolderVisible(true);
   else renderNavigationDock();
-  syncDockForViewport();
   $('folder-empty').hidden = current.active || !activeFolder;
   syncFolderSelection();
   syncSurfaceMachine();
   syncFindMachine();
+  // showDocument's document-control pass unhides the mode/more groups. Run
+  // the mode renderer last so companion focus still hides controls that would
+  // act on the main pane.
+  if (typeof syncDocumentMode === 'function') syncDocumentMode();
 }
 function showWelcome() {
-  editor?.destroy(); editor = null; editorDocument = null; cancelMermaidPending();
+  documentLimited = false;
+  if (companionDocument && (companionDocument === current || !documents.has(companionDocument.documentId))) closeReadingCompanion();
+  editor?.destroy(); editor = null; editorDocument = null; previewSnapshot = null; cancelMermaidPending();
   previewMachine.send('IDLE');
   $('welcome').hidden = false; document.querySelector('.headerbar').hidden = true; $('document-view').hidden = true; $('statusbar').hidden = true;
   $('home').disabled = true;
   $('preview').replaceChildren(); $('folder-empty').hidden = true;
-  $('disk-banner').hidden = true; $('find-bar').hidden = true;
+  $('disk-banner').hidden = true; $('find-bar').hidden = true; $('replace-bar').hidden = true;
   $('outline').hidden = true; $('outline-divider').hidden = true;
   $('file-browser').hidden = true; $('folder-divider').hidden = true;
   $('folder-search').hidden = true; $('search-divider').hidden = true; ++grepEpoch;
@@ -181,10 +192,12 @@ function showWelcome() {
   document.querySelectorAll('.document-control').forEach(control => { control.hidden = true; });
   editorPresentation(false, false, false);
   modeMachine.sync('reading', { readOnly: false, writable: true, transitioning: Boolean(transitionLocked), companion: false }, 'welcome');
-  saveStatus = null; updateTitle(); updateStats();
+  saveStatus = null; syncFindMachine(); updateTitle(); updateStats();
   syncSurfaceMachine();
-  syncFindMachine();
   renderTabs();
+  // The document surface (and any focused editor inside it) is gone. Put
+  // keyboard focus on the primary welcome action instead of leaving it on body.
+  $('welcome-open').focus({ preventScroll: true });
 }
 function goHome() {
   return enqueue(async () => {
@@ -210,7 +223,7 @@ function goHome() {
   });
 }
 const narrowDrawers = () => window.matchMedia('(max-width:980px)').matches;
-let dockAutoClosed = false;
+let dockAutoClosed = false, dockAutoClosedTab = null;
 function syncDocumentChrome() {
   const view = document.getElementById('document-view');
   const reader = document.getElementById('reader-scroll');
@@ -221,9 +234,15 @@ function syncDocumentChrome() {
 function syncDockForViewport() {
   const narrow = narrowDrawers();
   if (narrow && !dockAutoClosed) {
-    if (dockVisible) { dockVisible = false; dockAutoClosed = true; renderNavigationDock(); }
+    if (dockVisible) { dockAutoClosed = true; dockAutoClosedTab = dockTab; dockVisible = false; renderNavigationDock(); }
   } else if (!narrow && dockAutoClosed) {
-    dockAutoClosed = false; dockVisible = outlineVisible; renderNavigationDock();
+    // Restore the panel that was open before the window narrowed, not always
+    // the outline: a file browser or folder search should come back too.
+    const previousTab = dockAutoClosedTab;
+    dockAutoClosed = false; dockAutoClosedTab = null;
+    if (previousTab) { dockTab = previousTab; dockVisible = true; }
+    else dockVisible = outlineVisible;
+    renderNavigationDock();
   }
   syncDocumentChrome();
 }
@@ -233,10 +252,12 @@ function renderNavigationDock() {
   const show = dockVisible && !$('document-view').hidden;
   $('folder-search').hidden = !(show && dockTab === 'search' && activeFolder);
   $('search-divider').hidden = $('folder-search').hidden;
+  const outlineStateCurrent = typeof outlineStateDocument !== 'undefined' && outlineStateDocument === current;
+  const outlineAvailable = Boolean(current.active && !documentLimited && (!outlineStateCurrent || outlineEntries.length > 0));
   // Showing the panel must also fill it: resizes and first shows can unhide
   // it without any outline refresh having run (or after one early-returned
   // while hidden), which otherwise leaves a visible "No headings" panel.
-  const outlineShouldShow = show && dockTab === 'outline' && current.active;
+  const outlineShouldShow = show && dockTab === 'outline' && outlineAvailable;
   const outlineNewlyShown = outlineShouldShow && $('outline').hidden;
   $('outline').hidden = !outlineShouldShow;
   if (outlineNewlyShown && typeof scheduleEditorOutline === 'function') scheduleEditorOutline();
@@ -247,11 +268,14 @@ function renderNavigationDock() {
   $('folder-refresh').hidden = !activeFolder;
   $('folder-new').hidden = !activeFolder;
   for (const tab of document.querySelectorAll('[data-dock-tab]')) {
-    // Contents has nothing to list without a document; keep the rail honest
-    // instead of exposing a mode that would open an empty panel.
-    const available = tab.dataset.dockTab !== 'outline' || current.active;
+    // Contents has nothing to list without a document or headings; keep the
+    // rail honest instead of exposing a mode that would open an empty panel.
+    // Before the first outline build, stay optimistic so the panel can open
+    // and then reconcile itself.
+    const available = tab.dataset.dockTab !== 'outline' || outlineAvailable;
     tab.disabled = !available;
     tab.setAttribute('aria-pressed', String(available && show && tab.dataset.dockTab === dockTab));
+    if (tab.dataset.dockTab === 'outline') tab.title = available ? 'Outline — click again to close' : 'Outline — add a heading first';
   }
   syncFindControl();
 }
@@ -260,15 +284,18 @@ function renderNavigationDock() {
 function syncFindControl() {
   const button = document.querySelector('[data-rail-action="find"]');
   if (!button) return;
-  button.disabled = !current.active && !activeFolder;
-  button.setAttribute('aria-pressed', String(activeFolder ? dockVisible && dockTab === 'search' : !$('find-bar').hidden));
-  button.setAttribute('aria-controls', activeFolder ? 'folder-search' : 'find-bar');
-  button.setAttribute('aria-label', activeFolder ? 'Search folder contents' : 'Search document');
-  button.title = activeFolder ? 'Search folder contents (Ctrl+Shift+F)' : 'Search document (Ctrl+F)';
+  const companionFind = Boolean($('companion-find') && !$('companion-find').hidden);
+  const companionTarget = companionFind || (typeof focusedPane !== 'undefined' && focusedPane === 'companion');
+  button.disabled = !companionTarget && !current.active && !activeFolder;
+  button.setAttribute('aria-pressed', String(companionTarget ? companionFind : activeFolder ? dockVisible && dockTab === 'search' : !$('find-bar').hidden));
+  button.setAttribute('aria-controls', companionTarget ? 'companion-find' : activeFolder ? 'folder-search' : 'find-bar');
+  button.setAttribute('aria-label', companionTarget ? 'Search reading companion' : activeFolder ? 'Search folder contents' : 'Search document');
+  button.title = companionTarget ? 'Search reading companion (Ctrl+F)' : activeFolder ? 'Search folder contents (Ctrl+Shift+F)' : 'Search document (Ctrl+F)';
 }
 // The rail is the only sidebar control: pressing the active mode closes the
 // dock, pressing the other mode switches to it.
 function toggleDock(tab) {
+  if (typeof closeEditorPopups === 'function') closeEditorPopups();
   if (tab === 'search') {
     if (dockVisible && dockTab === 'search') { dockVisible = false; renderNavigationDock(); }
     else openFolderSearch();
@@ -281,10 +308,11 @@ function toggleDock(tab) {
   else setFolderVisible(true);
 }
 function setOutline(visible, persist = true) {
-  // Contents needs a document; the rail disables the mode before this runs.
-  if (visible && !current.active) return;
+  // Contents needs a formatted document; the rail disables the mode before
+  // this runs, and an over-limit document has no editor headings to list.
+  if (visible && (!current.active || documentLimited || (typeof outlineStateDocument !== 'undefined' && outlineStateDocument === current && !outlineEntries.length))) return;
   outlineVisible = visible;
-  if (visible) { dockTab = 'outline'; dockVisible = true; folderVisible = false; }
+  if (visible) { dockTab = 'outline'; dockVisible = true; dockAutoClosed = false; dockAutoClosedTab = null; folderVisible = false; }
   else if (dockTab === 'outline') dockVisible = false;
   renderNavigationDock();
   if (persist) preferences.set('outlineVisible', visible);
@@ -467,25 +495,34 @@ async function openPath(path, confirmed = false) {
   status('Opening…');
   // Native open switches backend active-document state before it resolves, so
   // the outgoing document must become immutable before the call starts. Keep
-  // the guard through replacement and new-editor mounting, and always release.
+  // the guard through replacement and new-editor mounting, and restore the
+  // previous lock state so a nested reload during Save cannot release an outer
+  // transition (for example while moving a file to Trash).
+  const wasLocked = transitionLocked;
   try {
     rememberDocument();
     setTransitionLocked(true);
     const document = await invoke('open_document', { path, reuseExisting: !confirmed });
-    if (!confirmed && document.documentId && documents.has(document.documentId)) return activateDocument(documents.get(document.documentId), false);
+    if (!document || typeof document !== 'object' || typeof document.content !== 'string' || typeof document.path !== 'string') throw new Error('The document could not be opened.');
+    if (!confirmed && document.documentId && documents.has(document.documentId)) return await activateDocument(documents.get(document.documentId), false);
     ++renderGeneration;
     previewSnapshot = null;
-    current = { ...document, saved: document.content, writable: document.writable !== false, active: true };
+    current = { ...document, name: document.name || basename(document.path), saved: document.content, writable: document.writable !== false, active: true };
     const previousVersion = current.documentId && documents.get(current.documentId);
     if (confirmed && previousVersion) { current.revision = Math.max(current.revision || 0, previousVersion.revision || 0); await recoveryWriter.saved(previousVersion, previousVersion.revision || 0); }
     registerDocument(current);
+    if (companionDocument && companionDocument !== current && current.documentId && companionDocument.documentId === current.documentId) companionDocument = current;
     resetDocumentPresentation(); recordDocumentNavigation(current.path);
     if (!document.documentId && activeFolder && !samePath(document.path, activeFolder.path) && !isWithin(document.path, activeFolder.path)) { activeFolder = null; folderEntries = []; expandedFolders.clear(); }
     if (activeFolder) expandParentsOf(document.path);
     setLineEnding(document.lineEnding || null);
-    showDocument(); focusPane('main'); $('reader-scroll').scrollTop = 0; await refreshEditorSurface(); scheduleCompanionRender(0); addRecent(current.path); return true;
+    showDocument(); focusPane('main'); $('reader-scroll').scrollTop = 0; await refreshEditorSurface(); scheduleCompanionRender(0); addRecent(current.path);
+    // A picker/menu opener is hidden after opening; do not strand keyboard
+    // focus on <body>. Leave focus alone when the user opened from the tree.
+    if (!globalThis.document.activeElement || globalThis.document.activeElement === globalThis.document.body) $('reader-scroll').focus({ preventScroll: true });
+    return true;
   } finally {
-    setTransitionLocked(false);
+    setTransitionLocked(wasLocked);
   }
 }
 function requestOpen(path) { return enqueue(() => openPath(path)); }
@@ -513,7 +550,7 @@ async function browseTo(path) {
     $('open-items').append(row);
   }
   if (!pickerListing.entries.length) { const empty = document.createElement('p'); empty.className = 'empty-results'; empty.textContent = 'No Markdown files or folders here'; $('open-items').append(empty); }
-  if (restoreFocus) $('open-items').querySelector('.file-dialog-item')?.focus();
+  if (restoreFocus) ($('open-items').querySelector('.file-dialog-item') || $('open-path'))?.focus();
 }
 function selectPickerRow(row) {
   const entry = row?.__folioPickerEntry;
@@ -546,7 +583,7 @@ async function openChooser() {
     const initial = activeFolder?.path || (current.path ? dirname(current.path) : null);
     await browseTo(initial);
     if (!$('open-dialog').open) $('open-dialog').showModal();
-    $('open-items').querySelector('button')?.focus();
+    ($('open-items').querySelector('button') || $('open-dialog-close'))?.focus();
   } catch (error) { toast(error); }
 }
 function confirmOpenPicker() {
@@ -557,11 +594,13 @@ function confirmOpenPicker() {
 }
 function openEntry() {
   closeAllMenus();
+  if (typeof closeEditorPopups === 'function') closeEditorPopups();
   if (filePicker() === 'native') return openNative('file');
   return openChooser();
 }
 function openFolderEntry() {
   closeAllMenus();
+  if (typeof closeEditorPopups === 'function') closeEditorPopups();
   if (filePicker() === 'native') return openNative('folder');
   return openChooser();
 }
@@ -588,7 +627,7 @@ async function openNative(kind) {
 }
 function setFolderVisible(visible) {
   folderVisible = visible;
-  if (visible) { dockTab = 'files'; dockVisible = true; outlineVisible = false; }
+  if (visible) { dockTab = 'files'; dockVisible = true; dockAutoClosed = false; dockAutoClosedTab = null; outlineVisible = false; }
   else if (dockTab === 'files') dockVisible = false;
   renderNavigationDock();
 }
@@ -660,6 +699,9 @@ function renderFolderEntries() {
     const target = [...list.querySelectorAll('.folder-entry')].find(button => button.dataset.path === previousFocus);
     if (target) { target.focus({ preventScroll: true }); target.scrollIntoView({ block: 'nearest' }); }
   }
+  const hasFiles = folderEntries.some(entry => !entry.directory);
+  $('folder-empty').querySelector('h1').textContent = hasFiles ? 'Folder opened' : 'No Markdown files';
+  $('folder-empty').querySelector('p').textContent = hasFiles ? 'Open file explorer (Ctrl+B) or use Quick open (Ctrl+P) to choose a Markdown file.' : 'This folder has no Markdown files. Open another folder to browse it.';
   renderedFolder = { path: activeFolder?.path || null, entries: folderEntries };
 }
 function syncFolderSelection() {
@@ -673,7 +715,7 @@ function syncFolderSelection() {
   }
 }
 async function openFolderPath(path, confirmed = false) {
-  if (documents.size) { const listing = await invoke('open_folder', { path }); activeFolder = { path: listing.path, name: listing.name }; folderEntries = listing.entries; expandedFolders.clear(); clearFolderSearch(); if ($('document-view').hidden) { showDocument(); await refreshEditorSurface(); } renderFolderEntries(); dockTab = 'files'; dockVisible = true; renderNavigationDock(); return true; }
+  if (documents.size) { const listing = await invoke('open_folder', { path }); if (!listing || !Array.isArray(listing.entries)) throw new Error('The folder could not be read.'); activeFolder = { path: listing.path, name: listing.name || basename(listing.path) }; folderEntries = listing.entries; expandedFolders.clear(); folderVisible = true; outlineVisible = false; clearFolderSearch(); if ($('document-view').hidden) { showDocument(); await refreshEditorSurface(); } renderFolderEntries(); dockTab = 'files'; dockVisible = true; dockAutoClosed = false; dockAutoClosedTab = null; renderNavigationDock(); if (!current.active) ($('folder-items').querySelector('.folder-entry') || $('folder-new'))?.focus({ preventScroll: true }); return true; }
   if (!confirmed && !(await allowDiscard())) return false;
   // The scan and the backend document reset are asynchronous, so protect the
   // outgoing document as soon as departure is approved. Otherwise typing during
@@ -685,13 +727,15 @@ async function openFolderPath(path, confirmed = false) {
     // Scan first: if the folder cannot be read, keep the current document intact
     // instead of leaving the backend and UI out of sync.
     const listing = await invoke('open_folder', { path });
+    if (!listing || !Array.isArray(listing.entries)) throw new Error('The folder could not be read.');
     await invoke('new_document');
+    if (companionDocument === current) closeReadingCompanion();
     ++renderGeneration;
-    activeFolder = { path: listing.path, name: listing.name }; folderEntries = listing.entries;
+    activeFolder = { path: listing.path, name: listing.name || basename(listing.path) }; folderEntries = listing.entries;
     clearFolderSearch();
     expandedFolders.clear(); folderVisible = true;
     current = { path: null, name: 'Untitled.md', content: '', saved: '', active: false };
-    previewSnapshot = null;
+    previewSnapshot = null; $('find-bar').hidden = true; $('replace-bar').hidden = true; syncFindMachine();
     setLineEnding(null);
     mode = 'read'; root.dataset.mode = mode;
     $('reader-scroll').hidden = false;
@@ -705,6 +749,9 @@ async function openFolderPath(path, confirmed = false) {
     if (listing.skipped) limits.push(`${listing.skipped} unreadable ${listing.skipped === 1 ? 'entry was' : 'entries were'} skipped`);
     if (listing.truncated) limits.push('only the first 5,000 entries are shown');
     if (limits.length) toast(`Folder opened with limits: ${limits.join('; ')}.`);
+    // The picker/menu opener is gone; put keyboard focus on the first file so
+    // the tree can be browsed without tabbing through the whole chrome.
+    ($('folder-items').querySelector('.folder-entry') || $('folder-new'))?.focus({ preventScroll: true });
     return true;
   } finally {
     setTransitionLocked(false);
@@ -720,13 +767,28 @@ async function save(saveAs = false, force = false, owner = current, automatic = 
   if (!owner.active || owner.closing) return false;
   if (!saveAs && ((owner === current ? documentReadOnly : owner.view?.readOnly) || owner.writable === false)) { toast('This document is read-only. Use Save as to create a writable copy.'); return false; }
   if (owner === current) editor?.checkpoint();
-  const snapshot = owner.content, savedRevision = owner.revision || 0;
+  const snapshot = owner.content, savedRevision = owner.revision || 0, previousPath = owner.path;
   const setSaveStatus = value => { owner.saveStatus = value; if (owner.view) owner.view.saveStatus = value; if (owner === current) saveStatus = value; if (owner === focusedDocument()) updateTitle(); };
-  if (owner === current) status('Saving…'); setSaveStatus('saving');
+  if (owner === current && !automatic) status('Saving…'); setSaveStatus('saving');
   try {
     const saved = await invoke('save_document', { documentId: owner.documentId, content: snapshot, saveAs, force });
-    if (!saved) { setSaveStatus(null); if (owner === current) status(''); return false; }
-    owner.path = saved.path; owner.name = saved.name; owner.saved = snapshot; owner.autoSavePaused = false; if (saveAs) { owner.writable = true; if (owner === current) documentReadOnly = false; } await recoveryWriter.saved(owner, savedRevision); renderTabs(); persistWorkspace(); setSaveStatus(null); if (owner !== current) return true; $('disk-banner').hidden = true; addRecent(owner.path); status('Saved');
+    if (!saved || typeof saved !== 'object' || typeof saved.path !== 'string') { setSaveStatus(null); if (owner === current) status(''); return false; }
+    const pathChanged = saved.path !== previousPath;
+    owner.path = saved.path; owner.name = saved.name || basename(saved.path); owner.saved = snapshot; owner.autoSavePaused = false; if (saveAs) { owner.writable = true; if (owner === current) documentReadOnly = false; } await recoveryWriter.saved(owner, savedRevision); renderTabs(); persistWorkspace(); setSaveStatus(null);
+    if (automatic) {
+      // Background autosave must stay invisible: no status flash, recent-list
+      // churn or preview rebuild while the user is typing.
+      if (owner === current && !$('disk-banner').hidden) { $('disk-banner').hidden = true; syncDocumentChrome(); }
+      return true;
+    }
+    if (pathChanged && activeFolder) { if (typeof expandParentsOf === 'function') expandParentsOf(owner.path); if (typeof refreshTreeEntries === 'function') refreshTreeEntries().catch(toast); }
+    if (pathChanged && typeof scheduleCompanionRender === 'function' && companionDocument === owner) scheduleCompanionRender(0);
+    if (owner !== current) {
+      if (pathChanged) addRecent(owner.path);
+      return true;
+    }
+    if (!$('disk-banner').hidden) { $('disk-banner').hidden = true; syncDocumentChrome(); }
+    addRecent(owner.path); status('Saved');
     await renderPreview();
     return true;
   } catch (error) {
@@ -748,8 +810,9 @@ async function save(saveAs = false, force = false, owner = current, automatic = 
 const documentSaves = new Map();
 function requestSave(saveAs = false) {
   if (transitionLocked) return Promise.resolve(false);
-  if (!current.documentId) return enqueue(() => save(saveAs));
-  const owner = focusedDocument(), previous = documentSaves.get(owner.documentId);
+  const owner = focusedDocument();
+  if (!owner.documentId) return enqueue(() => save(saveAs, false, owner));
+  const previous = documentSaves.get(owner.documentId);
   const operation = previous ? previous.catch(() => {}).then(() => save(saveAs, false, owner)) : save(saveAs, false, owner);
   documentSaves.set(owner.documentId, operation);
   operation.catch(toast).finally(() => { if (documentSaves.get(owner.documentId) === operation) documentSaves.delete(owner.documentId); });
@@ -777,10 +840,10 @@ function newDocument(sample = false) {
     }
   });
 }
-function addRecent(path) { const recent = preferences.get('recent', []); preferences.set('recent', [path, ...recent.filter(item => !samePath(item, path))].slice(0, 6)); renderRecent(); }
+function addRecent(path) { if (typeof path !== 'string' || !path) return; const stored = preferences.get('recent', []), recent = (Array.isArray(stored) ? stored : []).filter(item => typeof item === 'string' && item); preferences.set('recent', [path, ...recent.filter(item => !samePath(item, path))].slice(0, 6)); renderRecent(); }
 function renderRecent() {
   renderRecentMenu();
-  const recent = preferences.get('recent', []); $('recent-section').hidden = !recent.length; $('recent-files').replaceChildren();
+  const stored = preferences.get('recent', []), recent = (Array.isArray(stored) ? stored : []).filter(path => typeof path === 'string' && path); $('recent-section').hidden = !recent.length; $('recent-files').replaceChildren();
   for (const path of recent.slice(0, 4)) {
     const button = document.createElement('button'); button.className = 'recent-file'; button.append(fileIcon(path));
     const text = document.createElement('div'), name = document.createElement('strong'), location = document.createElement('small');
@@ -967,6 +1030,9 @@ function filterCommands() {
 }
 function openCommands(scope = 'commands') {
   closeAllMenus();
+  // The dialog's toggle event is asynchronous, so dismiss editor popups here:
+  // the palette must not appear above a still-mounted block picker or reader popup.
+  if (typeof closeEditorPopups === 'function') closeEditorPopups();
   commandScope = scope;
   selectedCommand = 0;
   $('command-search').value = '';
@@ -994,7 +1060,10 @@ function executeCommand(index) {
   const dialog = $('command-dialog');
   const wasOpen = dialog.open;
   if (wasOpen) dialog.close();
-  const action = () => Promise.resolve(row.command.action()).catch(toast);
+  const action = () => {
+    try { return Promise.resolve(row.command.action()).catch(toast); }
+    catch (error) { toast(error); return Promise.resolve(false); }
+  };
   if (!wasOpen || !row.command.defer) { action(); return; }
   // Paint the dismissal before running expensive commands. A theme change
   // restyles the whole document, and doing that in the same task held the
@@ -1031,9 +1100,17 @@ let matches = [], findIndex = -1, findSource = null;
 function openFind() {
   if (focusedPane === 'companion') return openCompanionFind();
   if (!current.active) return;
+  if (typeof closeEditorPopups === 'function') closeEditorPopups();
+  const wasOpen = !$('find-bar').hidden;
   $('find-bar').hidden = false;
   findMachine.send('FIND');
-  syncDocumentChrome(); $('find-input').focus(); $('find-input').select(); updateFind(); syncFindControl();
+  syncDocumentChrome(); $('find-input').focus(); $('find-input').select();
+  // Ctrl+F is also the way back to the search field after clicking in the
+  // document. Keep the current match in that case instead of restarting at
+  // the first hit.
+  if (!wasOpen) updateFind();
+  else syncFindMachine();
+  syncFindControl();
 }
 function clearHighlights() { editor?.clearHighlight?.(); }
 function documentSearchPattern(query) {
@@ -1065,7 +1142,7 @@ function refreshFindOffsets(direction) {
   // Edits can shift every match. Recompute from the live content before the
   // next jump instead of selecting through stale byte offsets, then resume
   // from the caret so a prefix edit lands on the nearest real hit.
-  const anchor = Math.max(0, editor?.getSelection()?.head ?? 0);
+  const anchor = documentMode === 'source' ? sourceCaret($('document-source')).head : Math.max(0, editor?.getSelection()?.head ?? 0);
   matches = findMatches($('find-input').value); findSource = current.content;
   if (direction > 0) {
     const first = matches.findIndex(match => match.from >= anchor);
@@ -1108,7 +1185,7 @@ function refreshFindAfterEdit() {
   const query = $('find-input').value;
   if (!query) return;
   const previous = matches[findIndex];
-  const anchor = previous ? previous.from : Math.max(0, editor?.getSelection()?.head ?? 0);
+  const anchor = previous ? previous.from : documentMode === 'source' ? sourceCaret($('document-source')).head : Math.max(0, editor?.getSelection()?.head ?? 0);
   matches = findMatches(query); findSource = current.content;
   if (!matches.length) { findIndex = -1; $('find-result').textContent = 'No matches'; clearHighlights(); syncFindMachine(); return; }
   let index = matches.findIndex(match => match.from >= anchor);
@@ -1150,7 +1227,7 @@ function setDocumentWidth(full, persist = true) {
 }
 function toggleDocumentWidth() { setDocumentWidth(!wideLayout); }
 function closeAllMenus(returnFocus = false) {
-  for (const id of ['open-menu', 'view-menu', 'folio-menu', 'edit-menu', 'application-view-menu', 'go-menu', 'help-menu', 'document-mode-menu', 'document-more-menu', 'open-recent-menu', 'tree-menu']) {
+  for (const id of ['open-menu', 'view-menu', 'folio-menu', 'edit-menu', 'application-view-menu', 'go-menu', 'help-menu', 'document-mode-menu', 'document-more-menu', 'open-recent-menu', 'tree-menu', 'tab-context-menu']) {
     const menu = $(id);
     if (menu && !menu.hidden) {
       // Read focus before hiding: hiding a menu whose container itself holds
@@ -1168,8 +1245,9 @@ function closeAllMenus(returnFocus = false) {
 function setupMenu(triggerId, menuId) {
   const trigger = $(triggerId), menu = $(menuId);
   if (!trigger || !menu) return;
+  trigger.__folioOpenMenu = (pointerOpen, focusMenu = true) => openMenu(pointerOpen, focusMenu);
   const items = () => [...menu.querySelectorAll('.menu-item:not([hidden]):not(:disabled)')].filter(item => item.closest('[role=menu]') === menu);
-  function openMenu(pointerOpen = false) {
+  function openMenu(pointerOpen = false, focusMenu = true) {
     const wasHidden = menu.hidden;
     closeAllMenus();
     if (!wasHidden) return;
@@ -1180,7 +1258,7 @@ function setupMenu(triggerId, menuId) {
     // paint a focus ring on an item the pointer is nowhere near; hover is the
     // only state a pointer user should see until they move. Keyboard opens
     // still land on the first item so arrows, Home and End start from it.
-    if (pointerOpen) { menu.tabIndex = -1; menu.focus({ preventScroll: true }); }
+    if (pointerOpen) { menu.tabIndex = -1; if (focusMenu) menu.focus({ preventScroll: true }); }
     else (menu.querySelector('input,select') || items()[0])?.focus();
   }
   // A keyboard activation (Enter/Space) also fires click, but with detail 0.
@@ -1194,16 +1272,16 @@ function setupMenu(triggerId, menuId) {
     const list = items();
     const current = list.indexOf(document.activeElement);
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeAllMenus(true); }
-    else if (event.key === 'ArrowDown') { event.preventDefault(); list[(current + 1 + list.length) % list.length]?.focus(); }
-    else if (event.key === 'ArrowUp') { event.preventDefault(); list[(current - 1 + list.length) % list.length]?.focus(); }
+    else if (event.key === 'ArrowDown') { event.preventDefault(); const start = current < 0 ? -1 : current; list[(start + 1 + list.length) % list.length]?.focus(); }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); const start = current < 0 ? 0 : current; list[(start - 1 + list.length) % list.length]?.focus(); }
     else if (event.key === 'Home') { event.preventDefault(); list[0]?.focus(); }
     else if (event.key === 'End') { event.preventDefault(); list[list.length - 1]?.focus(); }
-    else if (event.key === 'Tab') { closeAllMenus(); }
+    else if (event.key === 'Tab') { const trigger = document.querySelector(`[aria-controls="${menuId}"]`); closeAllMenus(); trigger?.focus({ preventScroll: true }); }
   });
   menu.addEventListener('click', event => {
     if (!event.target.closest('.menu-item') || event.target.closest('#open-recent-button')) return;
     setTimeout(() => {
-      const dialogOpen = ['open-dialog', 'source-dialog', 'command-dialog', 'confirm-dialog', 'editor-action-dialog', 'help-dialog', 'state-inspector'].some(id => $(id)?.open);
+      const dialogOpen = Boolean(document.querySelector('dialog[open]'));
       const triggerForMenu = document.querySelector(`[aria-controls="${menuId}"]`);
       menu.hidden = true;
       triggerForMenu?.setAttribute('aria-expanded', 'false');
@@ -1214,6 +1292,17 @@ function setupMenu(triggerId, menuId) {
 document.addEventListener('pointerdown', event => {
   if (!event.target.closest('.menu') && !event.target.closest('[aria-haspopup]')) closeAllMenus();
 });
+// A hover-opened menu leaves focus in the document. Typing or navigating then
+// dismisses it instead of leaving it floating over the editor.
+document.addEventListener('keydown', event => {
+  if (![...document.querySelectorAll('.menu')].some(menu => !menu.hidden)) return;
+  if (event.target.closest?.('.menu')) return;
+  if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
+  // Enter/Space on a menu trigger must reach its own click handler so an
+  // already-open hover menu toggles closed instead of closing and reopening.
+  if ((event.key === 'Enter' || event.key === ' ') && event.target.closest?.('[aria-haspopup]')) return;
+  if (event.key === 'Escape' || event.key.length === 1 || ['Backspace', 'Delete', 'Enter', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) closeAllMenus();
+}, true);
 
 // The document preferences panel owns its own open/close behaviour; every
 // other popup is still a menu.
@@ -1238,23 +1327,25 @@ $('open-dialog').addEventListener('keydown', event => { if (event.altKey && even
 $('open-confirm').onclick = confirmOpenPicker;
 $('open-cancel').onclick = $('open-dialog-close').onclick = () => $('open-dialog').close();
 initializeFileTree();
-$('folder-close').onclick = () => setFolderVisible(false);
+$('folder-close').onclick = () => { setFolderVisible(false); document.querySelector('[data-dock-tab="files"]')?.focus(); };
 for (const tab of document.querySelectorAll('[data-dock-tab]')) {
   tab.addEventListener('click', () => toggleDock(tab.dataset.dockTab));
 }
 document.querySelector('[data-rail-action="find"]').addEventListener('click', () => {
+  if (focusedPane === 'companion') { $('companion-find').hidden ? openCompanionFind() : closeCompanionFind(true); return; }
+  if (!$('companion-find').hidden) { closeCompanionFind(false); return; }
   if (activeFolder) { toggleDock('search'); return; }
   if ($('find-bar').hidden) openFind();
   else closeFind();
 });
 $('dock-open-folder').onclick = openFolderEntry;
-$('folder-refresh').onclick = () => activeFolder && enqueue(async () => { const listing = await invoke('open_folder', { path: activeFolder.path }); activeFolder = { path: listing.path, name: listing.name }; folderEntries = listing.entries; renderFolderEntries(); });
+$('folder-refresh').onclick = () => activeFolder && enqueue(async () => { const listing = await invoke('open_folder', { path: activeFolder.path }); if (!listing || !Array.isArray(listing.entries)) throw new Error('The folder could not be read.'); activeFolder = { path: listing.path, name: listing.name }; folderEntries = listing.entries; renderFolderEntries(); });
 $('new').onclick = () => newDocument(); $('sample').onclick = () => newDocument(true);
 $('save').onclick = () => requestSave();
-$('outline-close').onclick = () => setOutline(false);
+$('outline-close').onclick = () => { setOutline(false); document.querySelector('[data-dock-tab="outline"]')?.focus(); };
 $('width-toggle').onclick = toggleDocumentWidth;
 $('zoom-in').onclick = () => zoomWindow(.1); $('zoom-out').onclick = () => zoomWindow(-.1); $('zoom-reset').onclick = () => zoomWindow(0, true);
-$('reload').onclick = () => { const owner = current; return enqueue(async () => { if (owner !== current || !owner.path || !(await allowDiscard())) return false; return openPath(owner.path, true); }); }; $('dismiss-disk').onclick = () => { $('disk-banner').hidden = true; };
+$('reload').onclick = () => { const owner = current; return enqueue(async () => { if (owner !== current || !owner.path || !(await allowDiscard())) return false; return openPath(owner.path, true); }); }; $('dismiss-disk').onclick = () => { diskBannerDismissedFor = current.documentId || current.path || null; $('disk-banner').hidden = true; syncDocumentChrome(); (documentMode === 'source' ? $('document-source') : $('reader-scroll')).focus({ preventScroll: true }); };
 $('find-input').oninput = updateFind; $('find-next').onclick = () => nextFind(1); $('find-previous').onclick = () => nextFind(-1); $('find-close').onclick = closeFind;
 $('find-input').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); nextFind(event.shiftKey ? -1 : 1); } };
 function followPreviewLink(anchor) {
@@ -1279,6 +1370,8 @@ function imageCanBeAdded() {
   return Boolean(current.active && current.path && current.writable !== false && !documentReadOnly && !transitionLocked && editor && focusedPane !== 'companion');
 }
 function imageReadonlyMessage() {
+  if (transitionLocked) return 'Wait for the current change to finish before adding images.';
+  if (focusedPane === 'companion') return 'Focus the main document before adding images.';
   if (!current.path) return 'Save the document before adding images.';
   if (!editor) return 'This document cannot be edited here; images cannot be inserted.';
   if (documentReadOnly) return 'Turn off read-only before adding images.';
@@ -1375,7 +1468,7 @@ async function importDroppedImage(path, selection) {
 }
 async function addDroppedPaths(paths) {
   const images = [], others = [];
-  for (const path of paths || []) (isImagePath(path) ? images : others).push(path);
+  for (const path of Array.isArray(paths) ? paths : []) if (typeof path === 'string' && path) (isImagePath(path) ? images : others).push(path);
   if (images.length) {
     if (!current.active) toast('Open a Markdown document before dropping an image.');
     else if (!imageCanBeAdded()) toast(imageReadonlyMessage());
@@ -1400,7 +1493,8 @@ async function addDroppedPaths(paths) {
   for (const path of others) requestOpenLocation(path);
 }
 function updateDropOverlay(paths) {
-  const imageOnly = paths.length > 0 && paths.every(isImagePath);
+  const list = Array.isArray(paths) ? paths.filter(path => typeof path === 'string' && path) : [];
+  const imageOnly = list.length > 0 && list.every(isImagePath);
   const add = imageOnly && current.active && imageCanBeAdded();
   $('drop-overlay').querySelector('h2').textContent = add ? 'Drop to add image' : 'Drop to open';
   $('drop-overlay').querySelector('p').textContent = add ? 'Saves beside the document and inserts a Markdown image link.' : 'One Markdown file. No setup.';
@@ -1454,8 +1548,12 @@ document.addEventListener('keydown', event => {
   const control = event.ctrlKey || event.metaKey;
   if (control && !event.altKey && event.shiftKey && event.key.toLowerCase() === 'a') { event.preventDefault(); openCommands('documents'); return; }
   if (event.defaultPrevented) return;
-  if ($('recovery-dialog').open || $('help-dialog').open || $('command-dialog').open || $('confirm-dialog').open || $('open-dialog').open || $('source-dialog').open || $('editor-action-dialog').open || $('state-inspector')?.open) return;
+  // Any modal dialog owns the keyboard. Keeping a hard-coded list here let
+  // shortcuts fire behind Folio Lab, the tree-move dialog and the diagram
+  // viewer.
+  if (document.querySelector('dialog[open]')) return;
   if (event.key === 'Escape') {
+    if (!$('companion-find').hidden && $('find-bar').hidden) { closeCompanionFind(false); return; }
     if (!$('find-bar').hidden) closeFind();
     else if (document.body.classList.contains('focus-mode')) document.body.classList.remove('focus-mode');
     else if (narrowDrawers() && dockVisible && document.activeElement?.closest?.('.navigation-rail,#outline,#file-browser,#folder-search')) {
@@ -1472,7 +1570,22 @@ document.addEventListener('keydown', event => {
   if (!event.altKey && !event.shiftKey && ['1','2','3'].includes(key) && current.active) { event.preventDefault(); setDocumentMode({1:'reading',2:'edit',3:'source'}[key]); return; }
   if (!event.altKey && key === '\\' && current.active) { event.preventDefault(); companionDocument ? closeReadingCompanion() : showReadingCompanion(); return; }
   if (key === 't') { event.preventDefault(); event.shiftKey ? enqueue(reopenDocument) : newDocument(); return; }
-  if (event.ctrlKey && key === 'tab' && documents.size) { event.preventDefault(); const tabs = [...documents.values()], index = tabs.indexOf(current); enqueue(() => activateDocument(tabs[(index + (event.shiftKey ? -1 : 1) + tabs.length) % tabs.length])); return; }
+  if (event.ctrlKey && key === 'tab' && documents.size) {
+    event.preventDefault();
+    const tabs = [...documents.values()], index = tabs.indexOf(current);
+    const target = tabs[(index + (event.shiftKey ? -1 : 1) + tabs.length) % tabs.length];
+    // The editor is rebuilt during activation, so focus would otherwise fall
+    // to <body> and swallow the next keystroke. Return it to the new document
+    // when the shortcut was pressed from the document surface.
+    const wasEditing = Boolean(document.activeElement?.closest?.('#preview .ProseMirror')) || document.activeElement?.id === 'reader-scroll' || document.activeElement?.id === 'document-source';
+    enqueue(async () => {
+      if (!(await activateDocument(target))) return;
+      if (!wasEditing) return;
+      if (documentMode === 'source') $('document-source').focus({ preventScroll: true });
+      else editor?.focus();
+    });
+    return;
+  }
   if (key === 'a' && !event.altKey && !event.shiftKey && !event.isComposing &&
       current.active && (editor || documentMode === 'source') &&
       !event.target.matches('input,textarea,select') && !event.target.isContentEditable) {
@@ -1541,6 +1654,18 @@ Your files stay yours. This sample is just a starting point.[^1]
 [^1]: Editing this sample and pressing Ctrl+S lets you save your own copy.
 `;
 
+async function checkDiskChange() {
+  if (!current.path || busy || document.hidden) return;
+  const path = current.path, documentId = current.documentId;
+  try {
+    const changed = await invoke('document_changed', { documentId });
+    if (path !== current.path || documentId !== current.documentId) return;
+    if (!changed) diskBannerDismissedFor = null;
+    const dismissed = diskBannerDismissedFor && diskBannerDismissedFor === (current.documentId || current.path);
+    const hidden = !changed || Boolean(dismissed);
+    if ($('disk-banner').hidden !== hidden) { $('disk-banner').hidden = hidden; syncDocumentChrome(); }
+  } catch {}
+}
 async function start() {
   initializePanes(); initializeChrome(); initializeFolderSearch();
   $('all-documents').onclick = () => { closeAllMenus(); $('document-more-button').focus(); openCommands('documents'); };
@@ -1550,15 +1675,15 @@ async function start() {
   if (!window.__TAURI__) { toast('Open Folio from your app menu to enable file access.'); return; }
   await Promise.all([
     listen('request-close', requestClose),
-    listen('open-files', event => { for (const path of event.payload) requestOpenLocation(path); }),
+    listen('open-files', event => { for (const path of Array.isArray(event.payload) ? event.payload : []) if (typeof path === 'string' && path) requestOpenLocation(path); }),
     listen('system-theme', event => { omarchy = event.payload; if (selectedTheme === 'omarchy') applyTheme('omarchy', false); else if ($('command-dialog').open) renderCommands(); })
   ]);
-  const state = await invoke('bootstrap'); setPlatform(state.platform); nativePlatform = state.platform; omarchy = state.theme;
-  if (preferences.get('theme', null) === null && omarchy) selectedTheme = 'omarchy';
+  const state = (await invoke('bootstrap')) || {}; setPlatform(state.platform); nativePlatform = state.platform; omarchy = state.theme;
+  if (preferences.get('theme', null) === null && omarchy?.colors) selectedTheme = 'omarchy';
   applyTheme(selectedTheme, false);
   syncDockForViewport();
   setTouchpadZoom(touchpadZoom, false);
-  if (omarchy && !$('preference-theme').querySelector('[value=omarchy]')) { const option = document.createElement('option'); option.value = 'omarchy'; option.textContent = 'Omarchy'; $('preference-theme').append(option); }
+  if (omarchy?.colors && !$('preference-theme').querySelector('[value=omarchy]')) { const option = document.createElement('option'); option.value = 'omarchy'; option.textContent = 'Omarchy'; $('preference-theme').append(option); }
   applyDocumentPreferences();
   await invoke('ready').catch(() => {});
   workspaceWindowLabel = state.windowLabel || 'main';
@@ -1566,11 +1691,11 @@ async function start() {
   if (state.pendingTransfer) await mountTransferredDocument(state.pendingTransfer);
   else if (workspaceWindowLabel === 'main') await reviewRecovery();
   const layout = startupLayout;
-  for (const path of state.paths || []) requestOpenLocation(path);
+  for (const path of Array.isArray(state.paths) ? state.paths : []) if (typeof path === 'string' && path) requestOpenLocation(path);
   for (const path of layout.paths || []) enqueue(async () => { if ([...documents.values()].some(doc => samePath(doc.path || doc.originalPath, path))) return; await openPath(path); });
   if (layout.activePath) enqueue(async () => { const doc = [...documents.values()].find(d => samePath(d.path, layout.activePath)); if (doc) await activateDocument(doc); });
-  await window.__TAURI__.webview.getCurrentWebview().onDragDropEvent(event => {
-    const type = event.payload.type, paths = event.payload.paths || [];
+  await window.__TAURI__.webview?.getCurrentWebview?.()?.onDragDropEvent?.(event => {
+    const type = event.payload?.type, paths = Array.isArray(event.payload?.paths) ? event.payload.paths : [];
     if (type === 'enter') updateDropOverlay(paths);
     $('drop-overlay').hidden = type !== 'over' && type !== 'enter';
     if (type === 'drop') { $('drop-overlay').hidden = true; void addDroppedPaths(paths).catch(toast); }
@@ -1580,11 +1705,7 @@ async function start() {
     loadAsset('vendor/editor/editor.js').catch(() => {});
     loadAsset('vendor/editor/editor.css', true).catch(() => {});
   });
-  setInterval(async () => {
-    if (!current.path || busy || document.hidden) return;
-    const path = current.path;
-    try { const changed = await invoke('document_changed', { documentId: current.documentId }); if (path === current.path) $('disk-banner').hidden = !changed; } catch {}
-  }, 3000);
+  setInterval(checkDiskChange, 3000);
   requestAnimationFrame(() => requestAnimationFrame(() => { invoke('ready').catch(() => {}); }));
 }
 start().catch(error => { toast(error); console.error(error); });

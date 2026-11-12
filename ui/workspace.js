@@ -18,7 +18,7 @@ function rememberDocument() {
   current.view = { editor: editor?.captureSession(), mode: documentMode, readOnly: documentReadOnly,
     scroll: $('reader-scroll').scrollTop, sourceScroll: $('document-source').scrollTop,
     outline: outlineEntries.filter(e => outlineCollapsed.has(e.key || e.id)).map(e => e.offset),
-    find: $('find-input').value, findOpen: !$('find-bar').hidden, findIndex, saveStatus };
+    find: $('find-input').value, findOpen: !$('find-bar').hidden, replaceOpen: !$('replace-bar').hidden, findIndex, saveStatus };
   recoveryWriter.flush(current);
 }
 function registerDocument(doc) {
@@ -28,6 +28,7 @@ function registerDocument(doc) {
 async function activateDocument(doc, capture = true) {
   if (doc === current) return true;
   let activated = false;
+  const wasLocked = transitionLocked;
   try {
   if (capture) rememberDocument();
   outlineFollowSuspended = true;
@@ -40,13 +41,16 @@ async function activateDocument(doc, capture = true) {
   saveStatus = doc.view?.saveStatus || null;
   await refreshEditorSurface();
   for (const entry of outlineEntries) if (doc.view?.outline?.includes(entry.offset)) toggleOutlineEntry(entry, false);
-  $('find-input').value = doc.view?.find || ''; $('find-bar').hidden = !doc.view?.findOpen;
-  if (doc.view?.findOpen) { updateFind(); findIndex = doc.view.findIndex; }
-  syncFindMachine(); syncCompanionMachine();
+  const findOpen = Boolean(doc.view?.findOpen || doc.view?.replaceOpen);
+  $('find-input').value = doc.view?.find || ''; $('find-bar').hidden = !findOpen; $('replace-bar').hidden = !doc.view?.replaceOpen;
+  if (findOpen) { updateFind(); findIndex = Number.isInteger(doc.view?.findIndex) ? doc.view.findIndex : -1; }
+  syncDocumentChrome(); syncFindMachine(); syncCompanionMachine();
   focusPane('main'); updateTitle();
-  renderTabs(); persistWorkspace(); scheduleCompanionRender(); activated = true; return true;
+  renderTabs(); persistWorkspace(); scheduleCompanionRender();
+  if (!document.activeElement || document.activeElement === document.body) $('reader-scroll').focus({ preventScroll: true });
+  activated = true; return true;
   } finally {
-    setTransitionLocked(false);
+    setTransitionLocked(wasLocked);
     if (activated && current === doc) for (const [element, top] of [[$('reader-scroll'), doc.view?.scroll || 0], [$('document-source'), doc.view?.sourceScroll || 0]]) {
       const behavior = element.style.scrollBehavior; element.style.scrollBehavior = 'auto'; element.scrollTop = top; element.style.scrollBehavior = behavior;
     }
@@ -65,15 +69,24 @@ async function activateDocument(doc, capture = true) {
     }
   }
 }
+const persistedWorkspaceSignatures = new Map();
 function persistWorkspace() {
   const layout = { paths: [...documents.values()].filter(d => d.path && d.content === d.saved).map(d => d.path), activePath: current.path };
+  // documentEdited runs on every keystroke. Only the clean-path list and the
+  // active path affect the restorable layout, so avoid two synchronous
+  // localStorage writes while the user is simply typing in one document.
+  const signature = JSON.stringify(layout);
+  if (persistedWorkspaceSignatures.get(workspaceWindowLabel) === signature) return;
+  persistedWorkspaceSignatures.set(workspaceWindowLabel, signature);
   preferences.set(workspaceWindowLabel === 'main' ? 'workspaceLayout' : `workspaceLayout.${workspaceWindowLabel}`, layout);
-  const windows = preferences.get('workspaceWindowLayouts', {});
+  const stored = preferences.get('workspaceWindowLayouts', {}), windows = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
   windows[workspaceWindowLabel] = layout; preferences.set('workspaceWindowLayouts', windows);
 }
 function restorableWorkspaceLayout() {
-  const main = preferences.get('workspaceLayout', {}), paths = [...(main.paths || [])];
-  for (const layout of Object.values(preferences.get('workspaceWindowLayouts', {}))) for (const path of layout.paths || []) if (!paths.some(existing => samePath(existing, path))) paths.push(path);
+  const storedMain = preferences.get('workspaceLayout', {}), main = storedMain && typeof storedMain === 'object' && !Array.isArray(storedMain) ? storedMain : {};
+  const paths = Array.isArray(main.paths) ? main.paths.filter(path => typeof path === 'string' && path) : [];
+  const storedWindows = preferences.get('workspaceWindowLayouts', {}), windows = storedWindows && typeof storedWindows === 'object' && !Array.isArray(storedWindows) ? Object.values(storedWindows) : [];
+  for (const layout of windows) for (const path of Array.isArray(layout?.paths) ? layout.paths : []) if (typeof path === 'string' && path && !paths.some(existing => samePath(existing, path))) paths.push(path);
   return { paths, activePath: main.activePath };
 }
 let renderedTabs = '', tabDrag = null, suppressTabClick = false;
@@ -88,12 +101,21 @@ function renderTabs() {
     tab.append(fileIcon(doc.path || doc.name)); const label = document.createElement('span');
     const duplicates = [...documents.values()].filter(d => d.name === doc.name).length > 1;
     label.textContent = doc.name + (duplicates && doc.path ? ` — ${basename(dirname(doc.path))}` : '') + (doc.content !== doc.saved ? ' •' : ''); tab.append(label);
-    tab.onclick = event => { if (suppressTabClick) { suppressTabClick = false; event.preventDefault(); return; } enqueue(() => activateDocument(doc)); };
+    tab.onclick = event => { if (suppressTabClick) { suppressTabClick = false; event.preventDefault(); return; } enqueue(async () => { if (await activateDocument(doc)) $(`tab-${doc.documentId}`)?.focus({ preventScroll: true }); }); };
     tab.addEventListener('pointerdown', event => beginTabDrag(event, item, doc));
     tab.oncontextmenu = event => { event.preventDefault(); showTabMenu(doc, tab, {x:event.clientX,y:event.clientY}); };
-    tab.onkeydown = event => { if (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10') { event.preventDefault(); showTabMenu(doc, tab); return; } if (event.altKey && event.shiftKey && ['ArrowLeft','ArrowRight'].includes(event.key)) { event.preventDefault(); const sibling = event.key === 'ArrowLeft' ? item.previousElementSibling : item.nextElementSibling; if (sibling) { const boxes = new Map([...list.children].map(child => [child, child.getBoundingClientRect()])); if (event.key === 'ArrowLeft') list.insertBefore(item, sibling); else list.insertBefore(item, sibling.nextElementSibling); animateTabPositions(boxes, list); commitTabOrder(list); tab.focus({preventScroll:true}); } return; } if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const tabs = [...documents.values()]; const i = tabs.indexOf(doc); const next = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs.at(-1) : tabs[(i + (event.key === 'ArrowLeft' ? -1 : 1) + tabs.length) % tabs.length]; enqueue(async () => { await activateDocument(next); $( `tab-${next.documentId}`).focus(); }); } };
-    const close = document.createElement('button'); close.type = 'button'; close.className = 'tab-close icon-button'; close.title = `Close ${doc.name}`; close.setAttribute('aria-label', close.title); close.append(icon('close')); close.onclick = () => enqueue(() => closeWorkspaceDocument(doc));
-    const item = document.createElement('div'); item.className = 'tab-item'; item.append(tab, close); item.onauxclick = event => { if(event.button===1){event.preventDefault();enqueue(()=>closeWorkspaceDocument(doc));} }; item.onmousedown = event => {if(event.button===1)event.preventDefault();}; list.append(item); if (doc === current) requestAnimationFrame(() => {
+    tab.onkeydown = event => { if (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10') { event.preventDefault(); showTabMenu(doc, tab); return; } if (event.altKey && event.shiftKey && ['ArrowLeft','ArrowRight'].includes(event.key)) { event.preventDefault(); const sibling = event.key === 'ArrowLeft' ? item.previousElementSibling : item.nextElementSibling; if (sibling) { const boxes = new Map([...list.children].map(child => [child, child.getBoundingClientRect()])); if (event.key === 'ArrowLeft') list.insertBefore(item, sibling); else list.insertBefore(item, sibling.nextElementSibling); animateTabPositions(boxes, list); commitTabOrder(list); tab.focus({preventScroll:true}); } return; } if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const tabs = [...documents.values()]; const i = tabs.indexOf(doc); if (i < 0) return; const next = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs.at(-1) : tabs[(i + (event.key === 'ArrowLeft' ? -1 : 1) + tabs.length) % tabs.length]; enqueue(async () => { await activateDocument(next); $( `tab-${next.documentId}`).focus(); }); } };
+    const close = document.createElement('button'); close.type = 'button'; close.className = 'tab-close icon-button'; close.title = `Close ${doc.name}`; close.setAttribute('aria-label', close.title); close.append(icon('close'));
+    const closeAndFocus = () => {
+      const position = [...list.children].indexOf(item);
+      enqueue(async () => {
+        if (!(await closeWorkspaceDocument(doc))) return;
+        const tabs = [...list.querySelectorAll('.document-tab')];
+        (tabs[Math.min(position, tabs.length - 1)] || $('new')).focus({ preventScroll: true });
+      });
+    };
+    close.onclick = closeAndFocus;
+    const item = document.createElement('div'); item.className = 'tab-item'; item.append(tab, close); item.onauxclick = event => { if(event.button===1){event.preventDefault();closeAndFocus();} }; item.onmousedown = event => {if(event.button===1)event.preventDefault();}; list.append(item); if (doc === current) requestAnimationFrame(() => {
       if (!tab.isConnected) return;
       const bounds = list.getBoundingClientRect(), selected = tab.getBoundingClientRect();
       if (selected.left < bounds.left) list.scrollLeft += selected.left - bounds.left;
@@ -117,6 +139,9 @@ function commitTabOrder(list) {
 function beginTabDrag(event, item, doc) {
   if (event.button !== 0 || tabDrag || event.target.closest('.tab-close')) return;
   event.preventDefault();
+  // Cancelling pointerdown suppresses the browser's implicit focus. A clicked
+  // tab must still become the keyboard focus so arrow-key tab navigation works.
+  item.querySelector('.document-tab')?.focus({ preventScroll: true });
   const list = $('tab-list'), initial = item.getBoundingClientRect();
   const state = { item, doc, list, startX:event.clientX, startY:event.clientY, rect:initial, dragging:false, frame:0, lastX:event.clientX, lastY:event.clientY };
   tabDrag = state;
@@ -179,12 +204,20 @@ function beginTabDrag(event, item, doc) {
 }
 
 async function closeWorkspaceDocument(doc = current) {
+  if (!doc || doc.closing || (doc !== current && !documents.has(doc.documentId))) return false;
   if (doc === current) rememberDocument();
   await documentSaves.get(doc.documentId);
   if (doc.content !== doc.saved) {
     const choice = await ask('Save your changes?', `“${doc.name}” has changes that haven't been saved.`, [{ label: 'Cancel', value: 'cancel' }, { label: 'Discard', value: 'discard', style: 'destructive' }, { label: 'Save', value: 'save', style: 'suggested' }]);
     if (choice === 'cancel') return false;
-    if (choice === 'save' && (!(await save(false, false, doc)) || doc.content !== doc.saved)) return false;
+    if (choice === 'save') {
+      if (!(await save(false, false, doc))) return false;
+      // A save conflict can reload the document into a fresh object. Close the
+      // live session rather than the stale snapshot, or the reloaded tab would
+      // remain active but be removed from the document map.
+      doc = documents.get(doc.documentId) || doc;
+      if (doc.content !== doc.saved) return false;
+    }
   }
   doc.closing = true; const lockActive = doc === current;
   try {
@@ -193,12 +226,34 @@ async function closeWorkspaceDocument(doc = current) {
   await invoke('recovery_saved', { documentId: doc.documentId, revision: doc.revision || 0 });
   await invoke('close_document', { documentId: doc.documentId });
   await recoveryWriter.discard(doc).catch(error => recoveryWriter.warning(String(error?.message || error)));
-  if (companionDocument === doc) closeReadingCompanion(); clearTimeout(autoSaveTimers.get(doc.documentId));
-  closedDocuments.push({ ...doc, view: doc.view }); documents.delete(doc.documentId);
+  if (companionDocument === doc) closeReadingCompanion(); clearTimeout(autoSaveTimers.get(doc.documentId)); autoSaveTimers.delete(doc.documentId);
+  // Do not carry the in-flight close flags into the reopen snapshot: save()
+  // refuses a document that still looks like it is closing.
+  const closed = { ...doc, view: doc.view };
+  delete closed.closing; delete closed.transferring;
+  closedDocuments.push(closed);
+  if (closedDocuments.length > 50) closedDocuments.shift();
+  documents.delete(doc.documentId);
   if (doc === current) {
     const next = [...documents.values()].at(-1);
     if (next) await activateDocument(next, false);
-    else { current = { path: null, name: 'Untitled.md', content: '', saved: '', active: false }; showWelcome(); }
+    else {
+      current = { path: null, name: 'Untitled.md', content: '', saved: '', active: false };
+      if (activeFolder) {
+        // The old editor is still mounted with the closed document. Clear it
+        // before showing the folder-only surface so no stale preview remains.
+        editor?.destroy(); editor = null; editorDocument = null; editorPath = null; ++renderGeneration; previewSnapshot = null; documentLimited = false;
+        resetDocumentPresentation(); setLineEnding(null);
+        await renderPreview();
+        showDocument(); await refreshEditorSurface();
+        ($('folder-items').querySelector('.folder-entry') || $('folder-new'))?.focus({ preventScroll: true });
+      } else showWelcome();
+    }
+    // Ctrl+W tears down the focused editor. Move focus into the surviving
+    // document instead of leaving keyboard users on <body>.
+    requestAnimationFrame(() => {
+      if (documents.size && (!document.activeElement || document.activeElement === document.body)) $('reader-scroll').focus({ preventScroll: true });
+    });
   }
   renderTabs(); persistWorkspace(); return true;
   } catch (error) { if (documents.has(doc.documentId) && doc.content !== doc.saved) { doc.revision = (doc.revision || 0) + 1; recoveryWriter.changed(doc); await recoveryWriter.flush(doc); } throw error; }
@@ -206,17 +261,27 @@ async function closeWorkspaceDocument(doc = current) {
 }
 async function reopenDocument() {
   const previous = closedDocuments.pop(); if (!previous) return;
-  const existing = previous.path && [...documents.values()].find(doc => samePath(doc.path, previous.path));
-  if (existing) return activateDocument(existing);
-  const native = previous.path ? await invoke('open_document', { path: previous.path, reuseExisting: true }) : await invoke('new_document'); if (!native?.documentId) return;
-  if (documents.has(native.documentId)) return activateDocument(documents.get(native.documentId));
-  const discarded = previous.content !== previous.saved;
-  const content = previous.path ? native.content : discarded ? '' : previous.content;
-  const doc = { ...previous, ...native, content, saved: content, view: !discarded && content === previous.content ? previous.view : null, revision: native.revision || 0, active: true };
-  registerDocument(doc); await activateDocument(doc);
+  try {
+    const existing = previous.path && [...documents.values()].find(doc => samePath(doc.path, previous.path));
+    if (existing) return activateDocument(existing);
+    const native = previous.path ? await invoke('open_document', { path: previous.path, reuseExisting: true }) : await invoke('new_document');
+    if (!native?.documentId) { closedDocuments.push(previous); return; }
+    if (documents.has(native.documentId)) return activateDocument(documents.get(native.documentId));
+    if (previous.path && typeof native.content !== 'string') { closedDocuments.push(previous); return; }
+    const discarded = previous.content !== previous.saved;
+    const content = previous.path ? native.content : discarded ? '' : previous.content;
+    const doc = { ...previous, ...native, content, saved: content, view: !discarded && content === previous.content ? previous.view : null, revision: native.revision || 0, active: true };
+    registerDocument(doc); await activateDocument(doc);
+  } catch (error) {
+    // The closed entry is the only copy of an unsaved unnamed buffer. Do not
+    // lose it when the native reopen fails; let the user retry.
+    closedDocuments.push(previous);
+    throw error;
+  }
 }
 async function reviewWindowClose() {
   rememberDocument(); await Promise.allSettled([...documentSaves.values()]); const edited = [...documents.values()].filter(d => d.content !== d.saved);
+  if (current.active && !documents.has(current.documentId) && current.content !== current.saved) edited.push(current);
   if (!edited.length) return true;
   const names = edited.map(doc => doc.name);
   const many = names.length > 1;
@@ -226,25 +291,31 @@ async function reviewWindowClose() {
     [{ label: 'Cancel', value: 'cancel' }, { label: many ? 'Discard all' : 'Discard', value: 'discard', style: 'destructive' }, { label: many ? 'Save all' : 'Save', value: 'save', style: 'suggested' }]);
   if (choice === 'cancel') return false;
   if (choice === 'discard') {
-    for (const doc of edited) { await recoveryWriter.flush(doc); await invoke('recovery_saved', { documentId: doc.documentId, revision: doc.revision || 0 }); }
+    for (const doc of edited) { await recoveryWriter.flush(doc); if (doc.documentId) await invoke('recovery_saved', { documentId: doc.documentId, revision: doc.revision || 0 }); }
     await Promise.all([...documents.values()].map(doc => recoveryWriter.flush(doc))); return true;
   }
-  for (const doc of edited) if (!(await save(false, false, doc)) || doc.content !== doc.saved) return false;
+  for (const doc of edited) {
+    if (!(await save(false, false, doc))) return false;
+    const live = documents.get(doc.documentId) || doc;
+    if (live.content !== live.saved) return false;
+  }
   await Promise.all([...documents.values()].map(doc => recoveryWriter.flush(doc))); return true;
 }
 
 async function reviewRecovery() {
+  const dialog = $('recovery-dialog');
+  if (dialog.open) return;
   let drafts; try { drafts = await invoke('recovery_list'); const warnings = await invoke('recovery_warnings'); if (Array.isArray(warnings) && warnings.length) recoveryWriter.warning(warnings.map(w => w.message).join(' ')); } catch { return; }
-  if (Array.isArray(drafts)) drafts = drafts.filter(draft => !documents.has(draft.documentId));
+  if (Array.isArray(drafts)) drafts = drafts.filter(draft => draft && typeof draft === 'object' && !documents.has(draft.documentId));
   if (!Array.isArray(drafts) || !drafts.length) return;
-  const dialog = $('recovery-dialog'), rows = $('recovery-rows'); rows.replaceChildren();
+  const rows = $('recovery-rows'); rows.replaceChildren();
   for (const draft of drafts) {
     const row = document.createElement('label'), check = document.createElement('input'); check.type = 'checkbox'; check.checked = true; check.value = draft.documentId;
     const text = document.createElement('span'); text.textContent = `${draft.name}\n${draft.originalPath || 'Unsaved document'}\n${new Date(draft.snapshotTime).toLocaleString()}`; row.append(check, text); rows.append(row);
   }
   $('recovery-not-now').onclick = () => dialog.close();
-  $('recovery-restore').onclick = async () => { const ids = [...rows.querySelectorAll('input:checked')].map(c => c.value); dialog.close(); await enqueue(async () => { for (const documentId of ids) { const restored = await invoke('recovery_restore', { documentId }); if (!restored?.documentId) continue; const doc = { ...restored, saved: restored.saved ?? null, active: true }; if (documents.has(documentId)) { await activateDocument(documents.get(documentId)); continue; } registerDocument(doc); await activateDocument(doc); } }); };
-  $('recovery-discard').onclick = async () => { const ids = [...rows.querySelectorAll('input:checked')].map(c => c.value); dialog.close(); if (!ids.length) return; if (await ask('Discard unfinished work?', 'The selected recovery copies will be permanently removed.', [{ label: 'Cancel', value: 'cancel' }, { label: 'Discard', value: 'discard', style: 'destructive' }]) === 'discard') { for (const documentId of ids) await recoveryWriter.discard({ documentId }); } else await reviewRecovery(); };
+  $('recovery-restore').onclick = async () => { const ids = [...rows.querySelectorAll('input:checked')].map(c => c.value); dialog.close(); await enqueue(async () => { for (const documentId of ids) { const restored = await invoke('recovery_restore', { documentId }); if (!restored?.documentId || typeof restored.content !== 'string') continue; const doc = { ...restored, saved: typeof restored.saved === 'string' ? restored.saved : null, active: true }; if (documents.has(documentId)) { await activateDocument(documents.get(documentId)); continue; } registerDocument(doc); await activateDocument(doc); } }); };
+  $('recovery-discard').onclick = async () => { const ids = [...rows.querySelectorAll('input:checked')].map(c => c.value); dialog.close(); if (!ids.length) return; if (await ask('Discard unfinished work?', 'The selected recovery copies will be permanently removed.', [{ label: 'Cancel', value: 'cancel' }, { label: 'Discard', value: 'discard', style: 'destructive' }]) === 'discard') { try { for (const documentId of ids) await recoveryWriter.discard({ documentId }); } catch (error) { toast(error); } } else await reviewRecovery(); };
   return new Promise(resolve => { dialog.addEventListener('close', resolve, { once: true }); dialog.showModal(); $('recovery-not-now').focus(); });
 }
 
@@ -260,7 +331,7 @@ function showTabMenu(doc, origin, point) {
   menu.hidden=false; const box=origin.getBoundingClientRect();
   menu.style.left=`${Math.max(8,Math.min(point?.x??box.left,innerWidth-248))}px`;
   menu.style.top=`${Math.max(8,Math.min(point?.y??box.bottom,innerHeight-menu.offsetHeight-8))}px`;
-  menu.onkeydown=event=>{const buttons=[...menu.querySelectorAll('button')],i=buttons.indexOf(document.activeElement);if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close();}else if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){event.preventDefault();buttons[event.key==='Home'?0:event.key==='End'?buttons.length-1:(i+(event.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length].focus();}else if(event.key==='Tab')menu.hidden=true;};
+  menu.onkeydown=event=>{const buttons=[...menu.querySelectorAll('button')],i=buttons.indexOf(document.activeElement);if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close();}else if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){event.preventDefault();buttons[event.key==='Home'?0:event.key==='End'?buttons.length-1:(i+(event.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length].focus();}else if(event.key==='Tab'){menu.hidden=true;origin.focus({preventScroll:true});}};
   menu.firstChild.focus();
 }
 document.addEventListener('pointerdown',event=>{const menu=$('tab-context-menu');if(menu&&!menu.contains(event.target))menu.hidden=true;});

@@ -28,6 +28,8 @@ const listing = {
     await page.evaluate(() => window.folderOpen);
     await page.waitForFunction(() => !busy && activeFolder?.path === '/tmp/folio-folder-focus');
     await page.waitForFunction(() => document.querySelectorAll('#folder-items .folder-entry').length === 1);
+    assert.equal(await page.locator('#file-browser').isVisible(), true, 'opening a folder shows the explorer');
+    assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('folder-entry')), true, 'opening a folder focuses the first row');
 
     const row = page.locator('#folder-items .folder-entry.directory');
     await row.focus();
@@ -50,6 +52,27 @@ const listing = {
     assert.equal(await page.evaluate(() => document.activeElement?.dataset.path), notes,
       'collapsing must not drop focus to the document body');
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-expanded')), 'false');
+    // Standard tree keys: Right expands and enters, Left collapses or returns
+    // to the parent, Up/Down/Home/End move between visible rows.
+    await row.focus();
+    await page.keyboard.press('ArrowRight');
+    await page.waitForFunction(() => document.querySelectorAll('#folder-items .folder-entry').length === 2);
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.path), item, 'Right expands and enters the first child');
+    await page.keyboard.press('ArrowLeft');
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.path), notes, 'Left returns to the parent row');
+    await page.keyboard.press('ArrowLeft');
+    await page.waitForFunction(() => document.querySelectorAll('#folder-items .folder-entry').length === 1);
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.path), notes, 'Left collapses an expanded folder');
+    await page.keyboard.press('ArrowRight');
+    await page.waitForFunction(() => document.querySelectorAll('#folder-items .folder-entry').length === 2);
+    await page.keyboard.press('Home');
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.path), notes, 'Home focuses the first row');
+    await page.keyboard.press('End');
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.path), item, 'End focuses the last row');
+    await page.locator('#folder-close').focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await page.locator('#file-browser').isHidden(), true);
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.dockTab), 'files', 'closing the file tree returns focus to its rail control');
 
     assert.deepEqual(errors, []);
     console.log('PASS: folder expansion/collapse preserves keyboard focus on the tree row.');

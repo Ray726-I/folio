@@ -1,6 +1,7 @@
 'use strict';
 // Theme definitions, palette derivation, and Mermaid colour configuration.
 let omarchy = null, selectedTheme = preferences.get('theme', 'system');
+if (typeof selectedTheme !== 'string') selectedTheme = 'system';
 if (selectedTheme === 'retro-terminal' && preferences.get('labRetroEnabled', true) === false) selectedTheme = 'system';
 const themes = [
   { id: 'retro-terminal', label: 'Retro Terminal', detail: 'Phosphor green on dark', swatch: '#85dc9b' },
@@ -143,8 +144,9 @@ function mermaidThemeCSS() {
   const { cardSoft } = diagramSurface();
   // Mermaid 11 derives ER attribute rows from the primary colour's lightness
   // minus 5% and 10%, so dark themes paint near-black bands inside a themed
-  // entity. The rows carry no class, only that inline hsl() fill.
-  return `[id^="entity-"] path[fill^="hsl("] { fill: ${cardSoft} !important; }`;
+  // entity. The generated rows use .row-rect-odd/.row-rect-even groups around
+  // paths whose fill is an inline hsl() value.
+  return `.erDiagram .row-rect-odd path[fill^="hsl("], .erDiagram .row-rect-even path[fill^="hsl("] { fill: ${cardSoft} !important; }`;
 }
 function mermaidThemeVariables() {
   const { background, dark, card, cardSoft } = diagramSurface();
@@ -252,7 +254,7 @@ function mermaidThemeVariables() {
 function availableThemes() {
   const retroEnabled = preferences.get('labRetroEnabled', selectedTheme === 'retro-terminal');
   const available = themes.filter(theme => theme.id !== 'retro-terminal' || retroEnabled);
-  return omarchy ? [...available, { id: 'omarchy', label: 'Omarchy', detail: `Current: ${omarchy.name}`, swatch: omarchy.colors.accent || '#7d82d9' }] : available;
+  return omarchy?.colors ? [...available, { id: 'omarchy', label: 'Omarchy', detail: `Current: ${omarchy.name}`, swatch: omarchy.colors.accent || '#7d82d9' }] : available;
 }
 // Tokens written to the root by the Omarchy palette. Theme changes clear just
 // these; a blanket style reset also dropped --text-size and the reader's
@@ -275,12 +277,15 @@ function scheduleDiagramRefresh(delay = 160) {
   }, delay);
 }
 function applyTheme(id, persist = true) {
+  if (typeof id !== 'string' || (id !== 'omarchy' && id !== 'retro-terminal' && !themes.some(theme => theme.id === id))) id = 'system';
+  if (id === 'retro-terminal' && preferences.get('labRetroEnabled', true) === false) id = 'system';
   if (id === 'retro-terminal' && selectedTheme !== id && persist) preferences.set('labRetroPreviousTheme', selectedTheme);
   selectedTheme = id;
   for (const variable of inlineThemeVariables) root.style.removeProperty(variable);
   root.style.removeProperty('color-scheme');
-  root.dataset.theme = id === 'omarchy' && !omarchy ? 'system' : id;
-  if (id === 'omarchy' && omarchy) {
+  const omarchyReady = id === 'omarchy' && Boolean(omarchy?.colors);
+  root.dataset.theme = id === 'omarchy' && !omarchyReady ? 'system' : id;
+  if (omarchyReady) {
     const colors = omarchy.colors;
     const map = { '--bg': 'background', '--fg': 'foreground', '--surface': 'dark_background', '--panel': 'lighter_background', '--accent': 'accent', '--selection': 'selection', '--green': 'green', '--red': 'red', '--yellow': 'yellow', '--blue': 'blue', '--purple': 'magenta' };
     const fallbacks = { '--surface': 'color-mix(in srgb, var(--fg) 4%, var(--bg))', '--panel': 'color-mix(in srgb, var(--fg) 7%, var(--bg))', '--selection': 'color-mix(in srgb, var(--accent) 22%, var(--bg))' };
@@ -300,7 +305,7 @@ function applyTheme(id, persist = true) {
     const luminance = channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
     root.style.setProperty('--accent-ink', luminance > .179 ? '#161616' : '#ffffff');
   }
-  $('theme-label').textContent = id === 'omarchy' && omarchy ? `Omarchy · ${omarchy.name}` : availableThemes().find(theme => theme.id === id)?.label || 'System';
+  $('theme-label').textContent = omarchyReady ? `Omarchy · ${omarchy.name}` : availableThemes().find(theme => theme.id === id)?.label || 'System';
   if (persist) preferences.set('theme', id);
   if ($('command-dialog').open) renderCommands();
   if (paletteReady) scheduleDiagramRefresh();

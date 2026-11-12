@@ -31,6 +31,9 @@ const small = '# Small again\n\nBack under the limit.\n';
     const shown = page.locator('#preview pre.document-over-limit');
     await shown.waitFor({ state: 'visible' });
     assert.equal(await page.locator('#editor-notice').isVisible(), true, 'the read-only notice is explicit');
+    assert.equal(await page.locator('#document-mode-label').textContent(), 'Read', 'an over-limit document settles in Read');
+    assert.equal(await page.locator('#document-mode-button').isDisabled(), true, 'the main mode toggle is disabled for an over-limit document');
+    assert.equal(await page.locator('#document-mode-menu-button').isDisabled(), true, 'the mode menu is disabled for an over-limit document');
     assert.equal(await page.evaluate(() => current.content), limited, 'the canonical buffer is complete');
     assert.equal(await shown.innerText(), limited, 'the complete Markdown is shown, not truncated');
     // Read-only: typing cannot change the document.
@@ -58,6 +61,7 @@ const small = '# Small again\n\nBack under the limit.\n';
     await page.evaluate(text => { changeContent(text); return renderPreview(); }, small);
     await page.locator('#preview .ProseMirror h1').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#editor-notice').isVisible(), false, 'the notice clears for a normal document');
+    assert.equal(await page.locator('[data-dock-tab="outline"]').isDisabled(), false, 'the outline rail returns after the editor restores');
     assert.equal(await page.evaluate(() => current.content), small);
     assert.deepEqual(errors, []);
     console.log('PASS: an over-limit document shows complete read-only Markdown, saves exact bytes, keeps the snapshot copyable, and restores the editor under the limit.');

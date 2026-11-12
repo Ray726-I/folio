@@ -27,7 +27,15 @@ function syncDocumentMode() {
   if (modeMachine.state !== documentMode) modeMachine.sync(documentMode, { readOnly: documentReadOnly }, 'external');
   else syncModeMachine();
   const protectedFile = current.writable === false;
+  const companionFocused = focusedPane === 'companion';
+  // The header title and save state follow the focused companion; the main
+  // mode and document-action controls do not, so hide them rather than
+  // showing controls that silently do nothing.
+  $('document-mode-group').hidden = !current.active || companionFocused;
+  $('document-more-group').hidden = !current.active || companionFocused;
+  const previousDocumentMode = root.dataset.documentMode;
   root.dataset.documentMode = documentMode;
+  if (previousDocumentMode !== documentMode && typeof syncDocumentChrome === 'function') syncDocumentChrome();
   const locked = documentMode === 'reading' || !documentWritable();
   if (editor && documentMode === 'source' && !editor.isSource?.()) editor.setSourceOnly?.(true);
   if (editor && documentMode !== 'source' && editor.isSource?.()) editor.setSourceOnly?.(false);
@@ -46,23 +54,34 @@ function syncDocumentMode() {
   $('document-mode-group').dataset.mode = documentReadOnly ? 'readonly' : documentMode;
   // The toggle can only offer Edit when the file is writable; otherwise the
   // caret menu remains the way to reach Source.
-  modeButton.disabled = documentReadOnly || protectedFile;
-  const blockedLabel = documentReadOnly ? 'Read-only — choose a mode from the menu' : 'Not writable — choose a mode from the menu';
+  modeButton.disabled = documentReadOnly || protectedFile || transitionLocked || documentLimited;
+  $('document-mode-menu-button').disabled = transitionLocked || documentLimited;
+  const blockedLabel = documentReadOnly ? 'Read-only — choose a mode from the menu' : documentLimited ? 'Too large to format — read-only Markdown' : 'Not writable — choose a mode from the menu';
   modeButton.setAttribute('aria-label', modeButton.disabled ? blockedLabel : `${modeLabel} — switch to ${nextLabel}`);
   modeButton.title = modeButton.disabled ? blockedLabel : `${modeLabel} — switch to ${nextLabel}`;
   modeButton.querySelector('use').setAttribute('href', protectedFile || documentReadOnly ? '#i-lock' : documentMode === 'reading' ? '#i-read' : documentMode === 'source' ? '#i-code' : '#i-edit');
   $('filesystem-permission').hidden = !current.active || !protectedFile;
   for (const button of document.querySelectorAll('button[data-document-mode]')) {
     button.setAttribute('aria-checked', String(button.dataset.documentMode === documentMode));
-    button.disabled = protectedFile && button.dataset.documentMode === 'edit';
+    button.disabled = transitionLocked || documentLimited || (protectedFile && button.dataset.documentMode === 'edit');
     button.title = button.disabled ? 'This file is not writable. Use Save as to create a writable copy.' : '';
   }
-  $('lock-document').disabled = protectedFile;
+  $('lock-document').disabled = protectedFile || transitionLocked || documentLimited;
   $('lock-document').setAttribute('aria-checked', String(documentReadOnly || protectedFile));
   $('lock-document').setAttribute('aria-pressed', String(documentReadOnly || protectedFile));
   $('lock-document').setAttribute('aria-label', 'Open as read-only');
   $('lock-document').title = 'Prevent modifications in every mode';
-  $('editor-lock-note').hidden = !current.active || !documentReadOnly || protectedFile;
+  const guideToolbar = $('reading-guide-toolbar');
+  const guideHidden = !current.active;
+  if (guideToolbar && guideToolbar.hidden !== guideHidden) {
+    guideToolbar.hidden = guideHidden;
+    if (typeof syncDocumentChrome === 'function') syncDocumentChrome();
+  }
+  const lockNoteHidden = !current.active || !documentReadOnly || protectedFile;
+  if ($('editor-lock-note').hidden !== lockNoteHidden) {
+    $('editor-lock-note').hidden = lockNoteHidden;
+    if (typeof syncDocumentChrome === 'function') syncDocumentChrome();
+  }
   $('editor-lock-note').textContent = 'Read-only · You can select, copy, follow links and inspect the source. Turn off read-only to make changes.';
   $('replace-one').disabled = $('replace-all').disabled = !documentWritable() || documentMode === 'reading' || !editor;
   document.querySelectorAll('[data-app-action]').forEach(button => {
@@ -83,8 +102,10 @@ function nextDocumentMode() {
 }
 function toggleDocumentMode() { setDocumentMode(nextDocumentMode()); }
 function setDocumentMode(next) {
-  if (focusedPane === 'companion') return;
+  if (focusedPane === 'companion') focusPane('main');
+  if (documentLimited && current.active) { toast('This document is too large to format. Its complete Markdown is shown read-only.'); return; }
   if (!current.active || transitionLocked || !['reading', 'edit', 'source'].includes(next)) return;
+  if (typeof closeEditorPopups === 'function') closeEditorPopups();
   if (next === 'edit' && current.writable === false) { toast('Filesystem permissions prevent editing. Use Save as to create a writable copy.'); return; }
   syncModeMachine();
   const event = { reading: 'READING', edit: 'EDIT', source: 'SOURCE' }[next];
@@ -118,8 +139,8 @@ function setDocumentMode(next) {
   restore(); requestAnimationFrame(restore);
 }
 function toggleDocumentReadOnly() {
-  if (focusedPane === 'companion') return;
-  if (transitionLocked || current.writable === false) return;
+  if (focusedPane === 'companion') focusPane('main');
+  if (!current.active || transitionLocked || current.writable === false) return;
   syncModeMachine();
   if (!modeMachine.send('TOGGLE_LOCK', { source: 'user' })) return;
   syncDocumentMode();
@@ -148,7 +169,9 @@ function navigateDocumentHistory(direction) {
 }
 function renderRecentMenu() {
   const menu = $('open-recent-menu'); menu.replaceChildren();
-  for (const path of preferences.get('recent', [])) {
+  const stored = preferences.get('recent', []);
+  for (const path of Array.isArray(stored) ? stored : []) {
+    if (typeof path !== 'string' || !path) continue;
     const button = document.createElement('button'); button.className = 'menu-item'; button.setAttribute('role', 'menuitem');
     button.textContent = basename(path); button.title = path;
     button.onclick = () => { closeAllMenus(); requestOpen(path); }; menu.append(button);
@@ -347,6 +370,7 @@ function initializePreferencesPanel() {
 }
 
 function showHelp(shortcuts = false) {
+  if ($('help-dialog').open) return;
   $('help-title').textContent = shortcuts ? 'Keyboard shortcuts' : 'About Folio';
   $('help-dialog').classList.toggle('shortcuts', shortcuts);
   const content = $('help-content'); content.replaceChildren();
@@ -393,7 +417,7 @@ async function editClipboard(action) {
     surface.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
   } else document.execCommand(action);
 }
-function openReplace() { openFind(); findMachine.send('REPLACE'); $('replace-bar').hidden = false; syncDocumentMode(); syncFindMachine(); }
+function openReplace() { if (focusedPane === 'companion') return openCompanionFind(); if (!current.active) return; openFind(); findMachine.send('REPLACE'); $('replace-bar').hidden = false; syncDocumentChrome(); syncDocumentMode(); syncFindMachine(); }
 function replaceMatches(all) {
   if (!documentWritable() || documentMode === 'reading' || !editor) return;
   const query = $('find-input').value, replacement = $('replace-input').value;
@@ -413,7 +437,7 @@ function jumpToSource(offset) {
 }
 function runAppAction(action) {
   closeAllMenus();
-  if (focusedPane === 'companion') { if (action === 'find') return openCompanionFind(); if (action === 'close') return closeReadingCompanion(); if (['undo','redo','cut','paste','replace','reading','rename','duplicate'].includes(action)) return; }
+  if (focusedPane === 'companion') { if (action === 'find') return openCompanionFind(); if (action === 'close') return closeReadingCompanion(); if (['undo','redo','cut','paste','replace','rename','duplicate'].includes(action)) return; }
   const actions = {
     open: openEntry, folder: openFolderEntry, new: () => newDocument(), home: goHome,
     'new-window': () => invoke('new_window'), 'move-window': () => enqueue(moveDocumentToNewWindow), companion: () => showReadingCompanion(), recovery: reviewRecovery, commands: openCommands, save: () => requestSave(), 'save-as': () => requestSave(true), close: closeDocument, quit: requestClose,
@@ -444,9 +468,16 @@ function closeDocument() {
     if (!current.active || !(await allowDiscard())) return false;
     try {
       setTransitionLocked(true); await invoke('new_document'); ++renderGeneration; previewSnapshot = null;
+      if (companionDocument === current) closeReadingCompanion();
       current = { path: null, name: 'Untitled.md', content: '', saved: '', active: false };
-      editor?.destroy(); editor = null; editorDocument = null; resetDocumentPresentation(); setLineEnding(null);
-      if (activeFolder) { showDocument(); await refreshEditorSurface(); } else showWelcome();
+      documentLimited = false; previewSnapshot = null;
+      $('find-bar').hidden = true; $('replace-bar').hidden = true; syncFindMachine();
+      editor?.destroy(); editor = null; editorDocument = null; editorPath = null; resetDocumentPresentation(); setLineEnding(null);
+      if (activeFolder) {
+        await renderPreview();
+        showDocument(); await refreshEditorSurface();
+        ($('folder-items').querySelector('.folder-entry') || $('folder-new'))?.focus({ preventScroll: true });
+      } else showWelcome();
       syncDocumentMode(); status(''); return true;
     } finally { setTransitionLocked(false); }
   });
@@ -459,12 +490,15 @@ async function renameDocument() {
   if (name === null || name === current.name || owner !== current) return;
   return enqueue(async () => {
     if (owner !== current) return;
+    const oldPath = current.path;
     const saved = await invoke('rename_document', { documentId: current.documentId, name });
-    if (!saved) return;
-    const oldPath = current.path; current.path = saved.path; current.name = saved.name;
-    documentNavigation = documentNavigation.map(path => samePath(path, oldPath) ? saved.path : path);
-    editorPath = current.path; editor?.refreshMedia(); updateTitle(); addRecent(current.path);
-    if (activeFolder) { const listing = await invoke('open_folder', { path: activeFolder.path }); folderEntries = listing.entries; renderFolderEntries(); syncFolderSelection(); }
+    if (!saved?.path) return;
+    await applyTreeResult({
+      oldPath, path: saved.path, directory: false,
+      documents: [{ documentId: current.documentId, path: saved.path, name: saved.name || basename(saved.path) }]
+    });
+    editorPath = current.path; editor?.refreshMedia();
+    if (activeFolder) { const listing = await invoke('open_folder', { path: activeFolder.path }); if (!listing || !Array.isArray(listing.entries)) throw new Error('The folder could not be read.'); folderEntries = listing.entries; renderFolderEntries(); syncFolderSelection(); }
     status('Document renamed');
   });
 }
@@ -472,6 +506,18 @@ function initializeChrome() {
   for (const id of ['file', 'edit', 'view', 'go', 'help']) setupMenu('menu-' + id + '-button', id === 'file' ? 'open-menu' : id === 'view' ? 'application-view-menu' : id + '-menu');
   $('document-mode-button').onclick = toggleDocumentMode;
   setupMenu('document-mode-menu-button', 'document-mode-menu'); setupMenu('document-more-button', 'document-more-menu');
+  const moreButton = $('document-more-button');
+  let moreHoverTimer = 0;
+  moreButton.addEventListener('pointerenter', event => {
+    if (event.pointerType === 'touch' || moreButton.disabled) return;
+    clearTimeout(moreHoverTimer);
+    moreHoverTimer = setTimeout(() => {
+      moreHoverTimer = 0;
+      if (moreButton.getAttribute('aria-expanded') !== 'true' && !moreButton.disabled) moreButton.__folioOpenMenu?.(true, false);
+    }, 120);
+  });
+  moreButton.addEventListener('pointerleave', () => { clearTimeout(moreHoverTimer); moreHoverTimer = 0; });
+  moreButton.addEventListener('click', () => { clearTimeout(moreHoverTimer); moreHoverTimer = 0; });
   $('lock-document').onclick = toggleDocumentReadOnly;
   document.querySelectorAll('button[data-document-mode]').forEach(button => button.onclick = () => setDocumentMode(button.dataset.documentMode));
   document.querySelectorAll('[data-app-action]').forEach(button => button.onclick = () => runAppAction(button.dataset.appAction));
@@ -488,9 +534,9 @@ function initializeChrome() {
     event.stopPropagation();
     const buttons = [...$('open-recent-menu').querySelectorAll('button')], index = buttons.indexOf(document.activeElement);
     if (event.key === 'ArrowLeft' || event.key === 'Escape') { event.preventDefault(); closeRecentMenu(); $('open-recent-button').focus(); }
-    else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); buttons[(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus(); }
+    else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); const step = event.key === 'ArrowDown' ? 1 : -1; const start = index < 0 ? (step > 0 ? -1 : 0) : index; buttons[(start + step + buttons.length) % buttons.length]?.focus(); }
     else if (event.key === 'Home' || event.key === 'End') { event.preventDefault(); buttons[event.key === 'Home' ? 0 : buttons.length - 1]?.focus(); }
-    else if (event.key === 'Tab') closeAllMenus();
+    else if (event.key === 'Tab') { closeAllMenus(); $('menu-file-button').focus({ preventScroll: true }); }
   };
   const triggers = [...document.querySelectorAll('.menubar-button')];
   $('app-menubar').addEventListener('keydown', event => {

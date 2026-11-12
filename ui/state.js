@@ -211,6 +211,7 @@
     }
     const output = dialog.querySelector('.state-inspector-output');
     output.textContent = inspect();
+    if (dialog.open) { dialog.querySelector('.state-inspector-actions .suggested')?.focus(); return; }
     dialog.showModal();
     dialog.querySelector('.state-inspector-actions .suggested')?.focus();
   }

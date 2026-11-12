@@ -28,7 +28,7 @@ const {openEditor}=require('./editor-browser.cjs');
    const erCoverage=await renderer.evaluate(({svg,css})=>{
     const document=new DOMParser().parseFromString(svg,'image/svg+xml');
     const selector=css.match(/^([^{}]+)\s*\{/)[1];
-    return {matched:document.querySelectorAll(selector).length,rows:document.querySelectorAll('[id^="entity-"] path[fill^="hsl("]').length};
+    return {matched:document.querySelectorAll(selector).length,rows:document.querySelectorAll('.row-rect-odd path[fill^="hsl("], .row-rect-even path[fill^="hsl("]').length};
    },{svg:erPatch.svg,css});
    assert.ok(erCoverage.rows>0,`${theme}: Mermaid ER entities expose attribute row paths`);
    assert.equal(erCoverage.matched,erCoverage.rows,`${theme}: ER theme patch matches every attribute row`);

@@ -47,6 +47,10 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.evaluate(() => { window.documentSource = '# Replacement document\n\n## Fresh section\n'; return requestOpenLocation('/tmp/fresh.md'); });
     await page.waitForFunction(() => outlineEntries.length === 2);
     assert.equal(await page.locator('.outline-link').filter({ hasText: 'Fresh section' }).isVisible(), true, 'new document is not hidden by previous collapse state');
+    await page.locator('#outline-close').focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await page.locator('#outline').isHidden(), true);
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.dockTab), 'outline', 'closing the outline returns focus to its rail control');
     assert.deepEqual(session.errors, []);
     console.log('PASS: outline collapse, hierarchy, keyboard, single-line titles and document safety');
   } finally { await session.close(); }

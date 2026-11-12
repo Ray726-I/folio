@@ -41,6 +41,15 @@ const { openEditor } = require('./editor-browser.cjs');
   assert.match(await page.evaluate(()=>current.content), /^PREFIX PREFIX PREFIX/);
   assert.deepEqual(await page.evaluate(()=>foldedSearchSpan('İ needle','needle')), {from:2,to:8});
   await page.evaluate(() => editor.undo());
+  // Folder search is a literal case-insensitive search. Its result navigation
+  // must not inherit the document find bar's case-sensitive option.
+  await page.locator('#find-case').click();
+  await page.locator('#folder-search-input').fill('needle');
+  await page.locator('#folder-search-results .grep-match').first().waitFor();
+  await page.locator('#folder-search-results .grep-match').first().click();
+  await page.waitForFunction(()=>editor.getSelection().anchor===8);
+  assert.equal(await page.evaluate(()=>editor.getSelection().anchor),8,'folder hits navigate case-insensitively even when document Find matches case');
+  await page.locator('#find-case').click();
   await page.evaluate(() => {
    window.oldSearchPending = false;
    window.baseGrepInvoke = window.__TAURI__.core.invoke;
@@ -64,6 +73,12 @@ const { openEditor } = require('./editor-browser.cjs');
   await page.keyboard.press('Control+Shift+f');
   assert.equal(await page.locator('#find-bar').isVisible(),true,'without a folder the shortcut falls back to document Find');
   assert.equal(await page.locator('#folder-search').isHidden(),true);
+  await page.evaluate(()=>goHome());
+  await page.waitForFunction(()=>!$('welcome').hidden&&!busy);
+  await page.evaluate(()=>{activeFolder={path:'/tmp/notes',name:'notes'};folderEntries=[];});
+  await page.keyboard.press('Control+Shift+f');
+  await page.waitForFunction(()=>!$('folder-search').hidden);
+  assert.equal(await page.evaluate(()=>document.activeElement?.id),'folder-search-input','folder search opens the folder surface from Home');
   assert.deepEqual(session.errors,[]);
   console.log('PASS: dedicated content-search sidebar, independent Ctrl+F, match navigation and no-folder fallback');
  }finally{await session.close()}

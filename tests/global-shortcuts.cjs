@@ -19,6 +19,8 @@ const {openEditor}=require('./editor-browser.cjs');
   await page.keyboard.press('Control+Shift+p');assert.equal(await page.locator('#command-dialog').isVisible(),false,'shortcut toggles palette closed');
   await fence.focus();const before=await page.evaluate(()=>windowZoom);await page.keyboard.press('Control+=');assert.equal(await page.evaluate(()=>windowZoom),before+.1,'input cannot swallow window zoom');
   await page.evaluate(()=>showHelp(true));await page.keyboard.press('Control+Shift+p');assert.equal(await page.locator('#command-dialog').isVisible(),true,'palette opens above help');
+  for(let i=0;i<12;i++)await page.keyboard.press('Tab');
+  assert.equal(await page.evaluate(()=>$('command-dialog').contains(document.activeElement)),true,'Tab stays in the topmost palette');
   await page.keyboard.press('Escape');assert.equal(await page.locator('#help-dialog').isVisible(),true,'closing palette restores the underlying dialog');
   await page.evaluate(()=>$('help-dialog').close());
   await page.evaluate(()=>{window.shortcutPrompt=ask('Confirm test','Choose an option',[{label:'Cancel',value:'cancel'},{label:'Continue',value:'continue'}]);});

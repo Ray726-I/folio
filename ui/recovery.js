@@ -22,7 +22,17 @@ class RecoveryWriter {
     await state.running;
     if (state.pending && !state.retired) return this.flush(doc);
   }
-  async saved(doc, revision) { await this.flush(doc); if (!doc.documentId) return; await this.invoke('recovery_saved', { documentId: doc.documentId, revision }).catch(error => this.warning(String(error?.message || error))); }
+  async saved(doc, revision) {
+    await this.flush(doc);
+    if (!doc.documentId) return;
+    await this.invoke('recovery_saved', { documentId: doc.documentId, revision }).catch(error => this.warning(String(error?.message || error)));
+    // A clean document needs no recovery bookkeeping. Drop the idle state so
+    // a long session with many files does not retain one entry per document;
+    // changed() recreates it on the next edit. Retired tombstones stay so a
+    // discarded draft can never be resurrected by a late snapshot.
+    const state = this.states.get(doc.documentId);
+    if (state && !state.retired && !state.pending && !state.running && !state.quiet && !state.maximum) this.states.delete(doc.documentId);
+  }
   async discard(doc) {
     if (!doc.documentId) return;
     const state = this.state(doc.documentId); state.retired = true; state.pending = null; this.clear(state);
