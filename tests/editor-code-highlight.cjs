@@ -20,6 +20,16 @@ const source = [
   '```html',
   '<img src=x onerror="window.__xss = true">',
   '```',
+  '',
+  '```diff',
+  '-old',
+  '+new',
+  ' context',
+  '```',
+  '',
+  '```json',
+  '{"key": "value", "n": 42, "yes": true}',
+  '```',
   ''
 ].join('\n');
 
@@ -59,6 +69,24 @@ const source = [
     assert.equal(await page.locator('#preview img').count(), 0, 'code text must not create elements');
     assert.equal(await page.evaluate(() => window.__xss), undefined, 'code text must never execute');
     assert.ok((await html.locator('.code-highlight code').innerText()).includes('<img src=x onerror="window.__xss = true">'));
+
+    const diff = page.locator('.code-container[data-language="diff"]');
+    const json = page.locator('.code-container[data-language="json"]');
+    await diff.locator('.code-highlight .markup.deleted').waitFor();
+    await json.locator('.code-highlight .dictionary.key .string').first().waitFor();
+    for (const theme of ['light', 'graphite']) {
+      await page.evaluate(theme => document.documentElement.setAttribute('data-theme', theme), theme);
+      const colors = await page.evaluate(() => {
+        const color = selector => getComputedStyle(document.querySelector(selector)).color;
+        const variable = name => { const el = document.createElement('span'); el.style.color = `var(${name})`; document.body.append(el); const result = getComputedStyle(el).color; el.remove(); return result; };
+        return { deleted: color('.code-highlight .markup.deleted'), added: color('.code-highlight .markup.inserted'), key: color('.code-highlight .dictionary.key .string'), value: color('.code-highlight .dictionary.value .string'), number: color('.code-highlight .constant.numeric'), bool: color('.code-highlight .constant.language'), red: variable('--red'), green: variable('--green') };
+      });
+      assert.equal(colors.deleted, colors.red, `${theme}: deleted lines use the theme red`);
+      assert.equal(colors.added, colors.green, `${theme}: added lines use the theme green`);
+      assert.notEqual(colors.key, colors.value, `${theme}: JSON keys differ from string values`);
+      assert.notEqual(colors.key, colors.number, `${theme}: JSON keys differ from numbers`);
+      assert.notEqual(colors.key, colors.bool, `${theme}: JSON keys differ from booleans`);
+    }
 
     assert.deepEqual(errors, []);
     console.log('PASS: rich fenced code keeps editable source while showing safe native token highlighting; Mermaid is unaffected.');

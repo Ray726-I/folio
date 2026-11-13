@@ -1086,6 +1086,20 @@ kbd {
   color:var(--blue)
 }
 
+/* Syntect emits nested scopes: style the string inside a JSON key, not just
+   its parent, so the general string rule cannot override the key color. */
+.markdown .source.json .dictionary.key .string {
+  color:var(--blue)
+}
+
+.markdown .source.diff .markup.deleted {
+  color:var(--red)
+}
+
+.markdown .source.diff .markup.inserted {
+  color:var(--green)
+}
+
 .markdown blockquote {
   margin:1.4em 0;
   border-left:3px solid var(--accent);
@@ -1105,9 +1119,32 @@ kbd {
 }
 
 .markdown .markdown-alert-title {
+  display:flex;
+  align-items:center;
+  gap:.45em;
   margin:0 0 .35em;
   color:var(--accent);
   font-weight:700
+}
+
+/* Alert title icons: small outline glyphs that inherit the per-type title
+   color via currentColor. Decorative only (aria-hidden in markup); the body
+   paragraphs that follow are untouched so they stay aligned. */
+.markdown .markdown-alert-icon {
+  width:1.05em;
+  height:1.05em;
+  flex:none;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:1.8;
+  stroke-linecap:round;
+  stroke-linejoin:round
+}
+
+@media(forced-colors:active) {
+  .markdown .markdown-alert-icon {
+    forced-color-adjust:auto
+  }
 }
 
 .markdown .markdown-alert-warning {
@@ -2981,6 +3018,15 @@ body.focus-mode .navigation-rail { display:none; }
 .outline-disclosure>.icon { width:12px; height:12px; transition:transform .12s ease; }
 .outline-disclosure[aria-expanded="true"]>.icon { transform:rotate(90deg); }
 .outline-disclosure:hover { background:var(--hover); color:var(--fg); }
+/* Hover washes the whole row like the active wash does. The label-only hover
+   left a 24px + indent step next to a full-row active wash, so hovering the
+   neighbour of the current section read as one highlight split across rows
+   (gutter on the active row, label on the hovered row). A row-level hover
+   shares the active left edge; the label itself stays transparent inside a
+   row so the two washes never double-darken. Bare links outside rows keep
+   their own wash. The active wash comes later so hovering the active row
+   keeps its accent. */
+.outline-row:hover { background:color-mix(in srgb,var(--fg) 5%,transparent); }
 .outline-row:has(.outline-link.active) { background:color-mix(in srgb,var(--accent) 13%,transparent); }
 /* An ancestor only highlights while the true position hides inside its
    collapsed section: a faint wash with full-strength parent text and an
@@ -2989,6 +3035,7 @@ body.focus-mode .navigation-rail { display:none; }
 .outline-row:has(.outline-link.active-ancestor) .outline-disclosure { color:var(--accent); }
 .outline-row .outline-link.active { background:transparent; color:var(--fg); font-weight:600; }
 .outline-row .outline-link.active-ancestor { background:transparent; color:var(--fg); font-weight:600; }
+.outline-row .outline-link:hover { background:transparent; }
 @media(prefers-reduced-motion:reduce) { .outline-disclosure>.icon { transition:none; } .sidebar-actions .icon-button.tiny .icon { transition:none; transform:none; } }
 @media(pointer:coarse) { .outline-disclosure { width:44px; height:44px; top:0; } .outline-row { padding-left:calc(44px + var(--outline-indent,0px)); } .outline-row .outline-link { min-height:44px; } .outline-row::after { display:none; } }
 

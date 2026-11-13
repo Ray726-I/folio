@@ -228,7 +228,7 @@
    * Returns `{ svg, external }`; `external` means the diagram needed resources
    * that offline mode does not support (the caller reports a fallback error).
    */
-  function sanitizeSvg(markup) {
+  function sanitizeSvg(markup, centerMindmapLabels = false) {
     if (typeof markup !== 'string') throw new RendererFailure('invalid_source', 'The diagram renderer returned no SVG.');
     if (markup.length > MAX_SVG_BYTES) throw new RendererFailure('render_failed', 'The diagram is too large to display safely.');
     let parsed;
@@ -241,6 +241,42 @@
     const root = parsed.documentElement;
     if (!root || root.namespaceURI !== SVG_NS || root.localName.toLowerCase() !== 'svg') {
       throw new RendererFailure('render_failed', 'The diagram renderer returned a non-SVG document.');
+    }
+
+    if (centerMindmapLabels) {
+      // Shared Mermaid shapes center labels at x=0, but mindmap styles leave
+      // SVG text start-anchored. Mindmap's own boxes use a left offset instead.
+      for (const node of root.querySelectorAll('.mindmap-node')) {
+        if (!node.querySelector(':scope > .label-container')) continue;
+        for (const text of node.querySelectorAll(':scope > .label text')) text.setAttribute('text-anchor', 'middle');
+      }
+      // Cylinder labels are positioned from the measured text bbox
+      // (translate(-w/2 - x, ...)). Chromium's getBBox reflects
+      // text-anchor:middle (x == -w/2, so the label lands at x=0), but the
+      // native WebKit webview returns the unanchored box (x == 0), leaving
+      // the label half a text width left of the shape centre. Rects and most
+      // other shapes never read bbox.x for their label, so only the cylinder
+      // family drifts. The symmetric cylinder body (cylinder /
+      // lined-cylinder, path starting at M0, with 0,0,0 arcs) is centered
+      // about x=0, so the label belongs at x=0; keep Mermaid's y. Tilted
+      // cylinders use 0,0,1 arcs and an intentional tilt offset, so leave
+      // those alone. Explicit text-anchor keeps display centering robust
+      // even if the host cascade changes.
+      for (const node of root.querySelectorAll('.node')) {
+        const shape = node.querySelector(':scope > path.basic.label-container.outer-path');
+        if (!shape) continue;
+        const d = shape.getAttribute('d') || '';
+        if (!/^M0,/.test(d) || !/0,0,0/.test(d) || /0,0,1/.test(d)) continue;
+        const label = node.querySelector(':scope > g.label');
+        if (!label) continue;
+        const transform = label.getAttribute('transform') || '';
+        const match = transform.match(/^translate\(\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*\)$/);
+        if (match) label.setAttribute('transform', `translate(0, ${match[2]})`);
+        for (const text of label.querySelectorAll('text')) {
+          text.setAttribute('text-anchor', 'middle');
+          for (const tspan of text.querySelectorAll('tspan.text-outer-tspan')) tspan.setAttribute('text-anchor', 'middle');
+        }
+      }
     }
 
     let external = false;
@@ -311,6 +347,29 @@
 
   let renderSequence = 0;
 
+  // Tidy-tree routes from the layout's rectangular node bounds, which can be
+  // wider than Mermaid's painted root circle. Extend only those root edges
+  // underneath the circle; leave every other shape and route untouched.
+  function joinMindmapRootCircle(markup) {
+    const doc = new DOMParser().parseFromString(markup, 'image/svg+xml');
+    const root = doc.querySelector('.mindmap-node.section-root');
+    const circle = root && root.querySelector(':scope > circle');
+    const transform = root && (root.getAttribute('transform') || '').match(/^translate\(\s*([-\d.]+)[,\s]+([-\d.]+)\s*\)$/);
+    const radius = circle && Number(circle.getAttribute('r'));
+    if (!transform || !(radius > 0)) return markup;
+    const cx = Number(transform[1]) + Number(circle.getAttribute('cx') || 0);
+    const cy = Number(transform[2]) + Number(circle.getAttribute('cy') || 0);
+    for (const path of doc.querySelectorAll('.edgePaths path[data-id^="edge_0_"]')) {
+      const d = path.getAttribute('d') || '';
+      const start = d.match(/^M\s*([-\d.]+)[,\s]+([-\d.]+)/);
+      if (!start || Math.abs(Number(start[2]) - cy) > 0.01) continue;
+      const x = Number(start[1]);
+      if (Math.abs(x - cx) <= radius) continue;
+      path.setAttribute('d', `M${cx + Math.sign(x - cx) * (radius * 0.99)},${cy}${d.slice(start[0].length)}`);
+    }
+    return new XMLSerializer().serializeToString(doc);
+  }
+
   async function render(request) {
     if (!request || typeof request.source !== 'string') throw new RendererFailure('invalid_source', 'The render request is invalid.');
     if (request.source.length > MAX_SOURCE_BYTES) throw new RendererFailure('invalid_source', 'The Mermaid source exceeds the renderer limit.');    if (hasExternalImageSource(request.source)) {
@@ -331,7 +390,7 @@
     // trusted side re-sanitizes this text with the rest of the SVG.
     const themeCSS = request.theme && typeof request.theme.css === 'string' ? request.theme.css.slice(0, 8192) : '';
 
-    window.mermaid.initialize({
+    const config = {
       startOnLoad: false,
       securityLevel: 'strict',
       suppressErrorRendering: true,
@@ -346,7 +405,15 @@
       // The isolated native webview is 1px wide. Gantt otherwise inherits
       // that width and returns a successful, but effectively invisible SVG.
       gantt: { useWidth: 1024, fontSize: 14, sectionFontSize: 14, barHeight: 24, barGap: 8 }
-    });
+    };
+    // Mermaid registers diagram detectors during initialization.
+    window.mermaid.initialize(config);
+    let isMindmap = false;
+    try {
+      if ((isMindmap = window.mermaid.detectType(request.source) === 'mindmap')) {
+        window.mermaid.initialize({ ...config, layout: 'tidy-tree' });
+      }
+    } catch (_) { /* render reports invalid syntax */ }
 
     let rendered;
     try {
@@ -360,7 +427,7 @@
     if (typeof markup !== 'string' || !markup.trim()) {
       throw new RendererFailure('render_failed', 'Mermaid returned no SVG.');
     }
-    const sanitized = sanitizeSvg(markup);
+    const sanitized = sanitizeSvg(isMindmap ? joinMindmapRootCircle(markup) : markup, true);
     if (sanitized.external) {
       throw new RendererFailure('unsupported_external_images', 'Mermaid images from the network are not available in offline mode.');
     }

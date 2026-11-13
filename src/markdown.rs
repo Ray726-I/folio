@@ -461,6 +461,33 @@ fn patch_task_items(html: &str, task_indices: &HashMap<String, usize>) -> String
     output
 }
 
+/// Prepend a small decorative outline icon to each Comrak alert title.
+///
+/// Comrak renders alerts as `<p class="markdown-alert-title">Note</p>` and
+/// siblings. The icon is a `<svg><use>` reference to the sprite in
+/// `ui/index.html`, marked `aria-hidden` so the visible title text is the
+/// only accessible name and copy output is unchanged. Decorating happens
+/// after sanitizing, so author HTML can never smuggle `svg`/`use` through the
+/// sanitizer: only these five exact generated title paragraphs gain an icon.
+fn decorate_alert_titles(html: &str) -> String {
+    const ALERT_TITLES: [(&str, &str); 5] = [
+        ("Note", "note"),
+        ("Tip", "tip"),
+        ("Important", "important"),
+        ("Warning", "warning"),
+        ("Caution", "caution"),
+    ];
+    let mut decorated = html.to_owned();
+    for (title, kind) in ALERT_TITLES {
+        let plain = format!("<p class=\"markdown-alert-title\">{title}</p>");
+        let iconic = format!(
+            "<p class=\"markdown-alert-title\"><svg class=\"markdown-alert-icon\" aria-hidden=\"true\" focusable=\"false\"><use href=\"#i-alert-{kind}\"></use></svg>{title}</p>"
+        );
+        decorated = decorated.replace(&plain, &iconic);
+    }
+    decorated
+}
+
 /// Render Markdown using Folio's default privacy posture (remote images blocked).
 #[allow(dead_code)] // used by unit tests and the editor fixture
 pub fn render(source: &str, base: Option<&Path>) -> String {
@@ -543,7 +570,7 @@ pub fn render_with_blocks_checked(
     }
     let sanitized = sanitize(&writer.output, allow_remote_images);
     images::account_images(&sanitized, limits)?;
-    let html = patch_task_items(&harden_images(&sanitized), &task_indices);
+    let html = decorate_alert_titles(&patch_task_items(&harden_images(&sanitized), &task_indices));
     if html.len() > limits.max_html_bytes {
         return Err(html_limit_error(limits));
     }
@@ -968,9 +995,44 @@ mod tests {
     #[test]
     fn renders_callout_labels_and_preserves_only_safe_table_alignment() {
         let rendered = render("> [!NOTE]\n> A note\n\n| A | B |\n| :--- | ---: |\n| 1 | 2 |\n\n<table><tr><td style=\"position:fixed\">unsafe style</td></tr></table>", None);
-        assert!(rendered.contains("markdown-alert-title\">Note</p>"));
+        assert!(
+            rendered.contains(
+                "<p class=\"markdown-alert-title\"><svg class=\"markdown-alert-icon\" aria-hidden=\"true\" focusable=\"false\"><use href=\"#i-alert-note\"></use></svg>Note</p>"
+            ),
+            "alert title keeps its text with a decorative icon: {rendered}"
+        );
         assert!(rendered.contains("align=\"right\""));
         assert!(!rendered.contains("position:fixed"));
+    }
+
+    #[test]
+    fn alert_titles_all_carry_decorative_theme_icons() {
+        let rendered = render(
+            "> [!NOTE]\n> n\n\n> [!TIP]\n> t\n\n> [!IMPORTANT]\n> i\n\n> [!WARNING]\n> w\n\n> [!CAUTION]\n> c\n\n> plain\n",
+            None,
+        );
+        for (title, kind) in [
+            ("Note", "note"),
+            ("Tip", "tip"),
+            ("Important", "important"),
+            ("Warning", "warning"),
+            ("Caution", "caution"),
+        ] {
+            let iconic = format!(
+                "<p class=\"markdown-alert-title\"><svg class=\"markdown-alert-icon\" aria-hidden=\"true\" focusable=\"false\"><use href=\"#i-alert-{kind}\"></use></svg>{title}</p>"
+            );
+            assert!(
+                rendered.contains(&iconic),
+                "{title} title must carry its #{kind} icon: {rendered}"
+            );
+        }
+        // Ordinary blockquotes gain no icon.
+        assert!(rendered.contains("<blockquote"), "{rendered}");
+        assert_eq!(
+            rendered.matches("markdown-alert-icon").count(),
+            5,
+            "only the five alerts gain icons: {rendered}"
+        );
     }
 
     #[test]

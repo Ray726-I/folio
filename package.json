@@ -15,7 +15,7 @@
     "test:lazy": "node tests/lazy-assets.cjs",
     "test:picker": "node tests/picker.cjs",
     "test:limits": "node tests/preview-limits.cjs",
-    "test:renderer": "node tests/mermaid-security.cjs && node tests/mermaid-bridge.cjs && node tests/mermaid-er-selector.cjs && node tests/mermaid-theme-colors.cjs",
+    "test:renderer": "node tests/mermaid-security.cjs && node tests/mermaid-bridge.cjs && node tests/mermaid-er-selector.cjs && node tests/mermaid-theme-colors.cjs && node tests/mermaid-mindmap-layout.cjs && node tests/mermaid-label-geometry.cjs && node tests/mermaid-cylinder-preview.cjs",
     "test:lab": "node tests/folio-lab.cjs && node tests/lab-lifecycle.cjs",
     "test:state": "node tests/state-machines.cjs",
     "test:chrome": "node tests/native-menu-contract.cjs && node tests/native-menu-history.cjs && node tests/shortcut-help-platform.cjs && node tests/global-shortcuts.cjs && node tests/palette-startup.cjs && node tests/command-palette.cjs && node tests/preferences-panel.cjs && node tests/open-focus-palette.cjs && node tests/folder-grep.cjs && node tests/default-open-mode.cjs && node tests/application-menus.cjs && node tests/application-submenu.cjs && node tests/menu-focus-on-open.cjs",

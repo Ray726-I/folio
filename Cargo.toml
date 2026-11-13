@@ -10,7 +10,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
 comrak = { version = "0.56", default-features = false, features = ["syntect-fancy", "shortcodes"] }
@@ -32,6 +31,12 @@ chrono = "0.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+# rfd defaults to GTK3, but the portal keeps dialogs consistent with the
+# desktop's native picker and avoids a second GTK3 dialog stack in the app.
+tauri-plugin-dialog = { version = "2", default-features = false, features = ["xdg-portal"] }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tauri-plugin-dialog = "2"
 
 [target."cfg(unix)".dependencies]
 rustix = { version = "1", features = ["fs"] }
