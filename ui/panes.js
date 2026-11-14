@@ -74,6 +74,13 @@ async function renderReadingCompanion() {
   const root = $('companion-preview'), scroll = $('companion-scroll');
   const anchor = [...root.querySelectorAll('[data-sourcepos]')].find(n => n.getBoundingClientRect().bottom > scroll.getBoundingClientRect().top);
   const position = anchor?.dataset.sourcepos, offset = anchor ? anchor.getBoundingClientRect().top - scroll.getBoundingClientRect().top : 0, top = scroll.scrollTop;
+  const reusableDiagrams = new Map();
+  for (const host of root.querySelectorAll('.mermaid-host[data-mermaid-source][data-theme-revision]')) {
+    if (Number(host.dataset.themeRevision) !== theme || !host.querySelector('svg')) continue;
+    const source = host.dataset.mermaidSource;
+    if (!reusableDiagrams.has(source)) reusableDiagrams.set(source, []);
+    reusableDiagrams.get(source).push(host);
+  }
   root.innerHTML = typeof result === 'string' ? result : result.html || ''; prefixCompanionIds(root);
   companionSyncPositions = [...root.querySelectorAll('p[data-sourcepos],h1[data-sourcepos],h2[data-sourcepos],h3[data-sourcepos],h4[data-sourcepos],h5[data-sourcepos],h6[data-sourcepos],pre[data-sourcepos],li[data-sourcepos],table[data-sourcepos]')].map(node => ({ node, line: parseInt(node.dataset.sourcepos, 10) })).filter(entry => Number.isFinite(entry.line)).sort((a,b) => a.line - b.line);
   $('companion-name').textContent = doc.name;
@@ -91,10 +98,17 @@ async function renderReadingCompanion() {
   if (root.querySelector('[data-math-style]')) { await loadKatex(); if (!valid()) return; for (const node of root.querySelectorAll('[data-math-style]')) window.katex.render(node.textContent,node,{displayMode:node.dataset.mathStyle==='display',throwOnError:false}); }
   for (const code of root.querySelectorAll('pre > code[class~="language-mermaid" i]')) {
     if (!valid()) return; const source = code.textContent;
+    // Each occurrence owns a host, including duplicate sources. Insert reused
+    // SVGs after prefixing the fresh Markdown so their IDs stay prefixed once.
+    const reused = reusableDiagrams.get(source)?.shift();
+    if (reused) { code.parentElement.replaceWith(reused); continue; }
     const host = document.createElement('div'); host.className = 'mermaid-host';
     let outcome; try { if (!mermaidSourceTooLarge(source)) ({result:outcome} = await requestMermaidRender(source, signal, 'companion')); } catch {}
     if (!valid() || !code.isConnected) return;
-    if (outcome?.ok && outcome.sanitized && outcome.svg) { showDiagramSvg(host,outcome.svg); prefixCompanionIds(host); }
+    if (outcome?.ok && outcome.sanitized && outcome.svg) {
+      showDiagramSvg(host,outcome.svg); prefixCompanionIds(host);
+      host.dataset.mermaidSource = source; host.dataset.themeRevision = String(theme);
+    }
     else showMermaidFallback(host,source,outcome?.error?.code === 'unsupported_external_images');
     code.parentElement.replaceWith(host);
   }
