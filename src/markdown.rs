@@ -6,13 +6,18 @@ use comrak::{
     plugins::syntect::SyntectAdapter,
     Arena, Options,
 };
+use html5ever::tokenizer::{TagKind, Token};
 use std::{
     borrow::Cow,
     collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque},
     fmt,
-    hash::{Hash, Hasher},
+    hash::{BuildHasher, Hash, Hasher},
     path::Path,
-    sync::{Arc, LazyLock, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, LazyLock, Mutex,
+    },
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 #[path = "markdown/author_html.rs"]
@@ -36,6 +41,24 @@ pub struct EditBlock {
     pub source: String,
     pub sourcepos: String,
     pub nodes: Vec<EditNode>,
+}
+
+/// One standalone-export substitution slot. The renderer leaves a marker in
+/// the sanitized HTML; the UI renders the source through KaTeX or the isolated
+/// Mermaid bridge, and the native export validates the asset before filling it.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportJob {
+    pub id: String,
+    pub kind: &'static str,
+    pub source: String,
+    pub display: bool,
+    pub block: bool,
+    /// Per-render provenance token. It never crosses IPC: it only identifies
+    /// this renderer's markers so escaped marker text can be removed without
+    /// touching identical literal text authored in the document.
+    #[serde(skip)]
+    pub nonce: String,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -577,6 +600,334 @@ pub fn render_with_blocks_checked(
     Ok((html, blocks))
 }
 
+/// Render sanitized HTML for a standalone export and replace every math and
+/// Mermaid block with an inert marker. The author's raw HTML has already had
+/// editing markers stripped, so only this renderer can create job markers.
+pub fn render_for_export(
+    source: &str,
+    base: Option<&Path>,
+    limits: &RenderLimits,
+) -> Result<(String, Vec<ExportJob>), PreviewLimitError> {
+    preflight(source, limits)?;
+    let mut options = markdown_options();
+    options.render.r#unsafe = true;
+    options.render.sourcepos = true;
+    let base = base.and_then(|path| path.canonicalize().ok());
+    let rewriter_limits = *limits;
+    // Exports never fetch remote media. Local images are embedded as data URLs
+    // by the same privacy-preserving resolver used by the preview.
+    let image_base = base.clone();
+    options.extension.image_url_rewriter = Some(Arc::new(move |url: &str| {
+        images::resolve_image(url, image_base.as_deref(), false, &rewriter_limits)
+    }));
+    let plugins = Plugins {
+        render: RenderPlugins {
+            codefence_syntax_highlighter: Some(&SourceHighlighter),
+            ..Default::default()
+        },
+    };
+    let arena = Arena::new();
+    let root = parse_document(&arena, source, &options);
+    check_node_budget(root, limits)?;
+    author_html::strip_author_markers(root);
+    rewrite_raw_export_images(root, base.as_deref(), limits);
+    let nonce = export_marker_nonce();
+    let jobs = replace_export_jobs(root, &nonce);
+    let task_indices: HashMap<_, _> = root
+        .descendants()
+        .filter(|node| matches!(node.data().value, NodeValue::TaskItem(_)))
+        .map(|node| node.data().sourcepos.to_string())
+        .enumerate()
+        .map(|(index, sourcepos)| (sourcepos, index))
+        .collect();
+    let mut writer = BoundedWriter::new(limits.max_html_bytes);
+    if comrak::format_html_with_plugins(root, &options, &mut writer, &plugins).is_err()
+        || writer.exceeded
+    {
+        return Err(html_limit_error(limits));
+    }
+    let sanitized = sanitize(&writer.output, false);
+    images::account_images(&sanitized, limits)?;
+    let html = decorate_alert_titles(&patch_task_items(&harden_images(&sanitized), &task_indices));
+    if html.len() > limits.max_html_bytes {
+        return Err(html_limit_error(limits));
+    }
+    // Raw HTML can place a math node in a context the sanitizer later drops or
+    // escapes (script/style/textarea/title/iframe/noscript/template). Keep only
+    // jobs whose generated marker still exists as a real element, so the UI
+    // never renders markup the sanitized document did not preserve.
+    let (html, jobs) = reconcile_export_jobs(html, jobs, &nonce);
+    Ok((html, jobs))
+}
+
+fn export_marker_nonce() -> String {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let counter = NEXT.fetch_add(1, Ordering::Relaxed);
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u128(nanos);
+    hasher.write_u32(std::process::id());
+    hasher.write_u64(counter);
+    format!("{:016x}{:016x}", hasher.finish(), nanos as u64)
+}
+
+fn reconcile_export_jobs(
+    mut html: String,
+    jobs: Vec<ExportJob>,
+    nonce: &str,
+) -> (String, Vec<ExportJob>) {
+    let mut surviving = HashSet::new();
+    let mut pending: Option<(String, String)> = None;
+    author_html::tokenize_fragment(&html, |token| match token {
+        Token::TagToken(tag) => {
+            let tag_name: &str = tag.name.as_ref();
+            let name = tag_name.to_ascii_lowercase();
+            if tag.kind == TagKind::EndTag {
+                if let Some((id, open_name)) = pending.take() {
+                    if open_name == name {
+                        surviving.insert(id);
+                    }
+                }
+                pending = None;
+            } else {
+                let job = tag.attrs.iter().find_map(|attribute| {
+                    let name: &str = attribute.name.local.as_ref();
+                    name.eq_ignore_ascii_case("data-folio-export-job")
+                        .then(|| attribute.value.to_string())
+                });
+                let nonce_matches = tag.attrs.iter().any(|attribute| {
+                    let name: &str = attribute.name.local.as_ref();
+                    name.eq_ignore_ascii_case("data-folio-export-nonce")
+                        && attribute.value.as_ref() == nonce
+                });
+                pending = job.filter(|_| nonce_matches).map(|id| (id, name));
+            }
+        }
+        // Only whitespace may sit between the generated start and end tags.
+        // Anything else makes this marker unrecognisable.
+        Token::CharacterTokens(text) if text.trim().is_empty() => {}
+        _ => pending = None,
+    });
+
+    let mut kept = Vec::with_capacity(jobs.len());
+    let mut recovery = HashMap::new();
+    for job in jobs {
+        if surviving.contains(&job.id) {
+            kept.push(job);
+        } else {
+            recovery.insert(job.id, escape_html(&job.source));
+        }
+    }
+    if !recovery.is_empty() {
+        html = recover_dropped_markers(&html, &recovery, nonce);
+    }
+    (html, kept)
+}
+
+/// A marker escaped into text (for example inside a stripped `<noscript>`)
+/// must not silently delete the math it replaced. Generated markers carry a
+/// per-render nonce, so this replaces only this render's markers with readable
+/// source text and leaves identical literal author text untouched.
+fn recover_dropped_markers(html: &str, recovery: &HashMap<String, String>, nonce: &str) -> String {
+    let patterns: [(&str, String); 4] = [
+        (
+            "<div data-folio-export-job=\"",
+            format!(" data-folio-export-nonce=\"{nonce}\"></div>"),
+        ),
+        (
+            "<span data-folio-export-job=\"",
+            format!(" data-folio-export-nonce=\"{nonce}\"></span>"),
+        ),
+        (
+            "&lt;div data-folio-export-job=\"",
+            format!(" data-folio-export-nonce=\"{nonce}\"&gt;&lt;/div&gt;"),
+        ),
+        (
+            "&lt;span data-folio-export-job=\"",
+            format!(" data-folio-export-nonce=\"{nonce}\"&gt;&lt;/span&gt;"),
+        ),
+    ];
+    let mut replacements = Vec::new();
+    for (prefix, suffix) in &patterns {
+        let mut cursor = 0;
+        while let Some(offset) = html[cursor..].find(prefix) {
+            let start = cursor + offset;
+            let id_start = start + prefix.len();
+            let Some(quote) = html[id_start..].find('"') else {
+                cursor = id_start;
+                continue;
+            };
+            let id_end = id_start + quote;
+            let after = id_end + 1;
+            if let Some(source) = recovery.get(&html[id_start..id_end]) {
+                if html[after..].starts_with(suffix) {
+                    replacements.push((start, after + suffix.len(), source.clone()));
+                    cursor = after + suffix.len();
+                    continue;
+                }
+            }
+            cursor = start + prefix.len();
+        }
+    }
+    if replacements.is_empty() {
+        return html.to_owned();
+    }
+    replacements.sort_unstable_by_key(|(start, _, _)| *start);
+    let mut output = String::with_capacity(html.len());
+    let mut cursor = 0;
+    for (start, end, replacement) in replacements {
+        if start < cursor {
+            continue;
+        }
+        output.push_str(&html[cursor..start]);
+        output.push_str(&replacement);
+        cursor = end;
+    }
+    output.push_str(&html[cursor..]);
+    output
+}
+
+/// Author HTML images bypass Comrak's Markdown image rewriter. Export embeds
+/// their local sources too, keeps already-embedded data URLs, and applies the
+/// same privacy block to remote sources. `srcset` is removed because it can
+/// start an independent network load that the single `src` policy cannot see.
+fn rewrite_raw_export_images<'a>(
+    root: &'a AstNode<'a>,
+    base: Option<&Path>,
+    limits: &RenderLimits,
+) {
+    for node in root.descendants() {
+        let mut data = node.data_mut();
+        let literal = match &mut data.value {
+            NodeValue::HtmlBlock(block) => &mut block.literal,
+            NodeValue::HtmlInline(html) => html,
+            _ => continue,
+        };
+        let rewritten = author_html::normalize_literal_with(literal, |tag| {
+            let tag_name: &str = tag.name.as_ref();
+            if !tag_name.eq_ignore_ascii_case("img") {
+                return;
+            }
+            tag.attrs.retain(|attribute| {
+                let name: &str = attribute.name.local.as_ref();
+                !name.eq_ignore_ascii_case("srcset")
+            });
+            for attribute in &mut tag.attrs {
+                let name: &str = attribute.name.local.as_ref();
+                if !name.eq_ignore_ascii_case("src") {
+                    continue;
+                }
+                let replacement = export_image_source(attribute.value.as_ref(), base, limits);
+                attribute.value = replacement.into();
+            }
+        });
+        *literal = rewritten;
+    }
+}
+
+fn export_image_source(destination: &str, base: Option<&Path>, limits: &RenderLimits) -> String {
+    if is_data_url(destination) {
+        return destination.to_owned();
+    }
+    images::resolve_image(destination, base, false, limits)
+}
+
+fn replace_export_jobs<'a>(root: &'a AstNode<'a>, nonce: &str) -> Vec<ExportJob> {
+    let nodes: Vec<_> = root.descendants().collect();
+    let mut jobs = Vec::new();
+    let (mut math_index, mut diagram_index) = (0usize, 0usize);
+    for node in nodes {
+        // Comrak renders image alt text in plain mode: it escapes child text
+        // but does not emit child HTML. A marker here would disappear from the
+        // output, so leave the math literal in place for the alt text.
+        if is_inside_image(node) {
+            continue;
+        }
+        enum Slot {
+            Math {
+                source: String,
+                display: bool,
+                block: bool,
+            },
+            Diagram(String),
+        }
+        let slot = match &node.data().value {
+            NodeValue::Math(math) => Slot::Math {
+                source: math.literal.clone(),
+                display: math.display_math,
+                // Dollar display math is still an inline span in the preview;
+                // only a ```math fence becomes a block-level box.
+                block: false,
+            },
+            NodeValue::CodeBlock(block) => {
+                let language = block.info.split_whitespace().next().unwrap_or_default();
+                if language.eq_ignore_ascii_case("math") {
+                    Slot::Math {
+                        source: block.literal.clone(),
+                        display: true,
+                        block: true,
+                    }
+                } else if language.eq_ignore_ascii_case("mermaid") {
+                    Slot::Diagram(block.literal.clone())
+                } else {
+                    continue;
+                }
+            }
+            _ => continue,
+        };
+        let (id, kind, source, display, block, tag) = match slot {
+            Slot::Math {
+                source,
+                display,
+                block,
+            } => {
+                let id = format!("math-{math_index}");
+                math_index += 1;
+                (
+                    id,
+                    "math",
+                    source,
+                    display,
+                    block,
+                    if block { "div" } else { "span" },
+                )
+            }
+            Slot::Diagram(source) => {
+                let id = format!("diagram-{diagram_index}");
+                diagram_index += 1;
+                (id, "diagram", source, false, true, "div")
+            }
+        };
+        let marker = format!(
+            "<{tag} data-folio-export-job=\"{id}\" data-folio-export-nonce=\"{nonce}\"></{tag}>"
+        );
+        jobs.push(ExportJob {
+            id,
+            kind,
+            source,
+            display,
+            block,
+            nonce: nonce.to_owned(),
+        });
+        node.data_mut().value = NodeValue::Raw(marker);
+    }
+    jobs
+}
+
+fn is_inside_image(node: &AstNode) -> bool {
+    let mut parent = node.parent();
+    while let Some(current) = parent {
+        if matches!(current.data().value, NodeValue::Image(_)) {
+            return true;
+        }
+        parent = current.parent();
+    }
+    false
+}
+
 fn html_limit_error(limits: &RenderLimits) -> PreviewLimitError {
     PreviewLimitError::new(
         PreviewLimitKind::HtmlBytes,
@@ -669,6 +1020,8 @@ fn sanitizer_builder(allow_remote_images: bool) -> ammonia::Builder<'static> {
             "data-footnote-backref",
             "data-heading-content",
             "data-wikilink",
+            "data-folio-export-job",
+            "data-folio-export-nonce",
         ])
         .add_tags(["section", "input", "progress", "meter"])
         .add_tag_attributes("input", ["type", "checked", "disabled"])

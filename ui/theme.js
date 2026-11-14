@@ -310,3 +310,20 @@ function applyTheme(id, persist = true) {
   if ($('command-dialog').open) renderCommands();
   if (paletteReady) scheduleDiagramRefresh();
 }
+// Resolve the active theme to solid colours for the standalone export. The
+// native side only accepts #rrggbb values, so mixed tokens are evaluated here
+// through the same probe the preview uses.
+function exportThemeSnapshot() {
+  const palette = {};
+  const variables = {
+    background: '--bg', foreground: '--fg', surface: '--surface', panel: '--panel',
+    accent: '--accent', selection: '--selection', green: '--green', red: '--red',
+    yellow: '--yellow', blue: '--blue', purple: '--purple', muted: '--muted',
+    line: '--line', hover: '--hover'
+  };
+  for (const [key, variable] of Object.entries(variables)) {
+    const value = cssVarColor(variable);
+    if (/^#[0-9a-f]{6}$/i.test(value)) palette[key] = value.toLowerCase();
+  }
+  return { palette, font: ['serif', 'sans', 'mono'].includes(readingFont) ? readingFont : 'serif' };
+}

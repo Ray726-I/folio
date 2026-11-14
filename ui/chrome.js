@@ -254,7 +254,6 @@ function applyCodeWrap() {
   root.toggleAttribute('data-code-nowrap', !wrap);
   const pref = typeof $ === 'function' ? $('preference-code-wrap') : null;
   if (pref) pref.checked = wrap;
-  for (const button of document.querySelectorAll('.code-wrap-toggle')) button.setAttribute('aria-pressed', String(wrap));
 }
 function setCodeWrapEnabled(on) {
   preferences.set('codeWrap', Boolean(on));
@@ -268,8 +267,6 @@ function applyDocumentPreferences() {
   $('preference-auto-save').checked = preferences.get('autoSaveFiles', false) === true;
   $('preference-restore-session').checked = preferences.get('restoreSession', true) !== false;
   $('preference-open-edit').checked = preferences.get('openInEditMode', true) !== false;
-  $('preference-touchpad-zoom-row').hidden = nativePlatform !== 'linux';
-  $('preference-touchpad-zoom').checked = touchpadZoom;
   applyCodeWrap();
   for (const [id, spec] of Object.entries(preferenceRanges)) {
     const input = $(id);
@@ -368,7 +365,6 @@ function initializePreferencesPanel() {
   $('preference-auto-save').onchange = event => { preferences.set('autoSaveFiles', event.target.checked); for (const doc of documents.values()) scheduleAutomaticSave(doc); };
   $('preference-restore-session').onchange = event => preferences.set('restoreSession', event.target.checked);
   $('preference-open-edit').onchange = event => preferences.set('openInEditMode', event.target.checked);
-  $('preference-touchpad-zoom').onchange = event => setTouchpadZoom(event.target.checked);
   $('preference-code-wrap').onchange = event => setCodeWrapEnabled(event.target.checked);
   for (const name of ['tasks', 'tables', 'code']) $('preference-' + name).onchange = event => { preferences.set('render-' + name, event.target.checked); applyDocumentPreferences(); };
   $('preference-font').onchange = event => applyReadingFont(event.target.value);
@@ -384,7 +380,7 @@ function initializePreferencesPanel() {
   };
   $('preferences-reset').onclick = () => {
     for (const key of ['openInEditMode', 'codeWrap', 'lineHeight', 'paragraphSpacing', 'contentWidth', 'headingStyle', 'render-tasks', 'render-tables', 'render-code']) preferences.set(key, null);
-    zoomText(0, true); setTouchpadZoom(false, false); applyReadingFont('sans'); applyTheme('system');
+    zoomText(0, true); applyReadingFont('sans'); applyTheme('system');
     setDocumentWidth(false); applyDocumentPreferences();
   };
 }
@@ -463,6 +459,58 @@ function jumpToSource(offset) {
   if (documentMode === 'source') { const input = $('document-source'); input.focus(); input.setSelectionRange(offset, offset); const line = current.content.slice(0, offset).split('\n').length - 1; input.scrollTop = Math.max(0, line * parseFloat(getComputedStyle(input).lineHeight) - input.clientHeight / 3); }
   else editor?.selectRange(offset);
 }
+// Standalone exports render math and diagrams with the same local assets as
+// the preview, but never by scraping preview DOM. Native returns the exact job
+// list; each asset is validated again before it is written into the file.
+async function exportDocumentHtml() {
+  const content = current.content;
+  // Freeze both representations before any await. The native document and
+  // Mermaid requests can take time; a theme switch in between must not mix
+  // palettes inside one exported file.
+  const theme = exportThemeSnapshot();
+  const mermaidTheme = { variables: mermaidThemeVariables(), css: mermaidThemeCSS() };
+  const plan = await invoke('prepare_html_export', { documentId: current.documentId, content });
+  const jobs = Array.isArray(plan?.jobs) ? plan.jobs : [];
+  const limit = Number.isInteger(plan?.maxAssets) ? Math.max(0, plan.maxAssets) : jobs.length;
+  const assets = [];
+  let katex = null;
+  if (jobs.slice(0, limit).some(job => job.kind === 'math')) {
+    try { katex = await loadKatex(); } catch { katex = null; }
+  }
+  for (const job of jobs.slice(0, limit)) {
+    if (job.kind === 'math') {
+      let html = null;
+      if (katex) {
+        try {
+          if (job.block) {
+            const host = document.createElement('div');
+            host.className = 'katex-block math-block';
+            katex.render(job.source, host, { displayMode: true, throwOnError: false });
+            html = host.outerHTML;
+          } else {
+            html = katex.renderToString(job.source, { displayMode: job.display === true, throwOnError: false });
+          }
+        } catch { html = null; }
+      }
+      assets.push(html ? { id: job.id, kind: 'math', html } : { id: job.id, kind: 'math' });
+    } else if (job.kind === 'diagram') {
+      let svg = null;
+      try {
+        const { result } = await requestMermaidRender(job.source, undefined, 'export', mermaidTheme);
+        if (result?.ok === true && result.sanitized === true && typeof result.svg === 'string' && result.svg) svg = result.svg;
+      } catch { svg = null; }
+      assets.push(svg ? { id: job.id, kind: 'diagram', svg } : { id: job.id, kind: 'diagram' });
+    }
+  }
+  const path = await invoke('export_html', {
+    documentId: current.documentId,
+    content,
+    assets,
+    theme
+  });
+  if (path) status(`Exported to ${path}`);
+}
+
 function runAppAction(action) {
   closeAllMenus();
   if (focusedPane === 'companion') { if (action === 'find') return openCompanionFind(); if (action === 'close') return closeReadingCompanion(); if (['undo','redo','cut','paste','replace','rename','duplicate'].includes(action)) return; }
@@ -484,7 +532,7 @@ function runAppAction(action) {
     'copy-path': () => navigator.clipboard.writeText(current.path).then(() => status('Document path copied')),
     reveal: () => invoke('reveal_document', { documentId: current.documentId }), rename: renameDocument,
     duplicate: () => { const entry = workspaceEntry(current.path); if (entry) return enqueue(() => performTreeOperation('duplicate', entry)); return enqueue(async () => { const path = await invoke('duplicate_document', { documentId: current.documentId, content: current.content }); if (path) status(`Duplicated to ${path}`); }); },
-    html: () => enqueue(async () => { const path = await invoke('export_html', { documentId: current.documentId, content: current.content }); if (path) status(`Exported to ${path}`); }),
+    html: () => enqueue(exportDocumentHtml),
     pdf: () => { status('Choose a PDF destination in the print dialog'); window.print(); }
   };
   try { Promise.resolve(actions[action]?.()).catch(toast); } catch (error) { toast(error); }

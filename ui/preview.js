@@ -53,6 +53,8 @@ function setActiveOutline(index, options) {
     if (!entry) return;
     const selected = entryIndex === active;
     entry.button.classList.toggle('active', selected);
+    // Keep the full-row wash in sync without relying solely on :has().
+    entry.row?.classList.toggle('is-active', selected);
     if (selected) entry.button.setAttribute('aria-current', 'location');
     else entry.button.removeAttribute('aria-current');
   };
@@ -188,7 +190,7 @@ function mermaidSourceTooLarge(source) {
     return (source || '').length > MAX_MERMAID_SOURCE_BYTES;
   }
 }
-async function requestMermaidRender(source, signal, owner = 'primary') {
+async function requestMermaidRender(source, signal, owner = 'primary', frozenTheme = null) {
   const id = `m${++mermaidBridgeId}`;
   await ensureMermaidBridge();
   let resolveResult;
@@ -202,7 +204,8 @@ async function requestMermaidRender(source, signal, owner = 'primary') {
   signal?.addEventListener('abort', abort, { once: true });
   if (signal?.aborted) abort();
   try {
-    if (!signal?.aborted) await invoke('mermaid_render_request', { request: { id, source, theme: { variables: mermaidThemeVariables(), css: mermaidThemeCSS() } } });
+    const theme = frozenTheme || { variables: mermaidThemeVariables(), css: mermaidThemeCSS() };
+    if (!signal?.aborted) await invoke('mermaid_render_request', { request: { id, source, theme } });
   } catch (error) {
     mermaidPending.delete(id);
     throw error;

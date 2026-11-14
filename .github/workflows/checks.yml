@@ -38,7 +38,7 @@ jobs:
       - name: Check Rust diagnostics
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Build parser fixture
-        run: cargo build --locked --example editor-fixture
+        run: cargo build --locked --example editor-fixture --example export-fixture
       - name: Install UI test dependencies
         run: |
           npm ci

@@ -759,7 +759,7 @@ const SAFE_SVG_ATTRIBUTES: &[&str] = &[
     "zoomandpan",
 ];
 
-fn sanitize_svg_result(svg: &str) -> Result<String, String> {
+pub(crate) fn sanitize_svg_result(svg: &str) -> Result<String, String> {
     let document = roxmltree::Document::parse(svg)
         .map_err(|error| format!("The renderer result is not valid SVG: {error}"))?;
     let root = document.root_element();
@@ -923,7 +923,7 @@ fn contains_external_scheme(value: &str) -> bool {
 /// neutralises non-local url() arguments, rejects unsafe image-set()/import
 /// constructs, and preserves ordinary selectors, declarations, colours, and
 /// local fragment references Mermaid emits.
-fn sanitize_css(input: &str) -> Result<String, String> {
+pub(crate) fn sanitize_css(input: &str) -> Result<String, String> {
     let mut parser = Parser::new(input);
     let mut output = String::with_capacity(input.len());
     sanitize_css_block(&mut parser, input, &mut output, 0)

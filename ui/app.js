@@ -5,7 +5,6 @@ let activeFolder = null, folderEntries = [], folderVisible = true, expandedFolde
 let renderedFolder = { path: null, entries: null };
 let fontSize = Math.min(40, Math.max(12, Number(preferences.get('fontSize', 19)) || 19));
 let windowZoom = Math.min(2, Math.max(.6, Number(preferences.get('windowZoom', 1)) || 1));
-let touchpadZoom = preferences.get('touchpadZoom', false) === true;
 let nativePlatform = '';
 let remoteImages = preferences.get('remoteImages', false) === true;
 let readingFont = ['serif', 'sans', 'mono'].includes(preferences.get('readingFont', 'sans')) ? preferences.get('readingFont', 'sans') : 'sans';
@@ -433,13 +432,6 @@ function setTextSize(size, { persist = true, anchor = true, announce = true } = 
 }
 function zoomText(delta, reset = false) { setTextSize(reset ? 19 : fontSize + delta); }
 function zoomWindow(delta, reset = false) { windowZoom = reset ? 1 : Math.min(2, Math.max(.6, Math.round((windowZoom + delta) * 10) / 10)); $('zoom-reset').textContent = `${Math.round(windowZoom * 100)}%`; preferences.set('windowZoom', windowZoom); invoke('set_window_zoom', { scale: windowZoom }).catch(toast); }
-function setTouchpadZoom(enabled, announce = true) {
-  touchpadZoom = nativePlatform === 'linux' && enabled === true;
-  preferences.set('touchpadZoom', touchpadZoom);
-  $('preference-touchpad-zoom').checked = touchpadZoom;
-  invoke('set_touchpad_zoom', { enabled: touchpadZoom }).catch(toast);
-  if ($('command-dialog').open) renderCommands();
-}
 function applyReadingFont(font = readingFont, persist = true) {
   readingFont = ['sans', 'mono'].includes(font) ? font : 'serif';
   root.dataset.readingFont = readingFont;
@@ -947,7 +939,6 @@ function allCommands() {
     { label: 'Report an issue', icon: 'open', action: () => runAppAction('issue') },
     { label: 'About Folio', icon: 'read', action: () => showHelp() }
   );
-  if (nativePlatform === 'linux') commands.push({ label: touchpadZoom ? 'Disable touchpad zoom' : 'Enable touchpad zoom', icon: 'read', detail: 'Allow pinch gestures to zoom the app', action: () => setTouchpadZoom(!touchpadZoom) });
   return commands;
 }
 function themeCommands() {
@@ -1728,7 +1719,6 @@ async function start() {
   if (preferences.get('theme', null) === null && omarchy?.colors) selectedTheme = 'omarchy';
   applyTheme(selectedTheme, false);
   syncDockForViewport();
-  setTouchpadZoom(touchpadZoom, false);
   if (omarchy?.colors && !$('preference-theme').querySelector('[value=omarchy]')) { const option = document.createElement('option'); option.value = 'omarchy'; option.textContent = 'Omarchy'; $('preference-theme').append(option); }
   applyDocumentPreferences();
   await invoke('ready').catch(() => {});

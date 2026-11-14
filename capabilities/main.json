@@ -22,6 +22,7 @@
       "allow-reveal-path",
       "allow-rename-document",
       "allow-duplicate-document",
+      "allow-prepare-html-export",
       "allow-export-html",
       "allow-search-folder",
       "allow-bootstrap",

@@ -88,10 +88,16 @@ function applyOutlineVisibility() {
 
 function syncOutlineContext() {
   outlineContextEntry?.button.classList.remove('active-ancestor');
+  // Companion mirror of the paint() row state below: the ancestor wash lives
+  // on the row so it never depends on :has() matching alone either.
+  outlineContextEntry?.row?.classList.remove('is-active-ancestor');
   let index = outlineActiveIndex;
   while (index >= 0 && outlineEntries[index]?.row.hidden) index = outlineEntries[index].parent;
   outlineContextEntry = index >= 0 ? outlineEntries[index] : null;
-  if (outlineContextEntry && index !== outlineActiveIndex) outlineContextEntry.button.classList.add('active-ancestor');
+  if (outlineContextEntry && index !== outlineActiveIndex) {
+    outlineContextEntry.button.classList.add('active-ancestor');
+    outlineContextEntry.row?.classList.add('is-active-ancestor');
+  }
   const tabEntry = outlineContextEntry || outlineEntries.find(entry => !entry.row.hidden);
   if (outlineTabEntry !== tabEntry) {
     if (outlineTabEntry) outlineTabEntry.button.tabIndex = -1;

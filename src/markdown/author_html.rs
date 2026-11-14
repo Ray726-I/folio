@@ -10,7 +10,16 @@ use comrak::nodes::{AstNode, NodeValue};
 /// Author HTML must never be allowed to supply them: a forged `data-sourcepos`
 /// could otherwise inherit a neighbouring generated block's edit index, and a
 /// forged task index could toggle a different source location.
-const EDITING_ATTRIBUTES: [&str; 3] = ["data-sourcepos", "data-task-index", "data-edit-index"];
+const EDITING_ATTRIBUTES: [&str; 5] = [
+    "data-sourcepos",
+    "data-task-index",
+    "data-edit-index",
+    // Native export markers and their per-render provenance nonce are
+    // generated after this pass. Removing author copies prevents raw HTML from
+    // impersonating a generated substitution.
+    "data-folio-export-job",
+    "data-folio-export-nonce",
+];
 
 /// Normalize every author HTML literal with the HTML tokenizer. Tokenization
 /// preserves the literal's start/end fragment boundaries: it never builds a
@@ -29,8 +38,21 @@ pub(crate) fn strip_author_markers<'a>(root: &'a AstNode<'a>) {
 }
 
 pub(crate) fn normalize_literal(literal: &str) -> String {
+    normalize_literal_with(literal, |_| {})
+}
+
+/// Normalize a literal while letting the caller edit each start tag before it
+/// is written. Export uses this to rewrite author HTML image sources without
+/// changing the preview's normal author-HTML handling.
+pub(crate) fn normalize_literal_with(literal: &str, mut edit_tag: impl FnMut(&mut Tag)) -> String {
     let mut output = String::with_capacity(literal.len());
-    tokenize_fragment(literal, |token| write_token(token, &mut output));
+    tokenize_fragment(literal, |token| match token {
+        Token::TagToken(mut tag) => {
+            edit_tag(&mut tag);
+            write_tag(tag, &mut output);
+        }
+        other => write_token(other, &mut output),
+    });
     output
 }
 

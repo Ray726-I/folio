@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod document;
+mod export;
 mod file_operations;
 mod markdown;
 mod native_menu;
@@ -64,8 +65,115 @@ struct AppState {
     /// idempotent and the fallback from re-showing a visible window.
     shown: AtomicBool,
     window_shown: Mutex<std::collections::HashSet<String>>,
-    /// Linux touchpad pinch gestures are blocked unless the user opts in.
-    touchpad_zoom: AtomicBool,
+}
+
+/// A Linux touchpad pinch update forwarded to the expanded viewer.
+///
+/// WebKitGTK owns trackpad pinch at the widget level and does not expose it to
+/// DOM gesture or wheel events. Folio therefore stops the GTK event (which also
+/// prevents the whole webview from zooming) and forwards the gesture to the
+/// page, where only the expanded viewer acts on it. Coordinates are fractions
+/// of the webview so they survive device scale factors and page zoom.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiagramPinch {
+    phase: DiagramPinchPhase,
+    scale: f64,
+    x_fraction: f64,
+    y_fraction: f64,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum DiagramPinchPhase {
+    Start,
+    Change,
+    End,
+    Cancel,
+}
+
+#[cfg(target_os = "linux")]
+impl DiagramPinch {
+    fn new(phase: DiagramPinchPhase, scale: f64, x: f64, y: f64, width: f64, height: f64) -> Self {
+        let normalize = |value: f64, extent: f64| {
+            if value.is_finite() && extent.is_finite() && extent > 0.0 {
+                (value / extent).clamp(0.0, 1.0)
+            } else {
+                0.5
+            }
+        };
+        Self {
+            phase,
+            scale: if scale.is_finite() && scale > 0.0 {
+                scale
+            } else {
+                1.0
+            },
+            x_fraction: normalize(x, width),
+            y_fraction: normalize(y, height),
+        }
+    }
+}
+
+/// GDK reports the gesture phase as a raw `gint8`; the gtk-rs binding names its
+/// accessor `is_phase`, which returns a bool and is unusable here.
+#[cfg(target_os = "linux")]
+fn diagram_pinch_phase(raw: i8) -> DiagramPinchPhase {
+    match raw {
+        0 => DiagramPinchPhase::Start,
+        1 => DiagramPinchPhase::Change,
+        2 => DiagramPinchPhase::End,
+        _ => DiagramPinchPhase::Cancel,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn diagram_pinch_from_event(event: &gtk::gdk::Event) -> Option<DiagramPinch> {
+    let pinch = event.downcast_ref::<gtk::gdk::EventTouchpadPinch>()?;
+    let raw = pinch.as_ptr() as *const gtk::gdk::ffi::GdkEventTouchpadPinch;
+    // SAFETY: `pinch` is a GDK_TOUCHPAD_PINCH event, so the union payload is
+    // GdkEventTouchpadPinch. The event outlives this borrow and we only read.
+    let (phase, scale, x, y) = unsafe {
+        let value = &*raw;
+        (value.phase, value.scale, value.x, value.y)
+    };
+    let (width, height) = event
+        .window()
+        .map(|window| (window.width() as f64, window.height() as f64))
+        .unwrap_or((0.0, 0.0));
+    Some(DiagramPinch::new(
+        diagram_pinch_phase(phase),
+        scale,
+        x,
+        y,
+        width,
+        height,
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn consumes_touchpad_pinch(event_type: EventType) -> bool {
+    event_type == EventType::TouchpadPinch
+}
+
+#[cfg(target_os = "linux")]
+fn route_touchpad_pinch(
+    app: &tauri::AppHandle,
+    label: &str,
+    event: &gtk::gdk::Event,
+) -> gtk::glib::Propagation {
+    // Returning Stop keeps WebKitGTK from page-zooming the whole app. The
+    // expanded viewer receives the same gesture through `diagram-pinch`.
+    if consumes_touchpad_pinch(event.event_type()) {
+        if let Some(pinch) = diagram_pinch_from_event(event) {
+            let _ = app.emit_to(label, "diagram-pinch", pinch);
+        }
+        gtk::glib::Propagation::Stop
+    } else {
+        gtk::glib::Propagation::Proceed
+    }
 }
 
 #[derive(Serialize)]
@@ -215,16 +323,11 @@ fn new_window(
     };
     #[cfg(target_os = "linux")]
     {
-        let gesture_state = state.inner().clone();
+        let pinch_app = app.clone();
+        let pinch_label = label.clone();
         if let Err(error) = window.with_webview(move |webview| {
             webview.inner().connect_event(move |_, event| {
-                if event.event_type() == EventType::TouchpadPinch
-                    && !gesture_state.touchpad_zoom.load(Ordering::SeqCst)
-                {
-                    gtk::glib::Propagation::Stop
-                } else {
-                    gtk::glib::Propagation::Proceed
-                }
+                route_touchpad_pinch(&pinch_app, &pinch_label, event)
             });
         }) {
             cleanup_workspace(&state, &label);
@@ -1383,14 +1486,13 @@ fn set_window_zoom(
     window.set_zoom(scale).map_err(|error| error.to_string())
 }
 
+/// Retained for older frontends and stored `touchpadZoom` preferences. Page
+/// pinch is now always suppressed at the GTK layer; only the expanded viewer
+/// receives the forwarded gesture, so there is nothing left to toggle.
 #[tauri::command]
-fn set_touchpad_zoom(
-    enabled: bool,
-    webview: tauri::Webview,
-    state: tauri::State<'_, Arc<AppState>>,
-) -> Result<(), String> {
+fn set_touchpad_zoom(enabled: bool, webview: tauri::Webview) -> Result<(), String> {
     renderer::ensure_main(webview.label())?;
-    state.touchpad_zoom.store(enabled, Ordering::SeqCst);
+    let _ = enabled;
     Ok(())
 }
 
@@ -1677,25 +1779,75 @@ fn duplicate_document(
     Ok(Some(saved.path.to_string_lossy().into()))
 }
 
+/// Return the math/Mermaid jobs for a standalone export without opening a
+/// native dialog. The UI renders them with the same local assets the preview
+/// uses, then passes typed assets back to `export_html` for validation.
 #[tauri::command(async)]
-fn export_html(
+async fn prepare_html_export(
     document_id: Option<String>,
     content: String,
+    webview: tauri::Webview,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<export::PreparedExport, String> {
+    renderer::ensure_main(webview.label())?;
+    let state = Arc::clone(&state);
+    let path = state
+        .documents
+        .lock()
+        .unwrap()
+        .get_for(webview.label(), document_id.as_deref())?
+        .map(|document| document.path);
+    tauri::async_runtime::spawn_blocking(move || {
+        export::prepare(
+            &content,
+            path.as_deref().and_then(Path::parent),
+            &markdown::DEFAULT_RENDER_LIMITS,
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Reject an HTML destination that is the open document itself or is already
+/// open in another document. Callers hold the registry lock through the final
+/// atomic persist so a concurrent open/save/rename cannot race the check.
+fn check_export_destination(
+    registry: &workspace::Registry,
+    id: &str,
+    path: &Path,
+) -> Result<(), String> {
+    let destination = workspace::Registry::destination(path)?;
+    if registry
+        .get(Some(id))?
+        .is_some_and(|document| document.path == destination)
+    {
+        return Err("Choose an HTML destination separate from the open document.".into());
+    }
+    registry.check_destination(id, path)
+}
+
+#[tauri::command(async)]
+async fn export_html(
+    document_id: Option<String>,
+    content: String,
+    assets: Option<Vec<export::ExportAsset>>,
+    theme: Option<export::ExportTheme>,
     webview: tauri::Webview,
     app: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<Option<String>, String> {
     renderer::ensure_main(webview.label())?;
-    state
-        .documents
-        .lock()
-        .unwrap()
-        .id_for(webview.label(), document_id.as_deref(), true)?;
+    let id =
+        state
+            .documents
+            .lock()
+            .unwrap()
+            .id_for(webview.label(), document_id.as_deref(), true)?;
     let original = state
         .documents
         .lock()
         .unwrap()
-        .get_for(webview.label(), document_id.as_deref())?;
+        .get_for(webview.label(), Some(&id))?;
     let Some(file) = app
         .dialog()
         .file()
@@ -1706,40 +1858,76 @@ fn export_html(
         return Ok(None);
     };
     let path = file.into_path().map_err(|error| error.to_string())?;
-    state
-        .documents
-        .lock()
-        .unwrap()
-        .check_destination("", &path)?;
-    if original
+    check_export_destination(&state.documents.lock().unwrap(), &id, &path)?;
+    let base = original
         .as_ref()
-        .is_some_and(|document| path.canonicalize().ok().as_ref() == Some(&document.path))
+        .and_then(|document| document.path.parent())
+        .map(Path::to_path_buf);
+    let assets = assets.unwrap_or_default();
+    let theme = theme.unwrap_or_default();
+    // Render through the native sanitizer again; never export author-controlled
+    // webview HTML, and validate every rendered asset before inserting it.
+    let output = tauri::async_runtime::spawn_blocking(move || {
+        export::export_document(
+            &content,
+            base.as_deref(),
+            &markdown::DEFAULT_RENDER_LIMITS,
+            assets,
+            theme,
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    // Rendering can take long enough for another window to open, save, or
+    // rename onto this destination. Revalidate and keep the registry lock
+    // through the atomic persist so the check cannot race the commit.
+    let registry = state.documents.lock().unwrap();
+    registry.id_for(webview.label(), Some(&id), true)?;
+    // The image base and destination checks were derived from this path. If
+    // the document was saved elsewhere or renamed while rendering, require a
+    // fresh export instead of writing a mixed snapshot.
+    if registry
+        .get(Some(&id))?
+        .as_ref()
+        .map(|document| document.path.clone())
+        != original.as_ref().map(|document| document.path.clone())
     {
-        return Err("Choose an HTML destination separate from the open document.".into());
+        return Err("The document changed while exporting. Try again.".into());
     }
-    // Render again through the native sanitizer; never export author-controlled
-    // webview HTML or implicitly fetch remote media.
-    let (html, _) = markdown::render_with_blocks_checked(
-        &content,
-        original
-            .as_ref()
-            .and_then(|document| document.path.parent()),
-        false,
-        &markdown::DEFAULT_RENDER_LIMITS,
-        false,
-    )
-    .map_err(|error| error.to_string())?;
-    // Alert titles carry decorative sprite icons in-app. Standalone exports
-    // embed the same five outline symbols so `<use>` resolves without the
-    // main window sprite; the icons inherit the title color like in-app.
-    const ALERT_SPRITE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true"><symbol id="i-alert-note" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5"/><path d="M12 7.8h.01"/></symbol><symbol id="i-alert-tip" viewBox="0 0 24 24"><path d="M12 3.5a5.8 5.8 0 0 0-3.4 10.5c.8.6 1.4 1.3 1.4 2h4c0-.7.6-1.4 1.4-2A5.8 5.8 0 0 0 12 3.5Z"/><path d="M10 19.5h4"/><path d="M10.8 21.5h2.4"/></symbol><symbol id="i-alert-important" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v5"/><path d="M12 16.2h.01"/></symbol><symbol id="i-alert-warning" viewBox="0 0 24 24"><path d="M12 4.5 3.8 19.5h16.4L12 4.5Z"/><path d="M12 10v4"/><path d="M12 16.8h.01"/></symbol><symbol id="i-alert-caution" viewBox="0 0 24 24"><path d="M8.2 3.8h7.6l4.4 4.4v7.6l-4.4 4.4H8.2l-4.4-4.4V8.2l4.4-4.4Z"/><path d="M12 8.5v4.5"/><path d="M12 16.2h.01"/></symbol></svg>"##;
-    let output = format!("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Folio document</title><style>body{{max-width:54rem;margin:3rem auto;padding:0 1.5rem;font:18px/1.7 Georgia,serif;color:#222}}pre{{overflow:auto;padding:1rem;background:#f4f4f4}}table{{border-collapse:collapse}}th,td{{border:1px solid #ccc;padding:.4rem .7rem}}img{{max-width:100%}}.markdown-alert{{border-left:3px solid #888;padding:15px 18px;margin:1.4em 0}}.markdown-alert-title{{display:flex;align-items:center;gap:.45em;font-weight:700;margin:0 0 .35em}}.markdown-alert-icon{{width:1.05em;height:1.05em;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}}</style></head><body>{ALERT_SPRITE}{html}</body></html>");
+    check_export_destination(&registry, &id, &path)?;
     let parent = path.parent().ok_or("Invalid export path")?;
-    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
-    use std::io::Write;
-    temp.write_all(output.as_bytes())
-        .map_err(|error| error.to_string())?;
-    temp.persist(&path).map_err(|error| error.to_string())?;
+    let existing = fs::metadata(&path).ok();
+    let builder = tempfile::Builder::new();
+    #[cfg(unix)]
+    let mut builder = builder;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if existing.is_none() {
+            builder.permissions(fs::Permissions::from_mode(0o666));
+        }
+    }
+    let mut temp = builder
+        .tempfile_in(parent)
+        .map_err(|error| format!("Could not create export file: {error}"))?;
+    if let Some(metadata) = existing {
+        temp.as_file()
+            .set_permissions(metadata.permissions())
+            .map_err(|error| error.to_string())?;
+    }
+    {
+        use std::io::Write;
+        temp.write_all(output.as_bytes())
+            .map_err(|error| format!("Could not write export file: {error}"))?;
+        temp.as_file()
+            .sync_all()
+            .map_err(|error| error.to_string())?;
+    }
+    temp.persist(&path)
+        .map_err(|error| format!("Could not save exported HTML: {}", error.error))?;
+    if let Ok(directory) = fs::File::open(parent) {
+        let _ = directory.sync_all();
+    }
     Ok(Some(path.to_string_lossy().into()))
 }
 
@@ -3079,16 +3267,11 @@ fn main() {
             .build()?;
             #[cfg(target_os = "linux")]
             {
-                let state = app.state::<Arc<AppState>>().inner().clone();
+                let pinch_app = app.handle().clone();
+                let pinch_label = renderer::MAIN_LABEL.to_string();
                 _main_window.with_webview(move |webview| {
                     webview.inner().connect_event(move |_, event| {
-                        if event.event_type() == EventType::TouchpadPinch
-                            && !state.touchpad_zoom.load(Ordering::SeqCst)
-                        {
-                            gtk::glib::Propagation::Stop
-                        } else {
-                            gtk::glib::Propagation::Proceed
-                        }
+                        route_touchpad_pinch(&pinch_app, &pinch_label, event)
                     });
                 })?;
             }
@@ -3201,6 +3384,7 @@ fn main() {
             reveal_path,
             rename_document,
             duplicate_document,
+            prepare_html_export,
             export_html,
             search_folder,
             bootstrap,
@@ -3251,6 +3435,23 @@ mod document_action_tests {
         .unwrap();
         assert_eq!(parsed.document_id, "doc-1");
     }
+    #[test]
+    fn export_destination_rejects_current_and_other_open_documents() {
+        let directory = tempfile::tempdir().unwrap();
+        let current = directory.path().join("current.md");
+        let other = directory.path().join("other.html");
+        fs::write(&current, "# Current\n").unwrap();
+        fs::write(&other, "<p>Other</p>").unwrap();
+        let mut registry = workspace::Registry::default();
+        let (id, opened) = registry.open(&current).unwrap();
+        assert!(check_export_destination(&registry, &id, Path::new(&opened.path)).is_err());
+        assert!(
+            check_export_destination(&registry, &id, &directory.path().join("new.html")).is_ok()
+        );
+        let (_, other_opened) = registry.open(&other).unwrap();
+        assert!(check_export_destination(&registry, &id, Path::new(&other_opened.path)).is_err());
+    }
+
     #[cfg(unix)]
     #[test]
     fn folder_search_accepts_a_symlinked_root() {
@@ -3420,5 +3621,63 @@ mod file_operation_tests {
         .unwrap();
         let moved = registry.get(Some(&id)).unwrap().unwrap();
         assert_eq!(fs::read_to_string(moved.path).unwrap(), "external");
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod pinch_tests {
+    use super::*;
+
+    #[test]
+    fn only_touchpad_pinch_is_consumed_so_page_zoom_stays_off() {
+        assert!(consumes_touchpad_pinch(EventType::TouchpadPinch));
+        assert!(!consumes_touchpad_pinch(EventType::Scroll));
+        assert!(!consumes_touchpad_pinch(EventType::TouchpadSwipe));
+    }
+
+    #[test]
+    fn gdk_phases_map_to_viewer_phases() {
+        assert_eq!(diagram_pinch_phase(0), DiagramPinchPhase::Start);
+        assert_eq!(diagram_pinch_phase(1), DiagramPinchPhase::Change);
+        assert_eq!(diagram_pinch_phase(2), DiagramPinchPhase::End);
+        assert_eq!(diagram_pinch_phase(3), DiagramPinchPhase::Cancel);
+        assert_eq!(diagram_pinch_phase(99), DiagramPinchPhase::Cancel);
+    }
+
+    #[test]
+    fn pinch_coordinates_are_normalized_for_the_css_viewport() {
+        let pinch = DiagramPinch::new(DiagramPinchPhase::Change, 1.5, 300.0, 240.0, 800.0, 600.0);
+        assert_eq!(pinch.x_fraction, 0.375);
+        assert!((pinch.y_fraction - 0.4).abs() < f64::EPSILON);
+        // Slightly out-of-window coordinates clamp to the edge; invalid
+        // measurements fall back to the center.
+        let outside = DiagramPinch::new(
+            DiagramPinchPhase::Start,
+            f64::NAN,
+            -50.0,
+            900.0,
+            800.0,
+            600.0,
+        );
+        assert_eq!(outside.scale, 1.0);
+        assert_eq!(outside.x_fraction, 0.0);
+        assert_eq!(outside.y_fraction, 1.0);
+        let unknown = DiagramPinch::new(DiagramPinchPhase::Cancel, 1.0, 10.0, 10.0, 0.0, 0.0);
+        assert_eq!(unknown.x_fraction, 0.5);
+        assert_eq!(unknown.y_fraction, 0.5);
+    }
+
+    #[test]
+    fn pinch_payload_matches_the_frontend_contract() {
+        let pinch = DiagramPinch::new(DiagramPinchPhase::Start, 1.0, 100.0, 50.0, 400.0, 200.0);
+        assert_eq!(
+            serde_json::to_value(pinch).unwrap(),
+            serde_json::json!({
+                "phase": "start",
+                "scale": 1.0,
+                "xFraction": 0.25,
+                "yFraction": 0.25
+            })
+        );
     }
 }

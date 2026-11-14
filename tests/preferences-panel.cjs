@@ -129,12 +129,9 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.equal(await page.evaluate(() => localStorage.getItem('folio.openInEditMode')), 'false');
     await page.locator('.preference-row', { hasText: 'Open documents in Edit mode' }).click();
     assert.equal(await page.evaluate(() => localStorage.getItem('folio.openInEditMode')), 'true');
-    // The touchpad toggle must reach the native side; the IPC is stubbed here,
-    // and tests/acl.rs guards the real command registration.
-    await page.locator('.preference-row', { hasText: 'Touchpad pinch to zoom' }).click();
-    assert.deepEqual(await page.evaluate(() => calls.filter(call => call.command === 'set_touchpad_zoom').at(-1)?.args), { enabled: true });
-    assert.equal(await page.evaluate(() => localStorage.getItem('folio.touchpadZoom')), 'true');
-    await page.locator('.preference-row', { hasText: 'Touchpad pinch to zoom' }).click();
+    // Touchpad pinch is no longer a whole-app preference: page pinch is always
+    // suppressed and the expanded viewer owns diagram zoom.
+    assert.equal(await page.locator('#preference-touchpad-zoom').count(), 0, 'obsolete touchpad zoom toggle is gone');
     await page.locator('.preference-disclosure summary').click();
     assert.equal(await page.locator('.preference-disclosure').evaluate(node => node.open), true);
     await page.locator('.preference-row', { hasText: 'Tables' }).click();

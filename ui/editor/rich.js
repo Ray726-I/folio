@@ -686,6 +686,24 @@ export function createRichEditor(parent, options) {
     render(); const refresh = () => render(); refreshers.add(refresh);
     return { dom, update(next) { if (next.type !== node.type) return false; if (next.eq(node)) return true; node = next; render(); return true; }, stopEvent: () => true, ignoreMutation: () => true, destroy() { generation++; lease.release(); refreshers.delete(refresh); } };
   }
+  // Code wrapping is a single global visual preference (folio.codeWrap,
+  // on by default). It never rewrites source bytes. The code-block context
+  // menu owns the only in-editor switch; the preferences panel mirrors it.
+  function isCodeWrapOn() {
+    return !document.documentElement.hasAttribute('data-code-nowrap');
+  }
+  function setCodeWrapEnabledGlobal(on) {
+    try {
+      if (typeof window !== 'undefined' && typeof window.setCodeWrapEnabled === 'function') {
+        window.setCodeWrapEnabled(Boolean(on));
+        return;
+      }
+    } catch {}
+    try { localStorage.setItem('folio.codeWrap', JSON.stringify(Boolean(on))); } catch {}
+    document.documentElement.toggleAttribute('data-code-nowrap', !on);
+    const pref = document.getElementById('preference-code-wrap');
+    if (pref) pref.checked = Boolean(on);
+  }
   function codeView(node, editor, getPos) {
     const dom = document.createElement('div'); dom.className = 'code-container';
     const fenceInfo = document.createElement('input');
@@ -754,40 +772,6 @@ export function createRichEditor(parent, options) {
       else if (event.key === 'Escape') { event.preventDefault(); const range = fenceRange(); if (range) fenceInfo.value = range.value; try { view.focus(); } catch {} }
     });
     fenceInfo.addEventListener('blur', () => commitFenceInfo(false));
-    // Per-block Wrap lines toggle. One global preference drives every block so
-    // read and edit stay in sync; wrapping is visual only and never rewrites
-    // source bytes or inserts line breaks. The button stays enabled while
-    // locked (reading) because it changes presentation, not content.
-    const wrapToggle = document.createElement('button');
-    wrapToggle.type = 'button'; wrapToggle.className = 'code-wrap-toggle';
-    wrapToggle.textContent = 'Wrap lines';
-    wrapToggle.setAttribute('aria-label', 'Wrap long lines');
-    wrapToggle.title = 'Wrap long lines (persisted)';
-    wrapToggle.contentEditable = 'false';
-    function syncWrapToggle() {
-      const wrap = !document.documentElement.hasAttribute('data-code-nowrap');
-      wrapToggle.setAttribute('aria-pressed', String(wrap));
-    }
-    function toggleCodeWrap() {
-      const nextWrap = document.documentElement.hasAttribute('data-code-nowrap');
-      try {
-        if (typeof window !== 'undefined' && typeof window.setCodeWrapEnabled === 'function') window.setCodeWrapEnabled(nextWrap);
-        else {
-          try { localStorage.setItem('folio.codeWrap', JSON.stringify(nextWrap)); } catch {}
-          document.documentElement.toggleAttribute('data-code-nowrap', !nextWrap);
-          for (const button of document.querySelectorAll('.code-wrap-toggle')) button.setAttribute('aria-pressed', String(nextWrap));
-          const pref = document.getElementById('preference-code-wrap'); if (pref) pref.checked = nextWrap;
-        }
-      } catch {
-        try { localStorage.setItem('folio.codeWrap', JSON.stringify(nextWrap)); } catch {}
-        document.documentElement.toggleAttribute('data-code-nowrap', !nextWrap);
-      }
-      wrapToggle.setAttribute('aria-pressed', String(nextWrap));
-    }
-    wrapToggle.addEventListener('mousedown', event => event.preventDefault());
-    wrapToggle.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); toggleCodeWrap(); });
-    wrapToggle.addEventListener('keydown', event => event.stopPropagation());
-    syncWrapToggle();
     const drawing = document.createElement('div');
     // The native renderer already owns a safe, sanitized syntax highlighter.
     // Keep its tokens in a non-editable backing layer and leave the real
@@ -851,7 +835,7 @@ export function createRichEditor(parent, options) {
       }, 60);
     };
     const render = async () => {
-      syncFenceInfo(); syncWrapToggle();
+      syncFenceInfo();
       const language = node.attrs.params.trim().split(/\s/)[0]; dom.dataset.language = language;
       if (language === 'math') {
         clearHighlight(); clearTimeout(renderTimer); renderTimer = 0; abortController?.abort(); source = null; theme = null;
@@ -876,7 +860,7 @@ export function createRichEditor(parent, options) {
         dom.classList.remove('mermaid-host'); delete dom.dataset.mermaidSource; delete dom.dataset.diagramState;
         code.className = /^[a-z0-9_+#.-]+$/i.test(language) ? `language-${language}` : '';
         pre.hidden = false;
-        if (wrapToggle.parentNode !== dom || pre.parentNode !== dom || highlight.nextSibling !== pre) dom.replaceChildren(fenceInfo, wrapToggle, highlight, pre);
+        if (pre.parentNode !== dom || highlight.nextSibling !== pre) dom.replaceChildren(fenceInfo, highlight, pre);
         scheduleHighlight(language);
         return;
       }
@@ -929,7 +913,7 @@ export function createRichEditor(parent, options) {
     }
     render(); refreshers.add(render);
     requestAnimationFrame(() => { if (dom.isConnected) syncFenceInfo(); });
-    return { dom, contentDOM: code, update(next) { if (next.type !== node.type) return false; if (next.sameMarkup(node) && next.textContent === node.textContent) { node = next; return true; } node = next; render(); return true; }, stopEvent: event => event.target === fenceInfo || event.target === wrapToggle || event.target.closest?.('.code-wrap-toggle') != null || event.target.classList?.contains('code-markdown-source'), ignoreMutation: mutation => mutation.type === 'attributes' || !pre.contains(mutation.target), destroy() { generation++; clearTimeout(renderTimer); clearTimeout(highlightTimer); highlightGeneration++; abortController?.abort(); codeHighlightObserver?.unobserve(dom); codeHighlights.delete(dom); refreshers.delete(render); } };
+    return { dom, contentDOM: code, update(next) { if (next.type !== node.type) return false; if (next.sameMarkup(node) && next.textContent === node.textContent) { node = next; return true; } node = next; render(); return true; }, stopEvent: event => event.target === fenceInfo || event.target.classList?.contains('code-markdown-source'), ignoreMutation: mutation => mutation.type === 'attributes' || !pre.contains(mutation.target), destroy() { generation++; clearTimeout(renderTimer); clearTimeout(highlightTimer); highlightGeneration++; abortController?.abort(); codeHighlightObserver?.unobserve(dom); codeHighlights.delete(dom); refreshers.delete(render); } };
   }
   // Reading selections may start, cross and end inside a rendered projection
   // or inline element. ProseMirror maps any DOM position inside an atom to
@@ -3858,6 +3842,29 @@ export function createRichEditor(parent, options) {
     });
     return item;
   }
+  function codeWrapMenuItem(target) {
+    // Wrapping is visual only and global; the entry stays enabled while
+    // locked (reading) because it changes presentation, not content. Only
+    // regular fences offer it — math/mermaid render a drawing, not a surface.
+    const container = target.closest?.('.code-container');
+    if (!container || target.closest?.('.folio-source-edit')) return null;
+    const surface = container.querySelector?.('.code-surface');
+    if (!surface || surface.hidden) return null;
+    const item = document.createElement('button');
+    item.type = 'button'; item.textContent = 'Wrap lines';
+    item.setAttribute('role', 'menuitemcheckbox');
+    item.setAttribute('aria-checked', String(isCodeWrapOn()));
+    item.setAttribute('aria-label', 'Wrap lines');
+    item.title = 'Wrap long lines (persisted)';
+    item.disabled = false;
+    item.addEventListener('click', () => {
+      closePopup();
+      const next = document.documentElement.hasAttribute('data-code-nowrap');
+      setCodeWrapEnabledGlobal(next);
+      try { view.focus({ preventScroll: true }); } catch {}
+    });
+    return item;
+  }
   function openDocumentMenu(target, event) {
     closePopup();
     captureDOMSelection();
@@ -3874,6 +3881,8 @@ export function createRichEditor(parent, options) {
     if (!target.closest?.('.folio-source-edit')) menu.append(markdownMenuItem(target));
     const copyItem = blockCopyItem(target);
     if (copyItem) menu.append(copyItem);
+    const wrapItem = codeWrapMenuItem(target);
+    if (wrapItem) menu.append(wrapItem);
     const separator = document.createElement('hr'); separator.setAttribute('role', 'separator');
     menu.append(separator);
     for (const [label, action] of [['Undo', 'undo'], ['Redo', 'redo'], ['Cut', 'cut'], ['Copy', 'copy'], ['Paste', 'paste'], ['Select all', 'select-all']]) {

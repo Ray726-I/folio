@@ -21,6 +21,7 @@ fn main() {
             "reveal_path",
             "rename_document",
             "duplicate_document",
+            "prepare_html_export",
             "export_html",
             "search_folder",
             "bootstrap",
