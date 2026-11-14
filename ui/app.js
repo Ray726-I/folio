@@ -1001,16 +1001,56 @@ function buildCommandRows() {
     : commandScope === 'files' ? quickOpenCommands()
     : commandScope === 'documents' ? [...documents.values()].map(doc => ({ label: doc.name, detail: doc.path || 'Unsaved document', icon: 'file', action: () => enqueue(() => activateDocument(doc)) }))
     : allCommands();
-  commandRows = list.map(commandRow);
+  commandRows = list.map((command, index) => commandScope === 'files' ? { command, index, element: null } : { ...commandRow(command, index), index });
 }
-function updateActiveCommand() {
-  filteredRows.forEach((row, index) => {
-    const active = index === selectedCommand;
+const COMMAND_WINDOW_SIZE = 60;
+let visibleCommandRows = [];
+function renderCommandRows(reveal) {
+  const list = $('command-list'), scroll = $('command-results');
+  const virtual = commandScope === 'files' && filteredRows.length > COMMAND_WINDOW_SIZE;
+  list.classList.toggle('command-window', virtual);
+  const height = parseFloat(getComputedStyle(scroll).getPropertyValue('--command-row-height')) || 38;
+  const viewport = scroll.clientHeight || 9 * height;
+  if (virtual && reveal) {
+    const top = selectedCommand * height, bottom = top + height;
+    if (top < scroll.scrollTop) scroll.scrollTop = top;
+    else if (bottom > scroll.scrollTop + viewport) scroll.scrollTop = bottom - viewport;
+  }
+  const first = Math.floor(scroll.scrollTop / height);
+  let start = virtual ? Math.max(0, Math.min(first - 10, filteredRows.length - COMMAND_WINDOW_SIZE)) : 0;
+  const end = virtual ? Math.min(filteredRows.length, start + COMMAND_WINDOW_SIZE) : filteredRows.length;
+  if (virtual && !reveal && (selectedCommand < start || selectedCommand >= end)) selectedCommand = Math.min(first, filteredRows.length - 1);
+  const nextRows = filteredRows.slice(start, end);
+  for (const row of visibleCommandRows) {
+    if (commandScope === 'files' && !nextRows.includes(row)) row.element = null;
+  }
+  list.style.paddingTop = virtual ? `${start * height}px` : '';
+  list.style.paddingBottom = virtual ? `${(filteredRows.length - end) * height}px` : '';
+  for (const row of nextRows) {
+    if (!row.element) row.element = commandRow(row.command, row.index).element;
+    row.element.setAttribute('aria-posinset', String(row.position + 1));
+    row.element.setAttribute('aria-setsize', String(filteredRows.length));
+  }
+  if (nextRows.length !== visibleCommandRows.length || nextRows.some((row, i) => row !== visibleCommandRows[i])) list.replaceChildren(...nextRows.map(row => row.element));
+  visibleCommandRows = nextRows;
+}
+function updateActiveCommand(reveal = true) {
+  renderCommandRows(reveal);
+  for (const row of visibleCommandRows) {
+    const active = row.position === selectedCommand;
     row.element.classList.toggle('active', active);
     row.element.setAttribute('aria-selected', String(active));
-  });
+  }
   $('command-search').setAttribute('aria-activedescendant', filteredRows.length ? filteredRows[selectedCommand].element.id : '');
 }
+let commandScrollFrame = 0;
+$('command-results').addEventListener('scroll', () => {
+  if (commandScope !== 'files' || commandScrollFrame) return;
+  commandScrollFrame = requestAnimationFrame(() => {
+    commandScrollFrame = 0;
+    if (commandScope === 'files' && $('command-dialog').open) updateActiveCommand(false);
+  });
+}, { passive: true });
 function filterCommands() {
   const query = $('command-search').value.trim().toLocaleLowerCase();
   if (!query) filteredRows = commandRows.slice();
@@ -1028,7 +1068,7 @@ function filterCommands() {
     )})).filter(item => item.score >= 0).sort((a,b)=>b.score-a.score).map(item=>item.row);
   }
   selectedCommand = Math.max(0, Math.min(selectedCommand, filteredRows.length - 1));
-  $('command-list').replaceChildren(...filteredRows.map(row => row.element));
+  filteredRows.forEach((row, index) => { row.position = index; });
   $('command-empty').hidden = filteredRows.length > 0;
   $('command-empty').textContent = commandScope === 'files' ? 'No matching files in the open folder or tabs' : commandScope === 'documents' ? 'No open documents' : 'No matching commands';
   $('command-scope').textContent = commandScope === 'files' ? 'Quick open' : commandScope === 'themes' ? 'Appearance' : commandScope === 'documents' ? 'Open documents' : query ? 'Search results' : 'Commands';

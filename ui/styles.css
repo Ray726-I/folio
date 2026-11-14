@@ -1399,6 +1399,7 @@ dialog::backdrop {
 }
 
 .command-results {
+  --command-row-height:38px;
   /* Whole rows only: a fractional height clipped the last command under the
      footer. Short windows step down to fewer rows instead. */
   max-height:calc(38px * 9 + 6px);
@@ -1419,6 +1420,7 @@ dialog::backdrop {
 }
 
 @media(pointer:coarse) {
+  .command-results { --command-row-height:44px; }
   .command-item { min-height:44px }
   .command-results { max-height:calc(44px * 7 + 6px) }
   .command-footer { min-height:44px }
@@ -4808,3 +4810,5 @@ body[data-selection-pane="reader-scroll"] #companion-scroll,body[data-selection-
    height instead of clipping their final actions. */
 #document-more-menu, #document-mode-menu { max-height:calc(100vh - 90px); overflow-y:auto; }
 #tree-menu, #tab-context-menu { max-height:calc(100vh - 16px); overflow-y:auto; }
+
+.command-window .command-item { box-sizing:border-box; height:var(--command-row-height,38px); min-height:var(--command-row-height,38px); }
