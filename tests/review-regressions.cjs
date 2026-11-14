@@ -11,6 +11,10 @@ const { openEditor } = require('./editor-browser.cjs');
       editor.selectRange(offset, offset, true);
       editor.openBlockMenu();
     });
+    const table = page.locator('#preview table');
+    await table.hover();
+    await page.waitForTimeout(200);
+    assert.equal(await page.locator('.tableWrapper > .diagram-expand').evaluate(node => getComputedStyle(node).opacity), '1', 'hovering the table reveals expand');
     // A block picker must refuse nested table content rather than prefix a row.
     assert.equal(await page.locator('.folio-slash-menu').count(), 0, 'block picker is unavailable within a table cell');
     assert.equal(await page.evaluate(() => current.content), source);

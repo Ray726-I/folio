@@ -3,7 +3,7 @@
 /* Mirrored diagonal arrows: outward toward the top-left and bottom-right. */
 .diagram-expand::before { content:""; display:block; width:18px; height:18px; background:currentColor; -webkit-mask:var(--expand-glyph) center/contain no-repeat; mask:var(--expand-glyph) center/contain no-repeat; }
 .diagram-expand { --expand-glyph:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 4H4v6m0-6 6.5 6.5M14 20h6v-6m0 6-6.5-6.5'/%3E%3C/svg%3E"); }
-.mermaid-host:hover>.diagram-expand,.mermaid-host:focus-within>.diagram-expand,.image-widget:hover>.diagram-expand,.image-widget:focus-within>.diagram-expand,.math-block:hover>.diagram-expand,.math-block:focus-within>.diagram-expand,.tableWrapper>.diagram-expand:hover,.tableWrapper>.diagram-expand:focus-visible { opacity:1; }
+.mermaid-host:hover>.diagram-expand,.mermaid-host:focus-within>.diagram-expand,.image-widget:hover>.diagram-expand,.image-widget:focus-within>.diagram-expand,.math-block:hover>.diagram-expand,.math-block:focus-within>.diagram-expand,.tableWrapper:hover>.diagram-expand,.tableWrapper:focus-within>.diagram-expand,.tableWrapper>.diagram-expand:focus-visible { opacity:1; }
 .diagram-expand:hover { color:var(--fg); background:var(--hover); border-color:var(--line); }
 .diagram-expand:focus-visible,.diagram-viewer button:focus-visible { outline:none; background:var(--hover); color:var(--fg); }
 .diagram-expand:focus-visible { border-color:var(--line); }
