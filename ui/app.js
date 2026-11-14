@@ -1405,7 +1405,7 @@ function followHeadingLink(fragment) {
   refreshEditorOutline(true);
   let id; try { id = decodeURIComponent(fragment.replace(/^#/, '')); } catch { return; }
   const heading = outlineEntries.find(entry => entry.id === id || entry.id === `doc-${id}`);
-  if (heading) { jumpToSource(heading.offset); heading.element?.scrollIntoView({ block: 'start' }); }
+  if (heading) { jumpToSource(headingCaretOffset(heading.offset)); heading.element?.scrollIntoView({ block: 'start' }); }
   else document.getElementById(id)?.scrollIntoView({ block: 'start' });
 }
 async function openDocumentLink(documentId, href) {

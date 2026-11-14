@@ -31,7 +31,7 @@ const { openEditor } = require('./editor-browser.cjs');
       followPreviewLink(anchor);
     });
     await page.waitForFunction(() => current.path === '/other.md' && !busy);
-    assert.equal(await page.evaluate(() => editor.getSelection().head), await page.evaluate(() => current.content.indexOf('## Section')), 'cross-file link selects its heading');
+    assert.equal(await page.evaluate(() => editor.getSelection().head), await page.evaluate(() => current.content.indexOf('## Section') + 3), 'cross-file link selects its heading');
     await page.evaluate(async () => {
       $('reader-scroll').scrollTop = 0;
       await openPath('/away.md');

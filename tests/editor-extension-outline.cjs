@@ -38,7 +38,7 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
       anchor.setAttribute('href', '#repeat-1');
       followPreviewLink(anchor);
     });
-    const secondRepeat = source.lastIndexOf('# Repeat');
+    const secondRepeat = source.lastIndexOf('# Repeat') + 2; // Land after the heading markers.
     assert.equal(await page.evaluate(() => editor.getSelection().anchor), secondRepeat,
       'a #repeat-1 link must select the second duplicate heading');
 
