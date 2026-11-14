@@ -1,6 +1,6 @@
 import MarkdownIt from 'markdown-it';
 import { Schema, Fragment } from 'prosemirror-model';
-import { schema as commonSchema, MarkdownParser, MarkdownSerializer, defaultMarkdownParser, defaultMarkdownSerializer } from 'prosemirror-markdown';
+import { schema as commonSchema, MarkdownParser, MarkdownSerializer, MarkdownSerializerState, defaultMarkdownParser, defaultMarkdownSerializer } from 'prosemirror-markdown';
 import { tableNodes } from 'prosemirror-tables';
 import { buildLedger, mapSource as mapLedgerSource, mapRich as mapLedgerRich } from './source-ledger.js';
 
@@ -243,8 +243,19 @@ const tableCellSerializer = new MarkdownSerializer({
   hard_break(state) { state.write('<br>'); }
 }, serializerMarks);
 
+class TableCellSerializerState extends MarkdownSerializerState {
+  text(text, escape = true) {
+    // GFM strips one backslash before every cell pipe, including in code.
+    // Code text bypasses normal Markdown escaping, so add its table escape
+    // even when the literal code already ends in a backslash.
+    super.text(escape ? text : text.replace(/\|/g, '\\|'), escape);
+  }
+}
+
 function serializeTableCell(cell) {
-  return tableCellSerializer.serialize(schema.nodes.doc.create(null, cell.content))
+  const state = new TableCellSerializerState(tableCellSerializer.nodes, tableCellSerializer.marks, {});
+  state.renderContent(schema.nodes.doc.create(null, cell.content));
+  return state.out
     .trim()
     .replace(/\n+/g, '<br>')
     .replace(/(?<!\\)\|/g, '\\|');

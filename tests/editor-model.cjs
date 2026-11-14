@@ -128,3 +128,15 @@ console.log('PASS: source slices, unchanged extensions, GFM table/task/math mode
  children[i]=schema.nodes.raw_block.create({kind:'source-edit'},schema.text(children[i].textContent.replace('One.','One edit.')));
  assert.equal(updateSource(schema.nodes.doc.create(null,children),projected).source,source.replace('One.','One edit.'));
 }
+
+// Structural table edits must preserve literal backslashes before code pipes.
+for (let slashes = 0; slashes <= 4; slashes++) {
+  const code = 'a' + '\\'.repeat(slashes) + '|b';
+  const source = '| A |\n| --- |\n| `' + 'a' + '\\'.repeat(slashes + 1) + '|b` |\n| other |\n';
+  const parsed = parseSource(source);
+  const table = parsed.doc.firstChild;
+  assert.equal(table.child(1).textContent, code);
+  const moved = table.type.create(table.attrs, [table.child(0), table.child(2), table.child(1)]);
+  const changed = updateSource(schema.nodes.doc.create(null, moved), parsed);
+  assert.ok(parseSource(changed.source).doc.eq(changed.doc), `code pipe survives row move with ${slashes} backslashes`);
+}
