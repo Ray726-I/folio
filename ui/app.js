@@ -1360,6 +1360,9 @@ $('reload').onclick = () => { const owner = current; return enqueue(async () => 
 $('find-input').oninput = updateFind; $('find-next').onclick = () => nextFind(1); $('find-previous').onclick = () => nextFind(-1); $('find-close').onclick = closeFind;
 $('find-input').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); nextFind(event.shiftKey ? -1 : 1); } };
 function followHeadingLink(fragment) {
+  // Explicit navigation needs current heading IDs even while the outline is
+  // closed and its normal background refresh is deferred.
+  refreshEditorOutline(true);
   let id; try { id = decodeURIComponent(fragment.replace(/^#/, '')); } catch { return; }
   const heading = outlineEntries.find(entry => entry.id === id || entry.id === `doc-${id}`);
   if (heading) { jumpToSource(heading.offset); heading.element?.scrollIntoView({ block: 'start' }); }

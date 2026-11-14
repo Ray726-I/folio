@@ -86,10 +86,10 @@ function clearEditorOutline() {
   }
   if (typeof renderNavigationDock === 'function') renderNavigationDock();
 }
-function refreshEditorOutline() {
-  if (focusedPane === 'companion') { refreshCompanionOutline(); return; }
+function refreshEditorOutline(force = false) {
+  if (!force && focusedPane === 'companion') { refreshCompanionOutline(); return; }
   if (!editor || !current.active) return;
-  if ($('outline').hidden && !(dockVisible && dockTab === 'outline')) return;
+  if (!force && $('outline').hidden && !(dockVisible && dockTab === 'outline')) return;
   const headings = (!editor.isSource?.() && editor.getHeadings?.()) || window.FolioEditor.headings(current.content);
   $('outline').hidden = !headings.length || !dockVisible || dockTab !== 'outline'; $('outline-divider').hidden = $('outline').hidden;
   const previousEntries = outlineEntries;

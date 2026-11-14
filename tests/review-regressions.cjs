@@ -19,6 +19,7 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.equal(await page.locator('.folio-slash-menu').count(), 0, 'block picker is unavailable within a table cell');
     assert.equal(await page.evaluate(() => current.content), source);
     await page.evaluate(() => {
+      setOutline(false);
       const original = window.__TAURI__.core.invoke;
       window.__TAURI__.core.invoke = async (command, args) => {
         if (command === 'resolve_document_link') return '/other.md';
