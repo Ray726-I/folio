@@ -326,14 +326,16 @@
 }
 
 /* Style the task's own content, not its list item: nested tasks have their
-   own completion state and must not inherit a parent's strike-through. */
+   own completion state and must not inherit a parent's strike-through.
+   Completed text rests in the theme's muted tone so checked rows recede
+   while staying legible; the checkbox artwork above is untouched. */
 .markdown .task-item:has(>input:checked) > .list-content > :not(ul):not(ol) {
-  color:color-mix(in srgb,var(--fg) 93%,var(--bg));
+  color:var(--muted);
   text-decoration:line-through;
   text-decoration-color:color-mix(in srgb,currentColor 55%,transparent);
   text-decoration-thickness:1px
 }
-.markdown .task-item:has(>input:checked) > .list-content > :not(ul):not(ol) :is(strong,b,em) {
+.markdown .task-item:has(>input:checked) > .list-content > :not(ul):not(ol) :is(a,strong,b,em,code) {
   color:inherit
 }
 
