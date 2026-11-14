@@ -26,6 +26,12 @@ const { openEditor } = require('./editor-browser.cjs');
     });
     await page.waitForFunction(() => current.path === '/other.md' && !busy);
     assert.equal(await page.evaluate(() => editor.getSelection().head), await page.evaluate(() => current.content.indexOf('## Section')), 'cross-file link selects its heading');
+    await page.keyboard.press('Control+Shift+P');
+    const search = page.getByRole('combobox', { name: 'Search commands' });
+    const listId = await search.getAttribute('aria-controls');
+    assert.equal(await page.locator(`#${listId}`).getAttribute('role'), 'listbox', 'command combobox controls its owning listbox');
+    assert.ok(await page.locator(`#${listId} [role=option]`).count() > 0);
+    await page.keyboard.press('Escape');
     assert.deepEqual(session.errors, []);
   } finally { await session.close(); }
   console.log('PASS: attached block picker preserves table structure');

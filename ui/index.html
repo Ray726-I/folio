@@ -303,10 +303,10 @@
   <div id="drop-overlay" hidden><div><svg class="icon" aria-hidden="true"><use href="#i-open"/></svg><h2>Drop to open</h2><p>One Markdown file. No setup.</p></div></div>
 
   <dialog id="command-dialog" class="command-dialog" aria-label="Command window">
-    <div class="command-input"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><input id="command-search" autocomplete="off" placeholder="Search commands…" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="command-results" aria-label="Search commands"><kbd class="command-esc">Esc</kbd></div>
+    <div class="command-input"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><input id="command-search" autocomplete="off" placeholder="Search commands…" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="command-list" aria-label="Search commands"><kbd class="command-esc">Esc</kbd></div>
     <div id="command-scope" class="command-scope">Commands</div>
     <div id="command-results" class="command-results">
-      <div id="command-list" role="presentation"></div>
+      <div id="command-list" role="listbox" aria-label="Commands"></div>
       <p id="command-empty" class="empty-results" role="status" hidden>No matching commands</p>
     </div>
     <div class="command-footer"><span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span><span><kbd>Enter</kbd> Select</span><button id="palette-hint" class="palette-back" type="button" hidden><kbd>Backspace</kbd> All commands</button></div>
