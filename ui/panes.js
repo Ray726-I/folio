@@ -15,11 +15,50 @@ function focusPane(pane) {
   renderedTitleKey = null; updateTitle();
   if (pane === 'companion') refreshCompanionOutline(); else scheduleEditorOutline();
 }
+let companionOutlineEntries = [], companionOutlineDocument = null, companionOutlineCollapsed = new Set();
+function toggleCompanionOutlineEntry(entry, expand = companionOutlineCollapsed.has(entry.key)) {
+  if (!entry.children.length) return;
+  if (expand) companionOutlineCollapsed.delete(entry.key); else companionOutlineCollapsed.add(entry.key);
+  applyOutlineRowVisibility(companionOutlineEntries, companionOutlineCollapsed);
+  if (document.activeElement.closest('.outline-row')?.hidden) entry.button.focus({ preventScroll: true });
+}
 function refreshCompanionOutline() {
-  $('outline-items').replaceChildren();
-  const headings = $('companion-preview').querySelectorAll('h1,h2,h3,h4,h5,h6');
-  for (const heading of headings) { const button = document.createElement('button'); button.className = 'outline-link'; button.textContent = heading.textContent; button.onclick = () => heading.scrollIntoView({block:'start'}); $('outline-items').append(button); }
+  const list = $('outline-items'), top = list.scrollTop;
+  const focused = companionOutlineEntries.find(entry => entry.row?.contains(document.activeElement));
+  const focusToggle = focused?.toggle === document.activeElement;
+  const previous = companionOutlineDocument === companionDocument ? new Map(companionOutlineEntries.map(entry => [entry.key, entry])) : new Map();
+  if (companionOutlineDocument !== companionDocument) companionOutlineCollapsed = new Set();
+  companionOutlineDocument = companionDocument;
+  const headings = [...$('companion-preview').querySelectorAll('h1,h2,h3,h4,h5,h6')];
+  const occurrences = new Map();
+  companionOutlineEntries = headings.map((heading, index) => {
+    // Author HTML can repeat IDs; each occurrence still owns a distinct row.
+    const base = heading.id || heading.dataset.sourcepos || String(index);
+    const occurrence = occurrences.get(base) || 0; occurrences.set(base, occurrence + 1);
+    const key = JSON.stringify([base, occurrence]);
+    let entry = previous.get(key);
+    if (!entry) {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'outline-link';
+      entry = { key, button };
+      button.onclick = () => entry.element.scrollIntoView({ block: 'start' });
+    }
+    entry.element = heading; entry.text = heading.textContent; entry.level = Number(heading.tagName.slice(1));
+    entry.button.textContent = entry.text; entry.button.title = entry.text; entry.button.dataset.level = entry.level;
+    entry.button.tabIndex = index === 0 ? 0 : -1;
+    return entry;
+  });
+  const liveKeys = new Set(companionOutlineEntries.map(entry => entry.key));
+  companionOutlineCollapsed = new Set([...companionOutlineCollapsed].filter(key => liveKeys.has(key)));
+  list.replaceChildren(renderOutlineRows(companionOutlineEntries, toggleCompanionOutlineEntry, 'companion-outline-row-'));
+  applyOutlineRowVisibility(companionOutlineEntries, companionOutlineCollapsed);
   $('outline-count').textContent = `${headings.length} ${headings.length === 1 ? 'heading' : 'headings'}`;
+  if (focused) {
+    let target = companionOutlineEntries.find(entry => entry.key === focused.key);
+    while (target?.row.hidden) target = companionOutlineEntries[target.parent];
+    if (!target) target = companionOutlineEntries.find(entry => !entry.row.hidden);
+    (focusToggle && target?.toggle ? target.toggle : target?.button)?.focus({ preventScroll: true });
+  }
+  list.scrollTop = top;
 }
 function showReadingCompanion(doc = current, follows = doc === current) {
   if (!doc.active) return;
@@ -35,7 +74,7 @@ function showReadingCompanion(doc = current, follows = doc === current) {
 function closeReadingCompanion() {
   clearTimeout(companionTimer); clearTimeout(companionMaxTimer); companionMaxTimer = 0; ++companionGeneration; companionAbort?.abort(); cancelMermaidPending('companion');
   companionMachine.send('CLOSE');
-  companionDocument = null; cancelAnimationFrame(companionSyncFrame); companionSyncFrame = 0; updateCompanionSyncControl();
+  companionDocument = null; companionOutlineEntries = []; companionOutlineDocument = null; companionOutlineCollapsed.clear(); cancelAnimationFrame(companionSyncFrame); companionSyncFrame = 0; updateCompanionSyncControl();
   $('companion-find').hidden = true; $('companion-find').querySelector('input').value = ''; $('companion-find').querySelector('span').textContent = ''; if(typeof syncFindControl==='function')syncFindControl();
   $('reading-companion').hidden = true; $('pane-divider').hidden = true;
   $('document-view').classList.remove('has-companion'); focusPane('main'); $('reader-scroll').focus();
