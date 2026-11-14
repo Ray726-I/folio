@@ -1127,43 +1127,69 @@ function documentSearchPattern(query) {
   if(enabled('find-word'))pattern=`(?<![\\p{L}\\p{N}_])(?:${pattern})(?![\\p{L}\\p{N}_])`;
   return new RegExp(pattern,enabled('find-case')?'gu':'giu');
 }
+const regexSearch = new RegexSearch();
+let findVersion = 0, findPending = null;
+function cancelFindSearch() { ++findVersion; regexSearch.cancel(); findPending = null; }
 function findMatches(query) {
-  const result=[]; if(!query)return result;
-  let search;try{search=documentSearchPattern(query);}catch{return result;}
+  cancelFindSearch();
+  const result = []; if (!query) return result;
+  let search; try { search = documentSearchPattern(query); } catch { return result; }
+  if ($('find-regex').getAttribute('aria-pressed') === 'true') {
+    const owner = current, source = current.content, version = findVersion;
+    matches = []; findIndex = -1; clearHighlights();
+    $('find-result').textContent = 'Searching…'; syncFindMachine();
+    const pending = regexSearch.run({ source, pattern: search.source, flags: search.flags }).then(result => {
+      if (version !== findVersion || current !== owner || current.content !== source || $('find-input').value !== query) return null;
+      findPending = null;
+      if (!result) return null;
+      if (result.error) { $('find-result').textContent = result.error; syncFindMachine(); return null; }
+      return result.matches;
+    });
+    findPending = pending;
+    return pending;
+  }
   let match;
-  while((match=search.exec(current.content))&&result.length<2000){
-    result.push({from:match.index,to:match.index+match[0].length});
-    if(!match[0].length){const point=current.content.codePointAt(search.lastIndex);search.lastIndex+=point>0xffff?2:1;}
+  while (result.length < 2000 && (match = search.exec(current.content))) {
+    result.push({ from: match.index, to: match.index + match[0].length });
+    if (!match[0].length) search.lastIndex += current.content.codePointAt(search.lastIndex) > 0xffff ? 2 : 1;
   }
   return result;
 }
+function receiveFind(result, apply) {
+  if (result instanceof Promise) return result.then(found => { if (found) apply(found); });
+  apply(result);
+}
 function findCountLabel(count) { return count >= 2000 ? '2,000+' : String(count); }
 function updateFind(restoredIndex = 0) {
+  clearTimeout(findRefreshTimer);
   const query = $('find-input').value;
-  try { if(query)documentSearchPattern(query); $('find-input').removeAttribute('aria-invalid'); } catch { matches=[];findIndex=-1;$('find-input').setAttribute('aria-invalid','true');$('find-result').textContent='Invalid regular expression';clearHighlights();syncFindMachine();return; }
-  matches = findMatches(query); findIndex = -1; findSource = current.content;
-  if (!query) { $('find-result').textContent = ''; clearHighlights(); syncFindMachine(); return; }
-  if (matches.length) {
-    findIndex = Number.isInteger(restoredIndex) ? Math.max(0, Math.min(restoredIndex, matches.length - 1)) - 1 : -1;
-    nextFind(1);
-  }
-  else { $('find-result').textContent = 'No matches'; clearHighlights(); syncFindMachine(); }
+  try { if(query)documentSearchPattern(query); $('find-input').removeAttribute('aria-invalid'); } catch { cancelFindSearch();matches=[];findIndex=-1;$('find-input').setAttribute('aria-invalid','true');$('find-result').textContent='Invalid regular expression';clearHighlights();syncFindMachine();return; }
+  return receiveFind(findMatches(query), found => {
+    matches = found; findIndex = -1; findSource = current.content;
+    if (!query) { $('find-result').textContent = ''; clearHighlights(); syncFindMachine(); return; }
+    if (matches.length) {
+      findIndex = Number.isInteger(restoredIndex) ? Math.max(0, Math.min(restoredIndex, matches.length - 1)) - 1 : -1;
+      nextFind(1);
+    } else { $('find-result').textContent = 'No matches'; clearHighlights(); syncFindMachine(); }
+  });
 }
 function refreshFindOffsets(direction) {
   // Edits can shift every match. Recompute from the live content before the
   // next jump instead of selecting through stale byte offsets, then resume
   // from the caret so a prefix edit lands on the nearest real hit.
   const anchor = documentMode === 'source' ? sourceCaret($('document-source')).head : Math.max(0, editor?.getSelection()?.head ?? 0);
-  matches = findMatches($('find-input').value); findSource = current.content;
-  if (direction > 0) {
-    const first = matches.findIndex(match => match.from >= anchor);
-    findIndex = first < 0 ? -1 : first - 1;
-  } else {
-    let last = -1;
-    matches.forEach((match, index) => { if (match.to <= anchor) last = index; });
-    findIndex = last < 0 ? 0 : last + 1;
-  }
-  syncFindMachine();
+  return receiveFind(findMatches($('find-input').value), found => {
+    matches = found; findSource = current.content;
+    if (direction > 0) {
+      const first = matches.findIndex(match => match.from >= anchor);
+      findIndex = first < 0 ? -1 : first - 1;
+    } else {
+      let last = -1;
+      matches.forEach((match, index) => { if (match.to <= anchor) last = index; });
+      findIndex = last < 0 ? 0 : last + 1;
+    }
+    syncFindMachine();
+  });
 }
 function revealSourceMatch(match) {
   const input = $('document-source');
@@ -1175,9 +1201,20 @@ function revealSourceMatch(match) {
   }
 }
 function nextFind(direction) {
+  clearTimeout(findRefreshTimer);
   const query = $('find-input').value;
-  if (!query) { matches = []; findIndex = -1; $('find-result').textContent = ''; clearHighlights(); syncFindMachine(); return; }
-  if (findSource !== current.content) refreshFindOffsets(direction);
+  if (!query) { cancelFindSearch(); matches = []; findIndex = -1; $('find-result').textContent = ''; clearHighlights(); syncFindMachine(); return; }
+  if (findPending) {
+    const owner = current, source = current.content;
+    return findPending.then(found => { if (found && current === owner && current.content === source) nextFind(direction); });
+  }
+  if (findSource !== current.content) {
+    const refreshed = refreshFindOffsets(direction);
+    if (refreshed instanceof Promise) {
+      const version = findVersion, owner = current, source = current.content;
+      return refreshed.then(() => { if (findVersion === version && current === owner && current.content === source && findSource === source) nextFind(direction); });
+    }
+  }
   if (!matches.length) { findIndex = -1; $('find-result').textContent = 'No matches'; clearHighlights(); syncFindMachine(); return; }
   findIndex = (findIndex + direction + matches.length) % matches.length;
   const match = matches[findIndex];
@@ -1197,14 +1234,16 @@ function refreshFindAfterEdit() {
   if (!query) return;
   const previous = matches[findIndex];
   const anchor = previous ? previous.from : documentMode === 'source' ? sourceCaret($('document-source')).head : Math.max(0, editor?.getSelection()?.head ?? 0);
-  matches = findMatches(query); findSource = current.content;
-  if (!matches.length) { findIndex = -1; $('find-result').textContent = 'No matches'; clearHighlights(); syncFindMachine(); return; }
-  let index = matches.findIndex(match => match.from >= anchor);
-  if (index < 0) index = matches.length - 1;
-  findIndex = index;
-  editor?.highlightRange?.(matches[findIndex].from, matches[findIndex].to);
-  $('find-result').textContent = `${findIndex + 1} / ${findCountLabel(matches.length)}`;
-  syncFindMachine();
+  return receiveFind(findMatches(query), found => {
+    matches = found; findSource = current.content;
+    if (!matches.length) { findIndex = -1; $('find-result').textContent = 'No matches'; clearHighlights(); syncFindMachine(); return; }
+    let index = matches.findIndex(match => match.from >= anchor);
+    if (index < 0) index = matches.length - 1;
+    findIndex = index;
+    editor?.highlightRange?.(matches[findIndex].from, matches[findIndex].to);
+    $('find-result').textContent = `${findIndex + 1} / ${findCountLabel(matches.length)}`;
+    syncFindMachine();
+  });
 }
 function scheduleFindRefresh() {
   if ($('find-bar').hidden) return;
@@ -1212,6 +1251,7 @@ function scheduleFindRefresh() {
   findRefreshTimer = setTimeout(refreshFindAfterEdit, 140);
 }
 function closeFind() {
+  cancelFindSearch();
   findMachine.send('CLOSE');
   $('find-bar').hidden = true; $('replace-bar').hidden = true; syncDocumentChrome(); clearHighlights();
   if (documentMode === 'source') $('document-source').focus();

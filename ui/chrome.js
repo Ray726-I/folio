@@ -443,13 +443,35 @@ async function editClipboard(action) {
 }
 function openReplace() { if (focusedPane === 'companion') return openCompanionFind(); if (!current.active) return; openFind(); findMachine.send('REPLACE'); $('replace-bar').hidden = false; syncDocumentChrome(); syncDocumentMode(); syncFindMachine(); }
 function replaceMatches(all) {
+  clearTimeout(findRefreshTimer);
   if (!documentWritable() || documentMode === 'reading' || !editor) return;
   const query = $('find-input').value, replacement = $('replace-input').value;
   if (!query) return;
   let next;
+  if (all && $('find-regex').getAttribute('aria-pressed') === 'true') {
+    let pattern; try { pattern = documentSearchPattern(query); } catch { updateFind(); return; }
+    cancelFindSearch();
+    const owner = current, source = current.content, version = findVersion;
+    $('find-result').textContent = 'Replacing…';
+    return regexSearch.run({ source, pattern: pattern.source, flags: pattern.flags, replacement }).then(result => {
+      if (!result || current !== owner || current.content !== source || findVersion !== version || !documentWritable()) return;
+      if (result.error) { $('find-result').textContent = result.error; return; }
+      editor.replaceContent(result.content); syncDocumentMode(); updateFind();
+    });
+  }
+  if (findPending) {
+    const owner = current, source = current.content;
+    return findPending.then(found => { if (found && current === owner && current.content === source) replaceMatches(all); });
+  }
   if (all) { try { next = current.content.replace(documentSearchPattern(query), () => replacement); } catch { updateFind(); return; } }
   else {
-    if (findSource !== current.content) updateFind();
+    if (findSource !== current.content) {
+      const refreshed = updateFind();
+      if (refreshed instanceof Promise) {
+        const version = findVersion, owner = current, source = current.content;
+        return refreshed.then(() => { if (findVersion === version && current === owner && current.content === source && findSource === source) replaceMatches(false); });
+      }
+    }
     const match = matches[Math.max(0, findIndex)]; if (!match) return;
     next = current.content.slice(0, match.from) + replacement + current.content.slice(match.to);
   }
