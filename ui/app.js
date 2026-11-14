@@ -1359,16 +1359,23 @@ $('zoom-in').onclick = () => zoomWindow(.1); $('zoom-out').onclick = () => zoomW
 $('reload').onclick = () => { const owner = current; return enqueue(async () => { if (owner !== current || !owner.path || !(await allowDiscard())) return false; return openPath(owner.path, true); }); }; $('dismiss-disk').onclick = () => { diskBannerDismissedFor = current.documentId || current.path || null; $('disk-banner').hidden = true; syncDocumentChrome(); (documentMode === 'source' ? $('document-source') : $('reader-scroll')).focus({ preventScroll: true }); };
 $('find-input').oninput = updateFind; $('find-next').onclick = () => nextFind(1); $('find-previous').onclick = () => nextFind(-1); $('find-close').onclick = closeFind;
 $('find-input').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); nextFind(event.shiftKey ? -1 : 1); } };
+function followHeadingLink(fragment) {
+  let id; try { id = decodeURIComponent(fragment.replace(/^#/, '')); } catch { return; }
+  const heading = outlineEntries.find(entry => entry.id === id || entry.id === `doc-${id}`);
+  if (heading) { jumpToSource(heading.offset); heading.element?.scrollIntoView({ block: 'start' }); }
+  else document.getElementById(id)?.scrollIntoView({ block: 'start' });
+}
+async function openDocumentLink(documentId, href) {
+  const path = await invoke('resolve_document_link', { documentId, link: href });
+  if (!await openPath(path)) return;
+  const fragment = href.indexOf('#');
+  if (fragment >= 0) followHeadingLink(href.slice(fragment));
+}
 function followPreviewLink(anchor) {
   const href = anchor.getAttribute('href'); if (!href) return;
-  if (href.startsWith('#')) {
-    let id; try { id = decodeURIComponent(href.slice(1)); } catch { return; }
-    const heading = outlineEntries.find(entry => entry.id === id || entry.id === `doc-${id}`);
-    if (heading) { editor?.selectRange(heading.offset); heading.element?.scrollIntoView({ block: 'start' }); }
-    else document.getElementById(id)?.scrollIntoView({ block: 'start' });
-  }
+  if (href.startsWith('#')) followHeadingLink(href);
   else if (/^(https?:|mailto:)/i.test(href)) invoke('open_link', { url: href }).catch(toast);
-  else enqueue(async () => { const path = await invoke('resolve_document_link', { documentId: current.documentId, link: href }); await openPath(path); });
+  else { const documentId = current.documentId; enqueue(() => openDocumentLink(documentId, href)); }
 }
 // Images pasted or dropped into a document are saved beside its Markdown file
 // and inserted as a Markdown image link. Clipboard screenshots arrive either
