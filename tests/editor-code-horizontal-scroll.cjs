@@ -7,6 +7,8 @@ const source = '# Code\n\n```js\nconst longExample = "' + 'a'.repeat(150) + 'END
   try {
     const { page } = session;
     await page.waitForFunction(() => document.querySelector('.code-container')?.classList.contains('code-highlighted'));
+    // Wrap is on by default; this scroll contract covers the Wrap-off mode.
+    await page.evaluate(() => { try { localStorage.setItem('folio.codeWrap', 'false'); } catch {} document.documentElement.setAttribute('data-code-nowrap', ''); for (const b of document.querySelectorAll('.code-wrap-toggle')) b.setAttribute('aria-pressed', 'false'); const pref = document.getElementById('preference-code-wrap'); if (pref) pref.checked = false; });
     const result = await page.locator('.code-container').evaluate(async container => {
       const surface = container.querySelector('.code-surface'), highlight = container.querySelector('.code-highlight');
       surface.scrollLeft = surface.scrollWidth;

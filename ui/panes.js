@@ -176,7 +176,7 @@ function initializePanes() {
   divider.onpointerdown=e=>{if(e.button!==0)return;e.preventDefault();divider.setPointerCapture(e.pointerId);document.documentElement.classList.add('pane-resizing');};
   const endResize=()=>document.documentElement.classList.remove('pane-resizing');
   divider.addEventListener('lostpointercapture',endResize); divider.addEventListener('pointercancel',endResize); window.addEventListener('blur',endResize); divider.onpointermove=e=>{if(divider.hasPointerCapture(e.pointerId)){const b=split.getBoundingClientRect();resize((e.clientX-b.left)/b.width*100);}};
-  main.addEventListener('focusin',()=>focusPane('main')); main.addEventListener('pointerdown',()=>{if(focusedPane!=='main')focusPane('main');});
+  main.addEventListener('focusin',()=>{if(focusedPane!=='main')focusPane('main');}); main.addEventListener('pointerdown',()=>{if(focusedPane!=='main')focusPane('main');});
   reader.addEventListener('focusin', event => { if (!event.target.closest('#companion-sync-control') && focusedPane !== 'companion') focusPane('companion'); });
   reader.addEventListener('pointerdown', event => { if (!event.target.closest('#companion-sync-control') && focusedPane !== 'companion') focusPane('companion'); });
   $('companion-close').onclick=closeReadingCompanion;

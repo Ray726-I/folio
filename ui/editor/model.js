@@ -285,9 +285,46 @@ function sourceGaps(previous) {
   return gaps;
 }
 
-let sourceParseCount = 0, sourceParseBytes = 0;
-export function resetEditorStats() { sourceParseCount = 0; sourceParseBytes = 0; }
-export function editorStats() { return { sourceParses: sourceParseCount, sourceParseBytes }; }
+let sourceParseCount = 0, sourceParseBytes = 0, rebaseFast = 0, rebaseWalk = 0;
+export function resetEditorStats() { sourceParseCount = 0; sourceParseBytes = 0; rebaseFast = 0; rebaseWalk = 0; }
+export function editorStats() { return { sourceParses: sourceParseCount, sourceParseBytes, rebaseFast, rebaseWalk }; }
+
+// Attach a canonical parse to the document the committed transaction actually
+// produced. A source-first commit replaces the whole editor document with the
+// candidate's content Fragment, and ProseMirror keeps that Fragment's identity
+// when nothing repaired the transaction. Every top-level node in `doc` is then
+// the same immutable instance the parse produced, so segment nodes and ledger
+// owners (keyed by position in that same tree) are already anchored: only the
+// ledger's document pointer needs to move. Rebasing in that case would walk
+// every descendant and re-check every owner for no change at all.
+export function attachModel(parsed, doc) {
+  const ledger = parsed.ledger;
+  if (ledger && ledger.doc === parsed.doc && parsed.doc.content === doc.content && parsed.segments.length === doc.childCount) {
+    ledger.doc = doc;
+    rebaseFast++;
+    return { ...parsed, doc, segments: parsed.segments, ledger };
+  }
+  rebaseWalk++;
+  const segments = parsed.segments.length === doc.childCount
+    ? parsed.segments.map((segment, index) => ({ ...segment, node: doc.child(index) }))
+    : [];
+  let nextLedger = ledger;
+  if (nextLedger) {
+    nextLedger.doc = doc;
+    const nodes = new Map();
+    doc.descendants((node, position) => { nodes.set(position, node); });
+    for (const owner of nextLedger.owners) {
+      const node = nodes.get(owner.pmFrom);
+      if (!node || !node.eq(owner.node)) { nextLedger = null; break; }
+      owner.node = node;
+    }
+  }
+  if (!nextLedger) {
+    try { nextLedger = buildLedger(parsed.source, doc, { segments }); } catch { nextLedger = null; }
+  }
+  return { ...parsed, doc, segments, ledger: nextLedger };
+}
+
 export function parseSource(source, sourceEdit = null) {
   sourceParseCount++; sourceParseBytes += source.length;
   const environment = {};

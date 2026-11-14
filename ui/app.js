@@ -329,7 +329,15 @@ function setupSidebarResize(sidebarId, dividerId, key, defaultWidth, styleName =
     const other = otherSidebar();
     const available = window.innerWidth - (other.hidden ? 0 : otherWidth) - 320;
     const width = Math.max(200, Math.min(Math.max(200, Math.min(520, available)), value));
-    document.body.style.setProperty(property, `${width}px`);
+    // Scope the variable to the dock sidebars themselves. Writing an inherited
+    // custom property on <body> invalidates every descendant — including the
+    // preview — on each drag frame. Per-element writes keep recalculation
+    // inside the sidebars while preserving the shared dock width.
+    if (property === '--dock-sidebar-width') {
+      for (const id of ['file-browser', 'outline', 'folder-search']) $(id)?.style.setProperty(property, `${width}px`);
+    } else {
+      sidebar.style.setProperty(property, `${width}px`);
+    }
     appliedWidth = width;
   }
   function measureOther() { const other = otherSidebar(); otherWidth = other.hidden ? 0 : other.getBoundingClientRect().width; }
@@ -340,6 +348,7 @@ function setupSidebarResize(sidebarId, dividerId, key, defaultWidth, styleName =
     applyWidth(x - dragLeft);
   }
   measureOther();
+  document.body.style.removeProperty(property);
   applyWidth(Number(preferences.get(key, defaultWidth)) || defaultWidth);
   // Keep the resolved startup width on record so the default survives the
   // first launch; drags persist once per gesture instead of per move.

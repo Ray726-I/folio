@@ -14,4 +14,6 @@
   }
   root.dataset.theme = typeof theme === 'string' && theme && theme !== 'omarchy' && (theme !== 'retro-terminal' || retroEnabled) ? theme : 'system';
   root.dataset.readingFont = ['serif', 'sans', 'mono'].includes(read('readingFont')) ? read('readingFont') : 'sans';
+  // Code blocks wrap by default; folio.codeWrap=false opts into horizontal scrolling.
+  if (read('codeWrap') === false) root.setAttribute('data-code-nowrap', '');
 })();

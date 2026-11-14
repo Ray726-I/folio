@@ -244,6 +244,22 @@ function paintPreferenceRange(id) {
   $(id + '-value').value = preferenceRanges[id].read(value);
   input.style.setProperty('--preference-fill', `${max > min ? ((value - min) / (max - min)) * 100 : 0}%`);
 }
+// Code blocks soft-wrap by default; folio.codeWrap=false opts into horizontal
+// scrolling. Wrapping is visual only: source bytes and line breaks are never
+// rewritten. One global switch drives the per-block toggles and the
+// preferences checkbox so read and edit stay in sync.
+function isCodeWrapEnabled() { return preferences.get('codeWrap', true) !== false; }
+function applyCodeWrap() {
+  const wrap = isCodeWrapEnabled();
+  root.toggleAttribute('data-code-nowrap', !wrap);
+  const pref = typeof $ === 'function' ? $('preference-code-wrap') : null;
+  if (pref) pref.checked = wrap;
+  for (const button of document.querySelectorAll('.code-wrap-toggle')) button.setAttribute('aria-pressed', String(wrap));
+}
+function setCodeWrapEnabled(on) {
+  preferences.set('codeWrap', Boolean(on));
+  applyCodeWrap();
+}
 function scheduleDocumentPreferences() {
   if (!preferenceFrame) preferenceFrame = requestAnimationFrame(applyDocumentPreferences);
 }
@@ -254,6 +270,7 @@ function applyDocumentPreferences() {
   $('preference-open-edit').checked = preferences.get('openInEditMode', true) !== false;
   $('preference-touchpad-zoom-row').hidden = nativePlatform !== 'linux';
   $('preference-touchpad-zoom').checked = touchpadZoom;
+  applyCodeWrap();
   for (const [id, spec] of Object.entries(preferenceRanges)) {
     const input = $(id);
     input.value = String(id === 'preference-font-size' ? fontSize : preferenceNumber(spec.key, spec.fallback, spec.min, spec.max));
@@ -352,6 +369,7 @@ function initializePreferencesPanel() {
   $('preference-restore-session').onchange = event => preferences.set('restoreSession', event.target.checked);
   $('preference-open-edit').onchange = event => preferences.set('openInEditMode', event.target.checked);
   $('preference-touchpad-zoom').onchange = event => setTouchpadZoom(event.target.checked);
+  $('preference-code-wrap').onchange = event => setCodeWrapEnabled(event.target.checked);
   for (const name of ['tasks', 'tables', 'code']) $('preference-' + name).onchange = event => { preferences.set('render-' + name, event.target.checked); applyDocumentPreferences(); };
   $('preference-font').onchange = event => applyReadingFont(event.target.value);
   // A theme switch recolours every node in the window. Let the select paint
@@ -365,7 +383,7 @@ function initializePreferencesPanel() {
     });
   };
   $('preferences-reset').onclick = () => {
-    for (const key of ['openInEditMode', 'lineHeight', 'paragraphSpacing', 'contentWidth', 'headingStyle', 'render-tasks', 'render-tables', 'render-code']) preferences.set(key, null);
+    for (const key of ['openInEditMode', 'codeWrap', 'lineHeight', 'paragraphSpacing', 'contentWidth', 'headingStyle', 'render-tasks', 'render-tables', 'render-code']) preferences.set(key, null);
     zoomText(0, true); setTouchpadZoom(false, false); applyReadingFont('sans'); applyTheme('system');
     setDocumentWidth(false); applyDocumentPreferences();
   };

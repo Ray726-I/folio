@@ -427,6 +427,28 @@
   .code-container.code-highlighted:not(.code-editing)>.code-surface code { color:CanvasText; }
 }
 .code-container pre { white-space:pre-wrap; }
+.code-wrap-toggle { position:absolute; z-index:2; top:8px; right:calc(12ch + 18px); padding:2px 6px; border:1px solid transparent; border-radius:3px; background:transparent; color:var(--muted); font:500 11px/1.4 var(--font-mono); white-space:nowrap; cursor:pointer; }
+.code-wrap-toggle:hover { background:var(--hover); color:var(--fg); }
+.code-wrap-toggle:focus-visible { outline:2px solid var(--focus-ring); outline-offset:1px; background:var(--panel); color:var(--fg); }
+.code-wrap-toggle[aria-pressed="true"] { color:var(--accent); }
+.code-wrap-toggle[aria-pressed="true"]:hover { color:var(--accent); background:color-mix(in srgb,var(--accent) 12%,transparent); }
+.code-container:has(.code-fence-info[hidden]) .code-wrap-toggle { right:10px; }
+/* Soft-wrap long code lines by default. Wrapping is visual only: the
+   Markdown source keeps its original bytes and no line breaks are inserted.
+   The highlight backing layer mirrors the surface exactly, so tokens and
+   editable glyphs stay aligned while wrapped. Unbroken strings still wrap
+   via overflow-wrap; indentation (spaces/tabs) is preserved by pre-wrap. */
+.code-container .code-surface,.code-container .code-highlight,.code-container .code-surface code,.code-container .code-highlight code { white-space:pre-wrap; overflow-wrap:anywhere; }
+.code-container .code-surface { overflow-x:hidden; }
+/* Wrap off: horizontal scrolling. The surface scrolls and the existing scroll
+   listener keeps the highlight layer aligned to the same line segment. */
+html[data-code-nowrap] .code-container .code-surface,html[data-code-nowrap] .code-container .code-highlight,html[data-code-nowrap] .code-container .code-surface code,html[data-code-nowrap] .code-container .code-highlight code { white-space:pre; overflow-wrap:normal; }
+html[data-code-nowrap] .code-container .code-surface { overflow-x:auto; }
+/* Source presentation follows the same global wrap choice visually; its
+   value (and the saved file) is untouched either way. */
+html[data-code-nowrap] .document-source { white-space:pre; overflow-x:auto; }
+@media(pointer:coarse) { .code-wrap-toggle { min-width:44px; min-height:44px; display:inline-flex; align-items:center; justify-content:center; } }
+@media(forced-colors:active) { .code-wrap-toggle { forced-color-adjust:auto; } .code-wrap-toggle:focus-visible { outline:2px solid CanvasText; } }
 .code-container details>summary { cursor:pointer; font:12px var(--font-ui); color:var(--muted); margin-top:8px; }
 .source-block { font-size:.75em; white-space:pre-wrap; }
 /* Render extension blocks without source controls; the context menu opens

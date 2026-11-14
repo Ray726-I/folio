@@ -9,7 +9,7 @@ import { tableOperation, moveTableRowTo } from './table-operations.js';
 import { inputRules, wrappingInputRule, textblockTypeInputRule, InputRule } from 'prosemirror-inputrules';
 import MarkdownIt from 'markdown-it';
 import { decodeHTML, decodeHTMLAttribute } from 'entities';
-import { schema, parseSource, updateSource, sourceToRich, richToSource, sourceMapping, richMapping, INLINE_HTML_SPAN_TAGS } from './model.js';
+import { schema, parseSource, updateSource, sourceToRich, richToSource, sourceMapping, richMapping, attachModel, INLINE_HTML_SPAN_TAGS } from './model.js';
 import { buildLedger, applySourcePatches } from './source-ledger.js';
 import { tryTextEdits, trySourceEdit } from './source-edits.js';
 import { createHeadingMetadata } from './headings.js';
@@ -354,30 +354,9 @@ export function createRichEditor(parent, options) {
     return start.pos !== end.pos;
   }
 
-  // Attach a canonical parse to the actual document produced by the committed
-  // transaction. Segment node identity is rebased so later non-text edits can
-  // still use unchanged-node anchoring.
-  function attachModel(parsed, doc) {
-    const segments = parsed.segments.length === doc.childCount
-      ? parsed.segments.map((segment, index) => ({ ...segment, node: doc.child(index) }))
-      : [];
-    let ledger = parsed.ledger;
-    if (ledger) {
-      ledger.doc = doc;
-      const nodes = new Map();
-      doc.descendants((node, position) => { nodes.set(position, node); });
-      for (const owner of ledger.owners) {
-        const node = nodes.get(owner.pmFrom);
-        if (!node || !node.eq(owner.node)) { ledger = null; break; }
-        owner.node = node;
-      }
-    }
-    if (!ledger) {
-      try { ledger = buildLedger(parsed.source, doc, { segments }); } catch { ledger = null; }
-    }
-    return { ...parsed, doc, segments, ledger };
-  }
-
+  // Commit a canonical parse through the existing view. model.js reattaches
+  // the parse to the document ProseMirror actually produced (including the
+  // identity fast path) before the result is adopted.
   function commitCandidate(candidate, nextSelection, typing, sourceEdit) {
     const size = view.state.doc.content.size;
     const pmAnchor = sourceToRich(candidate, nextSelection.anchor);
@@ -775,6 +754,40 @@ export function createRichEditor(parent, options) {
       else if (event.key === 'Escape') { event.preventDefault(); const range = fenceRange(); if (range) fenceInfo.value = range.value; try { view.focus(); } catch {} }
     });
     fenceInfo.addEventListener('blur', () => commitFenceInfo(false));
+    // Per-block Wrap lines toggle. One global preference drives every block so
+    // read and edit stay in sync; wrapping is visual only and never rewrites
+    // source bytes or inserts line breaks. The button stays enabled while
+    // locked (reading) because it changes presentation, not content.
+    const wrapToggle = document.createElement('button');
+    wrapToggle.type = 'button'; wrapToggle.className = 'code-wrap-toggle';
+    wrapToggle.textContent = 'Wrap lines';
+    wrapToggle.setAttribute('aria-label', 'Wrap long lines');
+    wrapToggle.title = 'Wrap long lines (persisted)';
+    wrapToggle.contentEditable = 'false';
+    function syncWrapToggle() {
+      const wrap = !document.documentElement.hasAttribute('data-code-nowrap');
+      wrapToggle.setAttribute('aria-pressed', String(wrap));
+    }
+    function toggleCodeWrap() {
+      const nextWrap = document.documentElement.hasAttribute('data-code-nowrap');
+      try {
+        if (typeof window !== 'undefined' && typeof window.setCodeWrapEnabled === 'function') window.setCodeWrapEnabled(nextWrap);
+        else {
+          try { localStorage.setItem('folio.codeWrap', JSON.stringify(nextWrap)); } catch {}
+          document.documentElement.toggleAttribute('data-code-nowrap', !nextWrap);
+          for (const button of document.querySelectorAll('.code-wrap-toggle')) button.setAttribute('aria-pressed', String(nextWrap));
+          const pref = document.getElementById('preference-code-wrap'); if (pref) pref.checked = nextWrap;
+        }
+      } catch {
+        try { localStorage.setItem('folio.codeWrap', JSON.stringify(nextWrap)); } catch {}
+        document.documentElement.toggleAttribute('data-code-nowrap', !nextWrap);
+      }
+      wrapToggle.setAttribute('aria-pressed', String(nextWrap));
+    }
+    wrapToggle.addEventListener('mousedown', event => event.preventDefault());
+    wrapToggle.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); toggleCodeWrap(); });
+    wrapToggle.addEventListener('keydown', event => event.stopPropagation());
+    syncWrapToggle();
     const drawing = document.createElement('div');
     // The native renderer already owns a safe, sanitized syntax highlighter.
     // Keep its tokens in a non-editable backing layer and leave the real
@@ -838,7 +851,7 @@ export function createRichEditor(parent, options) {
       }, 60);
     };
     const render = async () => {
-      syncFenceInfo();
+      syncFenceInfo(); syncWrapToggle();
       const language = node.attrs.params.trim().split(/\s/)[0]; dom.dataset.language = language;
       if (language === 'math') {
         clearHighlight(); clearTimeout(renderTimer); renderTimer = 0; abortController?.abort(); source = null; theme = null;
@@ -863,7 +876,7 @@ export function createRichEditor(parent, options) {
         dom.classList.remove('mermaid-host'); delete dom.dataset.mermaidSource; delete dom.dataset.diagramState;
         code.className = /^[a-z0-9_+#.-]+$/i.test(language) ? `language-${language}` : '';
         pre.hidden = false;
-        if (pre.parentNode !== dom || highlight.nextSibling !== pre) dom.replaceChildren(fenceInfo, highlight, pre);
+        if (wrapToggle.parentNode !== dom || pre.parentNode !== dom || highlight.nextSibling !== pre) dom.replaceChildren(fenceInfo, wrapToggle, highlight, pre);
         scheduleHighlight(language);
         return;
       }
@@ -916,7 +929,7 @@ export function createRichEditor(parent, options) {
     }
     render(); refreshers.add(render);
     requestAnimationFrame(() => { if (dom.isConnected) syncFenceInfo(); });
-    return { dom, contentDOM: code, update(next) { if (next.type !== node.type) return false; if (next.sameMarkup(node) && next.textContent === node.textContent) { node = next; return true; } node = next; render(); return true; }, stopEvent: event => event.target === fenceInfo || event.target.classList?.contains('code-markdown-source'), ignoreMutation: mutation => mutation.type === 'attributes' || !pre.contains(mutation.target), destroy() { generation++; clearTimeout(renderTimer); clearTimeout(highlightTimer); highlightGeneration++; abortController?.abort(); codeHighlightObserver?.unobserve(dom); codeHighlights.delete(dom); refreshers.delete(render); } };
+    return { dom, contentDOM: code, update(next) { if (next.type !== node.type) return false; if (next.sameMarkup(node) && next.textContent === node.textContent) { node = next; return true; } node = next; render(); return true; }, stopEvent: event => event.target === fenceInfo || event.target === wrapToggle || event.target.closest?.('.code-wrap-toggle') != null || event.target.classList?.contains('code-markdown-source'), ignoreMutation: mutation => mutation.type === 'attributes' || !pre.contains(mutation.target), destroy() { generation++; clearTimeout(renderTimer); clearTimeout(highlightTimer); highlightGeneration++; abortController?.abort(); codeHighlightObserver?.unobserve(dom); codeHighlights.delete(dom); refreshers.delete(render); } };
   }
   // Reading selections may start, cross and end inside a rendered projection
   // or inline element. ProseMirror maps any DOM position inside an atom to
