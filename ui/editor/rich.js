@@ -2763,8 +2763,8 @@ export function createRichEditor(parent, options) {
         }
         if (['Enter', 'Backspace', 'Delete'].includes(event.key)) {
           if (from === to && event.key !== 'Enter') {
-            if (event.key === 'Backspace' && from > 0) from -= /[\uDC00-\uDFFF]/.test(model.source[from - 1]) ? 2 : 1;
-            if (event.key === 'Delete' && to < model.source.length) to += /[\uD800-\uDBFF]/.test(model.source[to]) ? 2 : 1;
+            const unit = graphemeUnit(model.source, from, event.key === 'Backspace');
+            if (unit) { from = unit.from; to = unit.to; }
           }
           event.preventDefault();
           return replaceLogicalSelection(event.key === 'Enter' ? '\n' : '', 'typing', { from, to, all: false }).handled;

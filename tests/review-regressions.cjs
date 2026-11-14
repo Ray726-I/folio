@@ -34,5 +34,23 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.keyboard.press('Escape');
     assert.deepEqual(session.errors, []);
   } finally { await session.close(); }
-  console.log('PASS: attached block picker preserves table structure');
+  const graphemes = await openEditor('```text\ne\u0301 👩‍💻 🇮🇳\n```\n');
+  try {
+    const { page } = graphemes;
+    const { openMarkdown } = require('./editor-test-actions.cjs');
+    await openMarkdown(page.locator('.code-container'));
+    for (const text of ['e\u0301', '👩‍💻', '🇮🇳']) {
+      const before = await page.evaluate(() => current.content);
+      await page.evaluate(text => { const offset = current.content.indexOf(text) + text.length; editor.selectRange(offset, offset, true); }, text);
+      await page.keyboard.press('Backspace');
+      assert.equal(await page.evaluate(() => current.content), before.replace(text, ''), 'source-card Backspace removes a complete grapheme');
+    }
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => editor.replaceContent('```text\ne\u0301\n```\n'));
+    await openMarkdown(page.locator('.code-container'));
+    await page.evaluate(() => { const offset = current.content.indexOf('e\u0301'); editor.selectRange(offset, offset, true); });
+    await page.keyboard.press('Delete');
+    assert.equal(await page.evaluate(() => current.content), '```text\n\n```\n', 'source-card Delete removes a complete grapheme');
+  } finally { await graphemes.close(); }
+  console.log('PASS: review regressions');
 })().catch(error => { console.error(error); process.exitCode = 1; });
