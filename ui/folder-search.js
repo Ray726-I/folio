@@ -56,11 +56,22 @@ async function searchFolderContents() {
     if (epoch !== grepEpoch || activeFolder?.path !== folder) return;
     let hits = Array.isArray(response?.results) ? response.results : [], limited = Boolean(response?.truncated);
     hits = hits.filter(hit => hit && typeof hit === 'object' && typeof hit.path === 'string' && hit.path);
-    if (current.active && isWithin(current.path || '', folder)) {
-      hits = hits.filter(hit => !samePath(hit.path, current.path)).concat(folderPathAllowed(current.path,folder,options)?folderBufferHits(query, current):[]);
-      if (hits.length > 100) { limited = true; hits = hits.slice(0, 100); }
+    // Every open buffer is authoritative for its path, including inactive
+    // tabs whose unsaved edits are absent from the native disk search.
+    const buffers = new Map();
+    for (const doc of [...documents.values(), current]) {
+      if (doc.active && isWithin(doc.path || '', folder)) buffers.set(pathKey(doc.path), doc);
     }
-    hits=hits.filter(hit=>folderPathAllowed(hit.path,folder,options));
+    hits = hits.filter(hit => !buffers.has(pathKey(hit.path)) && folderPathAllowed(hit.path, folder, options));
+    const liveHits = [];
+    for (const doc of buffers.values()) {
+      if (!folderPathAllowed(doc.path, folder, options)) continue;
+      liveHits.push(...folderBufferHits(query, doc).slice(0, 101 - liveHits.length));
+      if (liveHits.length > 100) break;
+    }
+    if (hits.length + liveHits.length > 100) limited = true;
+    // Preserve native result order while reserving room for live buffers.
+    hits = hits.slice(0, Math.max(0, 100 - liveHits.length)).concat(liveHits).slice(0, 100);
     const groups = new Map();
     for (const hit of hits) {
       if (!groups.has(hit.path)) {
