@@ -2208,7 +2208,16 @@ export function createRichEditor(parent, options) {
       if (!selection) return null;
       // Attached mode inserts at whatever is selected; the slash picker only
       // exists for a collapsed caret after a typed "/".
-      if (attached) return { head: selection.head, query: '' };
+      if (attached) {
+        // A block prefix at a cell's source line would remove the row from
+        // its table. Refuse the picker while either selection edge is inside.
+        for (const edge of [view.state.selection.$from, view.state.selection.$to]) {
+          for (let depth = edge.depth; depth > 0; depth--) {
+            if (edge.node(depth).type === schema.nodes.table) return null;
+          }
+        }
+        return { head: selection.head, query: '' };
+      }
       if (selection.anchor !== selection.head) return null;
       const position = selection.head;
       if (position < start + 1 || model.source[start] !== '/') return null;
