@@ -247,13 +247,13 @@ async function renderMermaidHost(host, source, generation, pre) {
 async function renderDiagrams(generation = renderGeneration, reusableDiagrams = new Map()) {
   if (generation !== renderGeneration) return;
   cancelMermaidPending();
-  if (!$('preview').querySelector('pre > code.language-mermaid')) return;
-  const blocks = [...$('preview').querySelectorAll('pre > code.language-mermaid')].map(code => code.closest('pre'));
+  if (!$('preview').querySelector('pre > code[class~="language-mermaid" i]')) return;
+  const blocks = [...$('preview').querySelectorAll('pre > code[class~="language-mermaid" i]')].map(code => code.closest('pre'));
   if (!blocks.length) return;
   const themeRevision = diagramThemeRevision;
   for (const pre of blocks) {
     if (generation !== renderGeneration || !pre.isConnected) return;
-    const source = pre.querySelector('code.language-mermaid')?.textContent ?? '';
+    const source = pre.querySelector('code[class~="language-mermaid" i]')?.textContent ?? '';
     const candidate = reusableDiagrams.get(source)?.pop();
     const reused = candidate && Number(candidate.dataset.themeRevision) === themeRevision ? candidate : null;
     const host = reused || document.createElement('div');

@@ -56,5 +56,19 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.keyboard.press('Delete');
     assert.equal(await page.evaluate(() => current.content), '```text\n\n```\n', 'source-card Delete removes a complete grapheme');
   } finally { await graphemes.close(); }
+  for (const language of ['mermaid', 'Mermaid', 'MERMAID']) {
+    const source = '```' + language + '\ngraph TD; A-->B;\n```\n';
+    const diagram = await openEditor(source);
+    try {
+      const { page } = diagram;
+      await page.waitForFunction(() => document.querySelector('#preview .mermaid-host svg'), null, { timeout: 3000 });
+      await page.evaluate(() => setDocumentMode('reading'));
+      await page.waitForFunction(() => document.querySelector('#preview .mermaid-host svg'), null, { timeout: 3000 });
+      await page.evaluate(() => showReadingCompanion());
+      await page.waitForFunction(() => document.querySelector('#companion-preview .mermaid-host svg'), null, { timeout: 3000 });
+      assert.equal(await page.evaluate(() => current.content), source, 'diagram rendering preserves fence spelling');
+      assert.deepEqual(diagram.errors, []);
+    } finally { await diagram.close(); }
+  }
   console.log('PASS: review regressions');
 })().catch(error => { console.error(error); process.exitCode = 1; });

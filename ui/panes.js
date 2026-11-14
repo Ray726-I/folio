@@ -89,7 +89,7 @@ async function renderReadingCompanion() {
   const replacement = position && [...root.querySelectorAll('[data-sourcepos]')].find(n => n.dataset.sourcepos === position);
   scroll.scrollTop = replacement ? scroll.scrollTop + replacement.getBoundingClientRect().top - scroll.getBoundingClientRect().top - offset : top;
   if (root.querySelector('[data-math-style]')) { await loadKatex(); if (!valid()) return; for (const node of root.querySelectorAll('[data-math-style]')) window.katex.render(node.textContent,node,{displayMode:node.dataset.mathStyle==='display',throwOnError:false}); }
-  for (const code of root.querySelectorAll('pre > code.language-mermaid')) {
+  for (const code of root.querySelectorAll('pre > code[class~="language-mermaid" i]')) {
     if (!valid()) return; const source = code.textContent;
     const host = document.createElement('div'); host.className = 'mermaid-host';
     let outcome; try { if (!mermaidSourceTooLarge(source)) ({result:outcome} = await requestMermaidRender(source, signal, 'companion')); } catch {}

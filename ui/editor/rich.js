@@ -855,7 +855,7 @@ export function createRichEditor(parent, options) {
         }
         return;
       }
-      if (language !== 'mermaid') {
+      if (language.toLowerCase() !== 'mermaid') {
         generation++; clearTimeout(renderTimer); renderTimer = 0; abortController?.abort(); source = null; theme = null;
         dom.classList.remove('mermaid-host'); delete dom.dataset.mermaidSource; delete dom.dataset.diagramState;
         code.className = /^[a-z0-9_+#.-]+$/i.test(language) ? `language-${language}` : '';
