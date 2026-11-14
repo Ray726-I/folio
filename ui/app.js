@@ -1138,12 +1138,15 @@ function findMatches(query) {
   return result;
 }
 function findCountLabel(count) { return count >= 2000 ? '2,000+' : String(count); }
-function updateFind() {
+function updateFind(restoredIndex = 0) {
   const query = $('find-input').value;
   try { if(query)documentSearchPattern(query); $('find-input').removeAttribute('aria-invalid'); } catch { matches=[];findIndex=-1;$('find-input').setAttribute('aria-invalid','true');$('find-result').textContent='Invalid regular expression';clearHighlights();syncFindMachine();return; }
   matches = findMatches(query); findIndex = -1; findSource = current.content;
   if (!query) { $('find-result').textContent = ''; clearHighlights(); syncFindMachine(); return; }
-  if (matches.length) nextFind(1);
+  if (matches.length) {
+    findIndex = Number.isInteger(restoredIndex) ? Math.max(0, Math.min(restoredIndex, matches.length - 1)) - 1 : -1;
+    nextFind(1);
+  }
   else { $('find-result').textContent = 'No matches'; clearHighlights(); syncFindMachine(); }
 }
 function refreshFindOffsets(direction) {

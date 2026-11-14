@@ -43,7 +43,7 @@ async function activateDocument(doc, capture = true) {
   for (const entry of outlineEntries) if (doc.view?.outline?.includes(entry.offset)) toggleOutlineEntry(entry, false);
   const findOpen = Boolean(doc.view?.findOpen || doc.view?.replaceOpen);
   $('find-input').value = doc.view?.find || ''; $('find-bar').hidden = !findOpen; $('replace-bar').hidden = !doc.view?.replaceOpen;
-  if (findOpen) { updateFind(); findIndex = Number.isInteger(doc.view?.findIndex) ? doc.view.findIndex : -1; }
+  if (findOpen) { updateFind(doc.view?.findIndex); }
   syncDocumentChrome(); syncFindMachine(); syncCompanionMachine();
   focusPane('main'); updateTitle();
   renderTabs(); persistWorkspace(); scheduleCompanionRender();

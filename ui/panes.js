@@ -156,7 +156,7 @@ async function mountTransferredDocument({ token, document: captured }) {
     $('document-source').scrollTop = current.view?.sourceScroll || 0;
     const findOpen = Boolean(current.view?.findOpen || current.view?.replaceOpen);
     $('find-input').value = current.view?.find || ''; $('find-bar').hidden = !findOpen; $('replace-bar').hidden = !current.view?.replaceOpen;
-    if (findOpen) { updateFind(); findIndex = Number.isInteger(current.view?.findIndex) ? current.view.findIndex : -1; }
+    if (findOpen) { updateFind(current.view?.findIndex); }
     syncDocumentChrome(); syncFindMachine(); syncCompanionMachine(); if (typeof syncFindControl === 'function') syncFindControl();
     await invoke('finish_window_transfer', { token, documentId: current.documentId });
   } finally { setTransitionLocked(wasLocked); outlineFollowSuspended = false; updateActiveOutline({ instant: true }); }
