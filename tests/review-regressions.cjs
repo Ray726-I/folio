@@ -23,7 +23,8 @@ const { openEditor } = require('./editor-browser.cjs');
       const original = window.__TAURI__.core.invoke;
       window.__TAURI__.core.invoke = async (command, args) => {
         if (command === 'resolve_document_link') return '/other.md';
-        if (command === 'open_document') return { documentId: 'other', path: '/other.md', name: 'other.md', content: '# Other\n\nOpening text.\n\n## Section\n\nTarget text.\n', writable: true };
+        if (command === 'open_document' && args.path === '/away.md') return { documentId: 'away', path: '/away.md', name: 'away.md', content: '# Away\n', writable: true };
+        if (command === 'open_document') return { documentId: 'other', path: '/other.md', name: 'other.md', content: '# Other\n\n' + 'Opening text.\n\n'.repeat(100) + '## Section\n\nTarget text.\n', writable: true };
         return original(command, args);
       };
       const anchor = document.createElement('a'); anchor.href = 'other.md#section';
@@ -31,6 +32,19 @@ const { openEditor } = require('./editor-browser.cjs');
     });
     await page.waitForFunction(() => current.path === '/other.md' && !busy);
     assert.equal(await page.evaluate(() => editor.getSelection().head), await page.evaluate(() => current.content.indexOf('## Section')), 'cross-file link selects its heading');
+    await page.evaluate(async () => {
+      $('reader-scroll').scrollTop = 0;
+      await openPath('/away.md');
+      const anchor = document.createElement('a'); anchor.href = 'other.md#section';
+      followPreviewLink(anchor);
+    });
+    await page.waitForFunction(() => current.path === '/other.md' && !busy);
+    await page.waitForTimeout(100);
+    assert.equal(await page.evaluate(() => {
+      const heading = document.querySelector('#preview h2').getBoundingClientRect();
+      const reader = $('reader-scroll').getBoundingClientRect();
+      return heading.top >= reader.top && heading.top < reader.bottom;
+    }), true, 'existing-tab heading jump wins over saved tab scroll restoration');
     await page.keyboard.press('Control+Shift+P');
     const search = page.getByRole('combobox', { name: 'Search commands' });
     const listId = await search.getAttribute('aria-controls');

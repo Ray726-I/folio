@@ -1372,7 +1372,13 @@ async function openDocumentLink(documentId, href) {
   const path = await invoke('resolve_document_link', { documentId, link: href });
   if (!await openPath(path)) return;
   const fragment = href.indexOf('#');
-  if (fragment >= 0) followHeadingLink(href.slice(fragment));
+  if (fragment >= 0) {
+    const target = current;
+    // Existing tabs restore their saved scroll on the next frame. Let that
+    // finish before the explicit fragment navigation takes precedence.
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    if (current === target) followHeadingLink(href.slice(fragment));
+  }
 }
 function followPreviewLink(anchor) {
   const href = anchor.getAttribute('href'); if (!href) return;
