@@ -1,6 +1,9 @@
 const assert = require('node:assert/strict');
 const { openEditor } = require('./editor-browser.cjs');
 
+const lineEnd = process.platform === 'darwin' ? 'Meta+ArrowRight' : 'End';
+const deleteWord = process.platform === 'darwin' ? 'Alt+Backspace' : 'Control+Backspace';
+
 const source = 'Before.\n\n```text\nalpha beta gamma\ndelta epsilon zeta\n```\n\nAfter.\n';
 
 async function revealAtLineEnd(page, line) {
@@ -14,7 +17,7 @@ async function revealAtLineEnd(page, line) {
     document.querySelector('.ProseMirror').focus();
     window.getSelection().collapse(text, offset);
   }, line);
-  await page.keyboard.press('End');
+  await page.keyboard.press(lineEnd);
   if (process.env.FOLIO_BROWSER === 'webkit') {
     // Playwright WebKit does not synthesize the platform keyboard-menu gesture.
     await page.locator('.code-surface code').dispatchEvent('contextmenu', { bubbles: true, cancelable: true });
@@ -31,7 +34,7 @@ async function revealAtLineEnd(page, line) {
     const firstEnd = source.indexOf('gamma') + 'gamma'.length;
     assert.deepEqual(await page.evaluate(() => editor.getSelection()), { anchor: firstEnd, head: firstEnd }, 'revealing preserves the current first-line end');
     assert.equal(await page.evaluate(() => current.content), source, 'revealing source is zero-write');
-    await page.keyboard.press('Control+Backspace');
+    await page.keyboard.press(deleteWord);
     assert.equal(await page.evaluate(() => current.content), source.replace('beta gamma', 'beta '), 'the first Ctrl+Backspace deletes the last word, preserving its preceding space');
     assert.deepEqual(await page.evaluate(() => editor.getSelection()), { anchor: firstEnd - 5, head: firstEnd - 5 }, 'word deletion leaves the caret where the deleted word began');
     await page.keyboard.press('Control+z');
@@ -40,12 +43,12 @@ async function revealAtLineEnd(page, line) {
     await revealAtLineEnd(page, 1);
     const secondEnd = source.indexOf('zeta') + 'zeta'.length;
     assert.deepEqual(await page.evaluate(() => editor.getSelection()), { anchor: secondEnd, head: secondEnd }, 'reopening source uses the current second-line end, rather than the previous source caret');
-    await page.keyboard.press('Control+Backspace');
+    await page.keyboard.press(deleteWord);
     assert.equal(await page.evaluate(() => current.content), source.replace('epsilon zeta', 'epsilon '), 'Ctrl+Backspace deletes the current line’s word after reopening');
     const snapshots = [await page.evaluate(() => current.content)];
     for (let i = 0; i < 3; i++) {
       await page.waitForTimeout(700);
-      await page.keyboard.press('Control+Backspace');
+      await page.keyboard.press(deleteWord);
       snapshots.push(await page.evaluate(() => current.content));
     }
     for (let i = snapshots.length - 2; i >= 0; i--) {

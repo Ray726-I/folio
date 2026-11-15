@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { openEditor } = require('./editor-browser.cjs');
 (async () => {
+ const deleteWord = process.platform === 'darwin' ? 'Alt+Backspace' : 'Control+Backspace';
  const source = 'Before.\n\nalpha beta gamma delta epsilon zeta\n\nAfter.\n';
  const session = await openEditor(source);
  try {
@@ -9,7 +10,7 @@ const { openEditor } = require('./editor-browser.cjs');
   const snapshots = [source];
   for (const word of ['zeta', 'epsilon ', 'delta ']) {
    await page.waitForTimeout(700);
-   await page.keyboard.press('Control+Backspace');
+   await page.keyboard.press(deleteWord);
    const expected = snapshots.at(-1).replace(word, '');
    assert.equal(await page.evaluate(() => current.content), expected, 'native word deletion preserves paragraphs');
    snapshots.push(expected);
