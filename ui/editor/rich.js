@@ -3048,6 +3048,21 @@ export function createRichEditor(parent, options) {
         // Commit its pre-mutation target directly: ProseMirror can otherwise
         // retry a native deletion as synthetic Backspace, after the browser
         // caret has already moved, and delete a different source character.
+        if (!model.sourceEdit && !event.isComposing && /^delete(?:Word|SoftLine|HardLine)/.test(event.inputType || '')) {
+          const ranges = event.getTargetRanges?.();
+          const range = ranges?.length === 1 ? ranges[0] : null;
+          if (range && editor.dom.contains(range.startContainer) && editor.dom.contains(range.endContainer)) {
+            const from = editor.posAtDOM(range.startContainer, range.startOffset, 1);
+            const to = editor.posAtDOM(range.endContainer, range.endOffset, -1);
+            if (from < to) {
+              // Apply the browser's pre-mutation word range once. Native DOM
+              // reconciliation can otherwise retry it as plain Backspace.
+              event.preventDefault();
+              if (!options.isLocked()) editor.dispatch(editor.state.tr.deleteRange(from, to).scrollIntoView());
+              return true;
+            }
+          }
+        }
         if (model.sourceEdit && !event.isComposing && event.inputType?.startsWith('delete')) {
           const ranges = event.getTargetRanges?.();
           const range = ranges?.length === 1 ? ranges[0] : null;

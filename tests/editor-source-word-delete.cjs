@@ -42,6 +42,16 @@ async function revealAtLineEnd(page, line) {
     assert.deepEqual(await page.evaluate(() => editor.getSelection()), { anchor: secondEnd, head: secondEnd }, 'reopening source uses the current second-line end, rather than the previous source caret');
     await page.keyboard.press('Control+Backspace');
     assert.equal(await page.evaluate(() => current.content), source.replace('epsilon zeta', 'epsilon '), 'Ctrl+Backspace deletes the current line’s word after reopening');
+    const snapshots = [await page.evaluate(() => current.content)];
+    for (let i = 0; i < 3; i++) {
+      await page.waitForTimeout(700);
+      await page.keyboard.press('Control+Backspace');
+      snapshots.push(await page.evaluate(() => current.content));
+    }
+    for (let i = snapshots.length - 2; i >= 0; i--) {
+      await page.keyboard.press('Control+z');
+      assert.equal(await page.evaluate(() => current.content), snapshots[i], 'repeated source-card undo restores each word-deletion snapshot');
+    }
     assert.deepEqual(session.errors, []);
     console.log('PASS: Edit Markdown preserves current code-line carets and native word deletion removes the intended source text.');
   } finally { await session.close(); }
