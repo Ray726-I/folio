@@ -18,10 +18,17 @@ async function revealAtLineEnd(page, line) {
     window.getSelection().collapse(text, offset);
   }, line);
   await page.keyboard.press(lineEnd);
-  if (process.env.FOLIO_BROWSER === 'webkit') {
-    // Playwright WebKit does not synthesize the platform keyboard-menu gesture.
-    await page.locator('.code-surface code').dispatchEvent('contextmenu', { bubbles: true, cancelable: true });
-  } else await page.keyboard.press('Shift+F10');
+  // Dispatch the context menu at the caret instead of relying on a platform
+  // keyboard-menu gesture, which Playwright does not provide on every browser.
+  // The synthetic event keeps the caret where End placed it.
+  await page.locator('.code-surface code').evaluate(code => {
+    const selection = getSelection();
+    const rect = selection.rangeCount ? selection.getRangeAt(0).getBoundingClientRect() : code.getBoundingClientRect();
+    code.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, button: 2,
+      clientX: rect.right, clientY: rect.top + rect.height / 2,
+    }));
+  });
   await page.getByRole('menu', { name: 'Document menu' }).getByRole('menuitem', { name: 'Edit Markdown', exact: true }).click();
   await page.locator('.folio-source-edit').waitFor();
 }
