@@ -26,6 +26,7 @@ const source = [
     // 1. Destination dialog: focus starts in the input and returns to the
     //    editor after Apply.
     await page.locator('#preview a').first().click();
+    await page.getByRole('button', { name: 'Edit link', exact: true }).click();
     await page.waitForFunction(() => document.getElementById('editor-action-dialog').open);
     assert.equal(await page.evaluate(() => document.activeElement?.id), 'editor-action-value', 'dialog focuses its input');
     await page.locator('#editor-action-value').fill('https://example.com/next');
@@ -36,6 +37,7 @@ const source = [
 
     // 2. Cancel closes the dialog and restores editor focus too.
     await page.locator('#preview a').first().click();
+    await page.getByRole('button', { name: 'Edit link', exact: true }).click();
     await page.waitForFunction(() => document.getElementById('editor-action-dialog').open);
     await page.locator('#editor-action-cancel').click();
     await page.waitForTimeout(120);

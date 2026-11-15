@@ -23,6 +23,7 @@ const { openEditor } = require('./editor-browser.cjs');
     assert.match(await page.locator('.folio-source-edit').textContent(), /!\[image\.png\]\(image\.png\)/);
     await page.keyboard.press('Escape');
     await page.locator('#preview a').click();
+    await page.getByRole('button', { name: 'Edit link', exact: true }).click();
     await page.waitForFunction(() => document.getElementById('editor-action-dialog').open);
     const input = page.locator('#editor-action-value');
     assert.equal(await input.inputValue(), 'https://example.com/a\\(b\\)');

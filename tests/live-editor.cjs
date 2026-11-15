@@ -50,6 +50,7 @@ const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n
     // Links edit in place through the destination dialog, with no mode switch
     // and no second editor.
     await page.locator('#preview a').first().click();
+    await page.getByRole('button', { name: 'Edit link', exact: true }).click();
     await page.waitForFunction(() => document.getElementById('editor-action-dialog').open);
     assert.equal(await page.evaluate(() => editor.isSource()), false, 'link editing stays in the formatted editor');
     const linkValue = await page.locator('#editor-action-value').inputValue();

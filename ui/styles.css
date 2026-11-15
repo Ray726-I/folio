@@ -4812,3 +4812,14 @@ body[data-selection-pane="reader-scroll"] #companion-scroll,body[data-selection-
 #tree-menu, #tab-context-menu { max-height:calc(100vh - 16px); overflow-y:auto; }
 
 .command-window .command-item { box-sizing:border-box; height:var(--command-row-height,38px); min-height:var(--command-row-height,38px); }
+
+/* Link actions belong to editor chrome, never to copied Markdown. */
+.folio-link-popover { position:fixed; z-index:30; box-sizing:border-box; width:min(360px,calc(100vw - 24px)); padding:8px; border:1px solid var(--line); border-radius:7px; background:var(--panel); color:var(--fg); box-shadow:0 8px 24px #0003; font:500 12.5px/1.4 var(--font-ui); }
+.folio-link-destination { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:4px 6px 8px; color:var(--muted); }
+.folio-link-actions { display:flex; flex-wrap:wrap; gap:4px; }
+.folio-link-actions button { min-height:32px; padding:6px 10px; border:0; border-radius:4px; background:transparent; color:var(--fg); font:inherit; cursor:pointer; }
+.folio-link-actions button:first-child { background:var(--hover); }
+.folio-link-actions button:hover:not(:disabled) { background:var(--hover); }
+.folio-link-actions button:focus-visible { outline:2px solid var(--focus-ring); outline-offset:-2px; background:var(--hover); }
+.folio-link-actions button:disabled { opacity:.4; cursor:default; }
+@media(pointer:coarse) { .folio-link-actions button { min-height:44px; } }

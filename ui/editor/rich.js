@@ -250,7 +250,7 @@ export function createRichEditor(parent, options) {
   let model = parseSource(options.content), view;
   let fullReplacementUndoModel = null;
   let revision = 0, bookmark = null, tabSelection = null, commitOutcome = null, pendingTail = false;
-  let linkClickTimer = 0, inlineClickTimer = 0;
+  let linkClickTimer = 0;
   const headingMetadata = createHeadingMetadata();
   headingMetadata.read(model);
   const refreshers = new Set();
@@ -445,7 +445,9 @@ export function createRichEditor(parent, options) {
   async function editDestination({ title, current, from, to, fallbackFrom, fallbackTo }) {
     if (options.isLocked()) return;
     if (!options.editValue) { options.revealSource?.(fallbackFrom, fallbackTo); return; }
+    const source = model.source;
     const next = await options.editValue({ title, value: current });
+    if (view.isDestroyed || options.isLocked() || model.source !== source) return;
     if (next === null || next === undefined || next === current) return;
     const outcome = replaceLogicalSelection(next, 'command', { from, to, all: false, collapsed: false });
     if (!outcome.committed) options.message?.('That change could not be applied to the Markdown source.');
@@ -483,11 +485,17 @@ export function createRichEditor(parent, options) {
     if (close < 0 || close > verified.to + 1) return null;
     return inlineDestination(close, model.source.length);
   }
-  function revealLinkSource(from, to, href) {
-    if (options.isLocked()) return;
-    const range = destinationRange(from, to);
-    if (!range) { options.message?.('This link destination cannot be edited safely.'); return; }
-    void editDestination({ title: 'Edit link destination', ...range, fallbackFrom: range.from, fallbackTo: range.to });
+  function linkDestinationAt(pos, href) {
+    const $pos = view.state.doc.resolve(pos), ranges = [];
+    $pos.parent.forEach((child, offset) => {
+      if (schema.marks.link.isInSet(child.marks)?.attrs.href === href) ranges.push({ from: $pos.start() + offset, to: $pos.start() + offset + child.nodeSize });
+    });
+    const index = ranges.findIndex(range => range.from <= pos && range.to >= pos);
+    if (index < 0) return null;
+    let from = ranges[index].from, to = ranges[index].to;
+    for (let i = index - 1; i >= 0 && ranges[i].to === from; i--) from = ranges[i].from;
+    for (let i = index + 1; i < ranges.length && ranges[i].from === to; i++) to = ranges[i].to;
+    return destinationRange(from, to);
   }
   function revealCurrentSelection() {
     if (options.isLocked() || !options.revealSource) return;
@@ -1401,31 +1409,29 @@ export function createRichEditor(parent, options) {
     // Modifier clicks open the link destination.
     dom.addEventListener('click', event => {
       const anchor = event.target.closest('a');
-      if (!anchor || event.button !== 0) return;
+      if (!anchor || !anchor.hasAttribute('href') || event.button !== 0) return;
       event.preventDefault(); event.stopPropagation();
       if (event.ctrlKey || event.metaKey || options.isLocked()) { options.openLink(anchor.getAttribute('href') || ''); return; }
-      let pos;
-      try { pos = getPos(); } catch { return; }
+      let pos; try { pos = getPos(); } catch { return; }
       const owner = richMapping(model, pos, { bias: 'right' })?.owner;
-      if (!owner || owner.confidence !== 'exact' || owner.supported === false || !options.editValue) {
-        options.message?.('This inline HTML cannot be edited safely.');
-        return;
+      let edit = null;
+      if (owner?.confidence === 'exact' && owner.supported !== false && options.editValue) {
+        const from = owner.sourceFrom, to = owner.sourceTo, original = model.source.slice(from, to);
+        if (original === node.attrs.source) {
+          const link = node.marks.find(mark => mark.type.name === 'link');
+          const destination = link && (linkDestinationAt(pos, link.attrs.href) || inlineDestination(to, model.source.length));
+          edit = destination ? () => editDestination({ title: 'Edit link destination', ...destination, fallbackFrom: destination.from, fallbackTo: destination.to }) : link ? null : async () => {
+            const source = model.source;
+            const next = await options.editValue({ title: 'Edit inline HTML', value: original });
+            if (next === null || next === undefined || next === original) return;
+            if (view.isDestroyed || options.isLocked() || model.source !== source ||
+                !replaceLogicalSelection(next, 'command', { from, to, all: false, collapsed: false }).committed) {
+              options.message?.('This inline HTML could not be updated safely.');
+            }
+          };
+        }
       }
-      const from = owner.sourceFrom, to = owner.sourceTo, original = model.source.slice(from, to);
-      if (original !== node.attrs.source) return;
-      if (event.detail > 1) { clearTimeout(inlineClickTimer); return; }
-      clearTimeout(inlineClickTimer);
-      const clickedRevision = revision;
-      inlineClickTimer = setTimeout(() => {
-        inlineClickTimer = 0;
-        void options.editValue({ title: 'Edit inline HTML', value: original }).then(next => {
-          if (next === null || next === undefined || next === original) return;
-          if (revision !== clickedRevision || model.source.slice(from, to) !== original ||
-              !replaceLogicalSelection(next, 'command', { from, to, all: false, collapsed: false }).committed) {
-            options.message?.('This inline HTML could not be updated safely.');
-          }
-        });
-      }, 240);
+      scheduleLinkPopover(anchor, edit, event);
     });
     const render = () => {
       dom.replaceChildren();
@@ -2146,6 +2152,7 @@ export function createRichEditor(parent, options) {
   }
   let activePopup = null;
   function closePopup(restore = false) {
+    clearTimeout(linkClickTimer); linkClickTimer = 0;
     if (!activePopup) return;
     const { menu, trigger, cleanup } = activePopup; activePopup = null;
     cleanup?.();
@@ -2157,6 +2164,72 @@ export function createRichEditor(parent, options) {
     const width = menu.offsetWidth, height = menu.offsetHeight;
     menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
     menu.style.top = `${Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - height - 8))}px`;
+  }
+  function openLinkPopover(anchor, edit) {
+    closePopup();
+    if (options.isLocked() || !anchor.isConnected || view.isDestroyed) return;
+    const href = anchor.getAttribute('href') || '', openedRevision = revision;
+    const menu = document.createElement('div'); menu.className = 'folio-link-popover';
+    menu.setAttribute('role', 'dialog'); menu.setAttribute('aria-label', 'Link actions');
+    menu.setAttribute('aria-describedby', 'folio-link-destination');
+    const destination = document.createElement('div'); destination.id = 'folio-link-destination';
+    destination.className = 'folio-link-destination'; destination.textContent = href; destination.title = href;
+    const actions = document.createElement('div'); actions.className = 'folio-link-actions';
+    const current = () => !view.isDestroyed && anchor.isConnected && revision === openedRevision && !options.isLocked();
+    const focusEditor = () => { if (!view.isDestroyed) view.focus(); };
+    function action(label, accessibleLabel, run) {
+      const item = document.createElement('button'); item.type = 'button'; item.textContent = label;
+      item.setAttribute('aria-label', accessibleLabel);
+      item.onclick = () => {
+        if (!current()) { closePopup(); return; }
+        closePopup(); focusEditor();
+        try { Promise.resolve(run()).catch(error => options.message?.(String(error?.message || error))); }
+        catch (error) { options.message?.(String(error?.message || error)); }
+      };
+      actions.append(item); return item;
+    }
+    const open = action('Open link', 'Open link', () => options.openLink(href));
+    const arrow = document.createElement('span'); arrow.setAttribute('aria-hidden', 'true'); arrow.textContent = ' ↗'; if (/^(https?:|mailto:)/i.test(href)) open.append(arrow);
+    const editButton = action('Edit', 'Edit link', async () => { try { await edit(); } finally { focusEditor(); } });
+    editButton.disabled = !edit;
+    if (!edit) editButton.title = 'This destination is not directly editable.';
+    action('Copy', 'Copy link', async () => {
+      try { await navigator.clipboard.writeText(href); options.message?.('Link copied.'); }
+      catch { options.message?.('The link could not be copied.'); }
+    });
+    menu.append(destination, actions);
+    menu.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closePopup(); focusEditor(); }
+      else if (['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+        event.preventDefault();
+        const buttons = [...actions.querySelectorAll('button:not(:disabled)')], index = buttons.indexOf(document.activeElement);
+        buttons[(index + (event.key === 'ArrowRight' ? 1 : buttons.length - 1)) % buttons.length]?.focus();
+      }
+    });
+    menu.addEventListener('focusout', event => { if (!menu.contains(event.relatedTarget)) closePopup(); });
+    const dismiss = () => closePopup();
+    const update = () => { if (!current()) { const focused = menu.contains(document.activeElement); closePopup(); if (focused) focusEditor(); } };
+    activePopup = { menu, trigger: null, update, cleanup() {
+      window.removeEventListener('scroll', dismiss, true); window.removeEventListener('resize', dismiss); refreshers.delete(update);
+    } };
+    positionPopup(menu, anchor.getBoundingClientRect());
+    window.addEventListener('scroll', dismiss, true); window.addEventListener('resize', dismiss); refreshers.add(update);
+    open.focus({ preventScroll: true });
+  }
+  function scheduleLinkPopover(anchor, edit, event) {
+    clearTimeout(linkClickTimer); linkClickTimer = 0;
+    const dragged = event.detail > 0 && sourcePress && Math.hypot(event.clientX - sourcePress.x, event.clientY - sourcePress.y) >= 6;
+    if (event.detail > 1 || dragged) { closePopup(); return; }
+    const clickedRevision = revision, selection = window.getSelection();
+    const endpoints = selection && [selection.anchorNode, selection.anchorOffset, selection.focusNode, selection.focusOffset];
+    if (!event.detail) { openLinkPopover(anchor, edit); return; }
+    linkClickTimer = setTimeout(() => {
+      linkClickTimer = 0;
+      const selected = window.getSelection();
+      const extended = selected && !selected.isCollapsed && endpoints &&
+        [selected.anchorNode, selected.anchorOffset, selected.focusNode, selected.focusOffset].some((value, index) => value !== endpoints[index]);
+      if (!extended && revision === clickedRevision && !view.isDestroyed && anchor.isConnected) openLinkPopover(anchor, edit);
+    }, 240);
   }
   function focusHeadingMarker() {
     const dom = view.domAtPos(view.state.selection.head).node;
@@ -2995,42 +3068,16 @@ export function createRichEditor(parent, options) {
         return true;
       },
       click(editor, event) {
-      const anchor = event.target.closest('a'); if (!anchor) return false;
+      const anchor = event.target.closest('a'); if (!anchor || !anchor.hasAttribute('href')) return false;
       event.preventDefault(); const href = anchor.getAttribute('href') || '';
-      const inline = anchor.closest('.html-inline');
-      if (inline && !options.isLocked()) {
-        // An inline HTML link is an atom; a primary click edits its exact
-        // source instead of following it. Reading/locked mode still opens.
-        let pos = editor.posAtDOM(inline, 0), node = editor.state.doc.nodeAt(pos);
-        if (node?.type.name !== 'raw_inline') {
-          const $pos = editor.state.doc.resolve(pos);
-          node = $pos.parent.childAfter($pos.parentOffset).node;
-        }
-        const owner = node?.type.name === 'raw_inline'
-          ? model.ledger?.owners?.find(item => item.type === 'raw_inline' && item.pmFrom <= pos && item.pmTo >= pos) : null;
-        if (node && owner && options.editValue) {
-          void options.editValue({ title: 'Edit inline HTML', value: node.attrs.source }).then(next => {
-            if (next === null || next === undefined || next === node.attrs.source) return;
-            const outcome = replaceLogicalSelection(next, 'command', { from: owner.sourceFrom, to: owner.sourceTo, all: false, collapsed: false });
-            if (!outcome.committed) options.message?.('This inline HTML could not be updated safely.');
-          });
-          return true;
-        }
-      }
-      if (event.ctrlKey || event.metaKey || options.isLocked()) options.openLink(href);
+      if (event.ctrlKey || event.metaKey || options.isLocked()) { closePopup(); options.openLink(href); }
       else {
-        const pos = editor.posAtDOM(anchor, 0), $pos = editor.state.doc.resolve(pos), ranges = [];
-        $pos.parent.forEach((child, offset) => { if (schema.marks.link.isInSet(child.marks)?.attrs.href === href) ranges.push({ from: $pos.start() + offset, to: $pos.start() + offset + child.nodeSize }); });
-        const index = ranges.findIndex(range => range.from <= pos && range.to >= pos);
-        if (index < 0) return true;
-        let from = ranges[index].from, to = ranges[index].to;
-        for (let i = index - 1; i >= 0 && ranges[i].to === from; i--) from = ranges[i].from;
-        for (let i = index + 1; i < ranges.length && ranges[i].from === to; i++) to = ranges[i].to;
-        // A primary click opens the destination editor after the selection
-        // gesture settles. Ctrl/Cmd click (or a click under Lock) opens it.
-        if (event.detail > 1) { clearTimeout(linkClickTimer); return true; }
-        clearTimeout(linkClickTimer);
-        linkClickTimer = setTimeout(() => { linkClickTimer = 0; revealLinkSource(from, to, href); }, 240);
+        let edit = null;
+        if (!anchor.closest('.extension-preview,.html-inline')) {
+          const destination = linkDestinationAt(editor.posAtDOM(anchor, 0), href);
+          if (destination) edit = () => editDestination({ title: 'Edit link destination', ...destination, fallbackFrom: destination.from, fallbackTo: destination.to });
+        }
+        scheduleLinkPopover(anchor, edit, event);
       }
       return true;
     }, auxclick(editor, event) { const anchor = event.target.closest('a'); if (!anchor || event.button !== 1) return false; event.preventDefault(); options.openLink(anchor.getAttribute('href') || ''); return true; } }
@@ -4375,6 +4422,12 @@ export function createRichEditor(parent, options) {
     }
   }, true);
   view.dom.addEventListener('keydown', event => {
+    const anchor = event.target.closest?.('a[href]');
+    if (event.key === 'Enter' && anchor && !event.isComposing) {
+      event.preventDefault(); event.stopImmediatePropagation();
+      anchor.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, detail: 0, ctrlKey: event.ctrlKey, metaKey: event.metaKey }));
+      return;
+    }
     if (['Enter', ' '].includes(event.key) && event.target.closest?.('.math-formula')) sourceGesture(event);
   }, true);
   refreshers.add(refreshTableChrome);
@@ -4388,6 +4441,7 @@ export function createRichEditor(parent, options) {
   // above). Document-level so ranges leaving the reader clear the mirror.
   document.addEventListener('selectionchange', syncFolioHighlight);
   const dismissPopup = event => {
+    clearTimeout(linkClickTimer); linkClickTimer = 0;
     if (!event.target.closest?.('.math-block,.math-inline') && clearFormulaNodeSelection()) {
       window.getSelection()?.removeAllRanges();
       syncFolioHighlight();
@@ -4419,6 +4473,7 @@ export function createRichEditor(parent, options) {
     },
     setDocument(content, selection, meta = {}) {
       if (content !== model.source) {
+        closePopup();
         revision++; bookmark = null;
         if (!model.sourceEdit && fullReplacementUndoModel?.source === content) {
           model = fullReplacementUndoModel;
