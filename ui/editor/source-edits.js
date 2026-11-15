@@ -117,10 +117,129 @@ function rebaseLedger(ledger, doc) {
   return ledger;
 }
 
+// Expose ordinary immutable arrays while computing shifted suffix records only
+// when a consumer actually reads them. Repeated typing in one run always refers
+// to one stable base, rather than building a chain of deferred coordinate maps.
+const textShifts = new WeakMap();
+function lazyRecords(base, project) {
+  const cache = new Map();
+  return new Proxy(base, { get(target, key, receiver) {
+    if (typeof key === 'string' && /^(0|[1-9]\d*)$/.test(key) && +key < target.length) {
+      const index = +key;
+      if (!cache.has(index)) cache.set(index, project(target[index], index));
+      return cache.get(index);
+    }
+    return Reflect.get(target, key, receiver);
+  } });
+}
+function firstAtOrAfter(records, field, position) {
+  let low = 0, high = records.length;
+  while (low < high) { const mid = (low + high) >> 1; if (records[mid][field] < position) low = mid + 1; else high = mid; }
+  return low;
+}
+function lazyShiftModel(previous, step, patch, insert, intendedDoc) {
+  const currentRuns = previous.ledger.runs;
+  let index = firstAtOrAfter(currentRuns, 'pmFrom', step.from);
+  while (index > 0 && currentRuns[index - 1].pmTo >= step.to) index--;
+  let editedRun = -1;
+  for (; index < currentRuns.length && currentRuns[index].pmFrom <= step.from; index++) {
+    const run = currentRuns[index];
+    if (run.linear && run.kind === 'text' && run.text.length && run.pmTo >= step.to
+        && run.sourceTo - run.sourceFrom === run.text.length
+        && run.sourceFrom + step.from - run.pmFrom === patch.from) { editedRun = index; break; }
+  }
+  if (editedRun < 0) return null;
+  let base = previous, origin = textShifts.get(previous.ledger);
+  if (origin?.editedRun === editedRun) base = origin.base;
+  else if (origin) {
+    // Moving to another run settles the previous burst once. This also keeps
+    // alternating edits from accumulating deferred projection layers.
+    const ledger = previous.ledger;
+    base = { ...previous, ledger: { ...ledger,
+      owners: Array.from(ledger.owners), runs: Array.from(ledger.runs), gaps: Array.from(ledger.gaps),
+      unmapped: Array.from(ledger.unmapped), ownerById: new Map(ledger.owners.map(owner => [owner.id, owner])) } };
+    origin = null;
+  }
+  const run = currentRuns[editedRun], baseRun = base.ledger.runs[editedRun];
+  const sourceDelta = insert.length - (patch.to - patch.from), pmDelta = insert.length - (step.to - step.from);
+  const totalSourceDelta = previous.source.length - base.source.length + sourceDelta;
+  const totalPmDelta = intendedDoc.content.size - base.doc.content.size;
+  const text = run.text.slice(0, step.from - run.pmFrom) + insert + run.text.slice(step.to - run.pmFrom);
+  const nextRun = { ...baseRun, text, pmTo: baseRun.pmTo + totalPmDelta, sourceTo: baseRun.sourceTo + totalSourceDelta };
+  let edited = -1, editedPmFrom = 0;
+  for (let i = 0; i < base.segments.length; i++) {
+    const segment = base.segments[i], end = editedPmFrom + segment.node.nodeSize;
+    if (baseRun.pmFrom >= editedPmFrom && baseRun.pmFrom < end && baseRun.sourceFrom >= segment.from && baseRun.sourceTo <= segment.to) { edited = i; break; }
+    editedPmFrom = end;
+  }
+  if (edited < 0 || base.segments.length !== intendedDoc.childCount) return null;
+  const editedOldEnd = editedPmFrom + base.segments[edited].node.nodeSize;
+  const nodes = new Map(), editedNode = intendedDoc.child(edited);
+  nodes.set(editedPmFrom, editedNode);
+  editedNode.descendants((node, pos) => { if (!node.isText) nodes.set(editedPmFrom + 1 + pos, node); });
+  const ownerCache = new Map();
+  const ownerAt = owner => {
+    if (ownerCache.has(owner)) return ownerCache.get(owner);
+    const inEdited = owner.pmFrom >= editedPmFrom && owner.pmFrom < editedOldEnd;
+    if (!inEdited && owner.pmTo < baseRun.pmTo) return owner;
+    const next = { ...owner };
+    if (owner.pmFrom >= baseRun.pmTo) {
+      next.pmFrom += totalPmDelta; next.pmTo += totalPmDelta;
+      next.sourceFrom += totalSourceDelta; next.sourceTo += totalSourceDelta;
+      if (Number.isInteger(owner.pmContentFrom)) next.pmContentFrom += totalPmDelta;
+      if (Number.isInteger(owner.pmContentTo)) next.pmContentTo += totalPmDelta;
+      if (Number.isInteger(owner.contentFrom)) next.contentFrom += totalSourceDelta;
+      if (Number.isInteger(owner.contentTo)) next.contentTo += totalSourceDelta;
+    } else if (owner.pmTo >= baseRun.pmTo) {
+      next.pmTo += totalPmDelta; next.sourceTo += totalSourceDelta;
+      if (Number.isInteger(owner.pmContentTo) && owner.pmContentTo >= baseRun.pmTo) next.pmContentTo += totalPmDelta;
+      if (Number.isInteger(owner.contentTo) && owner.contentTo >= baseRun.sourceTo) next.contentTo += totalSourceDelta;
+    }
+    next.node = inEdited ? nodes.get(next.pmFrom) : owner.node;
+    ownerCache.set(owner, next);
+    return next;
+  };
+  // Validate the affected subtree eagerly; untouched immutable nodes already
+  // have proven associations. No lazy consumer can discover a malformed owner.
+  const firstOwner = firstAtOrAfter(base.ledger.owners, 'pmFrom', editedPmFrom);
+  for (let i = firstOwner; i < base.ledger.owners.length && base.ledger.owners[i].pmFrom < editedOldEnd; i++) {
+    const owner = ownerAt(base.ledger.owners[i]);
+    if (!owner.node || owner.node.type.name !== owner.type) return null;
+  }
+  const runs = lazyRecords(base.ledger.runs, (item, i) => i === editedRun ? nextRun : item.pmTo <= baseRun.pmFrom ? item : {
+    ...item, pmFrom: item.pmFrom + totalPmDelta, pmTo: item.pmTo + totalPmDelta,
+    sourceFrom: item.sourceFrom + totalSourceDelta, sourceTo: item.sourceTo + totalSourceDelta,
+    charMap: item.charMap ? item.charMap.map(char => ({ from: char.from + totalSourceDelta, to: char.to + totalSourceDelta })) : item.charMap });
+  const owners = lazyRecords(base.ledger.owners, ownerAt);
+  const gaps = lazyRecords(base.ledger.gaps, gap => gap.sourceFrom >= baseRun.sourceTo ? { ...gap, sourceFrom: gap.sourceFrom + totalSourceDelta, sourceTo: gap.sourceTo + totalSourceDelta } : gap);
+  const unmapped = lazyRecords(base.ledger.unmapped, range => range.sourceFrom >= baseRun.sourceTo && range.pmFrom >= baseRun.pmTo ? {
+    ...range, sourceFrom: range.sourceFrom + totalSourceDelta, sourceTo: range.sourceTo + totalSourceDelta,
+    pmFrom: range.pmFrom + totalPmDelta, pmTo: range.pmTo + totalPmDelta } : range);
+  const covered = origin?.editedRun === editedRun ? origin.covered : base.ledger.runs.reduce((sum, item) => sum + Math.max(0, item.sourceTo - item.sourceFrom), 0);
+  const source = previous.source.slice(0, patch.from) + insert + previous.source.slice(patch.to);
+  const ownerById = new Proxy(base.ledger.ownerById, { get(target, key) {
+    if (key === 'get') return id => { const owner = target.get(id); return owner ? ownerAt(owner) : undefined; };
+    if (key === 'forEach') return (callback, thisArg) => target.forEach((owner, id) => callback.call(thisArg, ownerAt(owner), id, ownerById));
+    if (key === 'values') return function* () { for (const owner of target.values()) yield ownerAt(owner); };
+    if (key === 'entries' || key === Symbol.iterator) return function* () { for (const [id, owner] of target) yield [id, ownerAt(owner)]; };
+    const value = Reflect.get(target, key, target); return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const ledger = { ...base.ledger, source, doc: intendedDoc, runs, owners, ownerById, gaps, unmapped,
+    metadata: { ...base.ledger.metadata, sourceLength: source.length, docSize: intendedDoc.content.size, coverage: source.length ? (covered + totalSourceDelta) / source.length : 1 } };
+  textShifts.set(ledger, { base, editedRun, covered });
+  const segments = previous.segments.map((segment, i) => {
+    if (i === edited) return { node: intendedDoc.child(i), from: segment.from, to: segment.to + sourceDelta, raw: source.slice(segment.from, segment.to + sourceDelta) };
+    return segment.from >= patch.to ? { ...segment, from: segment.from + sourceDelta, to: segment.to + sourceDelta } : segment;
+  });
+  return { doc: intendedDoc, source, prefix: previous.prefix, gaps: previous.gaps, segments, ledger, syntaxFacts: previous.syntaxFacts };
+}
+
 // Rebuild the derived structures for a single in-run text edit without
 // re-parsing. Returns null whenever any invariant cannot be re-established,
 // which sends the caller down the full-parse path.
 function shiftModel(previous, step, patch, insert, intendedDoc) {
+  const lazy = lazyShiftModel(previous, step, patch, insert, intendedDoc);
+  if (lazy) return lazy;
   const { ledger, segments, gaps, prefix } = previous;
   const sourceDelta = insert.length - (patch.to - patch.from);
   const pmDelta = insert.length - (step.to - step.from);
@@ -337,7 +456,11 @@ function localTextEdit(previousModel, step, patch, insert, intendedDoc = null) {
   // because the local parse starts at zero.
   const localOwner = local.ledger.owners.find(item => item.type === owner.type && item.pmFrom === owner.pmFrom - segmentPmFrom);
   if (!localOwner) return fail('no-local-owner');
-  const shiftedRuns = next.ledger.runs.filter(run => run.ownerId === owner.id);
+  const shiftedRuns = [];
+  const nextOwner = next.ledger.ownerById.get(owner.id);
+  for (let i = firstAtOrAfter(next.ledger.runs, 'pmFrom', nextOwner.pmFrom); i < next.ledger.runs.length && next.ledger.runs[i].pmFrom <= nextOwner.pmTo; i++) {
+    const run = next.ledger.runs[i]; if (run.ownerId === owner.id) shiftedRuns.push(run);
+  }
   const localRuns = local.ledger.runs.filter(run => run.ownerId === localOwner.id);
   if (shiftedRuns.length !== localRuns.length) return fail('run-count');
   for (let i = 0; i < shiftedRuns.length; i++) {
