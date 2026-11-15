@@ -3019,6 +3019,25 @@ export function createRichEditor(parent, options) {
       },
       beforeinput(editor, event) {
         if (selectionGuarded) resyncGuardedSelection();
+        // Word/line deletion is native (unlike plain Backspace/Delete above).
+        // Commit its pre-mutation target directly: ProseMirror can otherwise
+        // retry a native deletion as synthetic Backspace, after the browser
+        // caret has already moved, and delete a different source character.
+        if (model.sourceEdit && !event.isComposing && event.inputType?.startsWith('delete')) {
+          const ranges = event.getTargetRanges?.();
+          const range = ranges?.length === 1 ? ranges[0] : null;
+          const card = node => (node instanceof Element ? node : node?.parentElement)?.closest('.folio-source-edit');
+          const owner = range && card(range.startContainer);
+          if (owner && owner === card(range.endContainer) && editor.dom.contains(owner)) {
+            const from = richToSource(model, editor.posAtDOM(range.startContainer, range.startOffset, 1));
+            const to = richToSource(model, editor.posAtDOM(range.endContainer, range.endOffset, -1));
+            if (from < to && from >= model.sourceEdit.from && to <= model.sourceEdit.to) {
+              event.preventDefault();
+              if (!options.isLocked()) replaceLogicalSelection('', 'typing', { from, to, all: false });
+              return true;
+            }
+          }
+        }
         return false;
       },
       copy(editor, event) {
