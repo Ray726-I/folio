@@ -14,7 +14,11 @@ function renderOutlineRows(entries, onToggle, prefix = 'outline-row-') {
     if (entry.parent >= 0) entries[entry.parent].children.push(index);
     entry.depth = stack.length;
     stack.push(index);
-    const row = entry.row || document.createElement('div'); row.className = 'outline-row'; row.id = prefix + index;
+    const row = entry.row || document.createElement('div');
+    // Reconciled rows keep their active/context state alongside the reused
+    // button. Replacing className would erase the row wash while the active
+    // index stays unchanged, so the scroll spy has no new section to paint.
+    row.classList.add('outline-row'); row.id = prefix + index;
     // Indentation follows heading level on a compressed scale (14px steps to
     // level 3, then 8px) instead of tree depth, so deep headings keep room.
     // Disclosure chevrons stay in one fixed gutter; the tree spine in CSS
