@@ -1140,6 +1140,11 @@ export function createRichEditor(parent, options) {
     } catch { return false; }
   })();
   let folioPaintActive = false;
+  const paintedCodeNodes = new Set(), paintedRenderedNodes = new Set();
+  function clearPaintedCodeNodes() {
+    for (const node of paintedCodeNodes) node.classList.remove('code-selection-painted');
+    paintedCodeNodes.clear();
+  }
   // A text node may contain several explicit lines (every fenced code block
   // does). Some engines fill the whole bounding box of a highlight range, so a
   // range spanning those newlines paints a solid rectangle over the block
@@ -1209,10 +1214,11 @@ export function createRichEditor(parent, options) {
   }
   function applyFolioRanges(ranges, hasSelection = false) {
     if (!customHighlightSupported || !view) return;
-    view.dom.querySelectorAll('.code-selection-painted').forEach(node => node.classList.remove('code-selection-painted'));
+    clearPaintedCodeNodes();
     for (const range of ranges) {
       const code = range.startContainer.parentElement?.closest('.code-surface');
-      code?.closest('.code-container')?.classList.add('code-selection-painted');
+      const container = code?.closest('.code-container');
+      if (container) { container.classList.add('code-selection-painted'); paintedCodeNodes.add(container); }
     }
     if (!ranges.length) {
       // A selection made only of line breaks or spaces has no text to wash.
@@ -1238,7 +1244,7 @@ export function createRichEditor(parent, options) {
     } catch {
       // Registry hiccup (detached nodes?): fall back to native painting.
       folioPaintActive = false;
-      view.dom.querySelectorAll('.code-selection-painted').forEach(node => node.classList.remove('code-selection-painted'));
+      clearPaintedCodeNodes();
       try { window.CSS.highlights.delete(folioHighlightName); } catch {}
       view.dom.classList.remove('folio-paint');
     }
@@ -1278,9 +1284,16 @@ export function createRichEditor(parent, options) {
     options.onContext?.(currentContext(view.state));
     const native = window.getSelection();
     const nativeRange = native && native.rangeCount && !native.isCollapsed ? native.getRangeAt(0) : null;
-    view.dom.querySelectorAll('.mermaid-host, .math-block, .math-inline, .image-widget').forEach(node => {
-      node.classList.toggle('folio-rendered-selected', Boolean(nativeRange && nativeRange.intersectsNode(node)));
+    // Collapsed typing is the common path. Clear only nodes that we painted
+    // previously instead of walking every widget in a large document.
+    const renderedSelection = new Set();
+    if (nativeRange) view.dom.querySelectorAll('.mermaid-host, .math-block, .math-inline, .image-widget').forEach(node => {
+      if (nativeRange.intersectsNode(node)) renderedSelection.add(node);
     });
+    for (const node of paintedRenderedNodes) if (!renderedSelection.has(node)) node.classList.remove('folio-rendered-selected');
+    for (const node of renderedSelection) if (!paintedRenderedNodes.has(node)) node.classList.add('folio-rendered-selected');
+    paintedRenderedNodes.clear();
+    for (const node of renderedSelection) paintedRenderedNodes.add(node);
     const { from, to } = view.state.selection;
     // Mirroring an entire large document creates thousands of DOM ranges.
     // Keep native paint for those selections, including selection restored
@@ -1288,9 +1301,10 @@ export function createRichEditor(parent, options) {
     const useNativePaint = nativeRange && to - from > 100000;
     if (!customHighlightSupported || useNativePaint) {
       if (useNativePaint && customHighlightSupported) applyFolioRanges([]);
-      view.dom.querySelectorAll('.code-container').forEach(node => {
+      clearPaintedCodeNodes();
+      if (nativeRange) view.dom.querySelectorAll('.code-container').forEach(node => {
         const surface = node.querySelector('.code-surface code');
-        node.classList.toggle('code-selection-painted', Boolean(nativeRange && surface && nativeRange.intersectsNode(surface)));
+        if (surface && nativeRange.intersectsNode(surface)) { node.classList.add('code-selection-painted'); paintedCodeNodes.add(node); }
       });
       return;
     }

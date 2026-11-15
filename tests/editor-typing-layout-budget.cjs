@@ -35,6 +35,7 @@ const { openEditor } = require('./editor-browser.cjs');
     await page.keyboard.type('xyz');
     await page.waitForTimeout(150);
     assert.equal(await page.evaluate(() => __selectionReadsDuringMutation), 0, 'typing affordances do not force selection/layout reads during mutation delivery');
+    assert.equal(await page.evaluate(() => __selectionPaintScans), 0, 'collapsed typing does not scan document widgets to clear an empty highlight');
     assert.ok(await page.evaluate(() => current.content.includes('opexyzning')), 'typing still publishes the exact source');
     assert.deepEqual(errors, []);
     console.log('PASS: large-document typing defers selection-dependent affordances until the animation frame.');
