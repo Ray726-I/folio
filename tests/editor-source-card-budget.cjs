@@ -10,16 +10,24 @@ const { openMarkdown } = require('./editor-test-actions.cjs');
     await openMarkdown(page.locator('#preview h1'));
     const card = page.locator('.folio-source-edit');
     await card.waitFor();
-    await card.locator('code').click();
-    // The card node view can be replaced while it opens. Make sure the editable
-    // host kept focus before sending End/typing so platform-specific scrolling
-    // keys cannot land outside the card on slower hosts.
+    // Click past the end of the card's text so the caret lands at the line end
+    // on every platform. End only moves the caret on some platforms; on macOS
+    // it scrolls instead and typing would splice into the middle of the word.
+    const box = await card.boundingBox();
+    assert.ok(box, 'source card has layout');
+    const placeCaret = () => page.mouse.click(box.x + box.width - 8, box.y + box.height / 2);
+    await placeCaret();
     const focusesCard = () => page.waitForFunction(() => {
       const card = document.querySelector('.folio-source-edit');
       return !!card && !!document.activeElement?.contains(card);
     }, null, { timeout: 3000 });
-    await focusesCard().catch(async () => { await card.locator('code').click(); await focusesCard(); });
-    await page.keyboard.press('End');
+    // The card node view can be replaced while it opens; retry the click once
+    // when the editable host lost focus during that remount.
+    await focusesCard().catch(async () => { await placeCaret(); await focusesCard(); });
+    const cardEnd = source.indexOf('# Source card') + '# Source card'.length;
+    await page.evaluate(() => editor.captureSelection());
+    const caret = await page.evaluate(() => editor.getSelection());
+    assert.deepEqual(caret, { anchor: cardEnd, head: cardEnd }, 'caret starts at the end of the source card');
     await page.evaluate(() => editor.resetStats());
     await page.keyboard.type('abc');
     const expected = source.replace('# Source card', '# Source cardabc');
