@@ -15,6 +15,7 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
     const markdown = page.locator('.folio-source-edit');
     assert.match(await markdown.textContent(), /x\^2 \+ y\^2/);
     await markdown.evaluate(element => window.getSelection().selectAllChildren(element));
+    await page.evaluate(() => editor.captureSelection());
     await page.waitForFunction(() => { const selection = editor.getSelection(); return selection.anchor !== selection.head; });
     await page.keyboard.insertText('\\[\nx^2 + y^2 = z^2\n\\]');
     await page.keyboard.press('Escape');
