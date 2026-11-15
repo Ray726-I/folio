@@ -2828,6 +2828,17 @@ export function createRichEditor(parent, options) {
         event.preventDefault(); return true;
       }
       if (model.sourceEdit && !options.isLocked() && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        // A source card is an explicit block-editing surface. Repeated plain
+        // horizontal arrows should stop at its edges rather than silently
+        // moving the caret into the surrounding rendered document. Modified
+        // selection/navigation and Escape still provide document-wide access.
+        const caret = editor.state.selection;
+        if (!event.shiftKey && caret.empty && caret.$head.parent.type === schema.nodes.raw_block
+            && caret.$head.parent.attrs.kind === 'source-edit'
+            && ((event.key === 'ArrowLeft' && caret.$head.parentOffset === 0)
+              || (event.key === 'ArrowRight' && caret.$head.parentOffset === caret.$head.parent.content.size))) {
+          event.preventDefault(); return true;
+        }
         const selection = sourceSelection(editor.state);
         let from = Math.min(selection.anchor, selection.head), to = Math.max(selection.anchor, selection.head);
         if (event.key === 'Escape') {
