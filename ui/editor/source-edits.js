@@ -127,41 +127,36 @@ function shiftModel(previous, step, patch, insert, intendedDoc) {
   // Pick the edited run by the *verified* source offset, not by position alone:
   // an insertion at a run boundary belongs to whichever run maps to the patch,
   // and adjacent runs both contain the position.
-  let editedRun = -1;
-  for (let index = 0; index < ledger.runs.length; index++) {
-    const candidate = ledger.runs[index];
-    if (!candidate.linear || candidate.kind !== 'text') continue;
-    if (candidate.pmFrom > step.from || candidate.pmTo < step.to) continue;
-    if (candidate.sourceTo - candidate.sourceFrom !== candidate.text.length) continue;
-    if (candidate.sourceFrom + (step.from - candidate.pmFrom) !== patch.from) continue;
-    editedRun = index; break;
-  }
-  if (editedRun < 0) return fail('run-not-found');
-  // A zero-length run (an empty paragraph) has no character to be "inside"; its
-  // source anchor needs the block separators rebuilt, which the splice does not
-  // do. Fall back for those.
-  if (ledger.runs[editedRun].text.length === 0) return fail('empty-run');
+  let editedRun = -1, covered = 0;
   const runs = [];
   for (let index = 0; index < ledger.runs.length; index++) {
     const run = ledger.runs[index];
-    if (index === editedRun) {
+    let next;
+    const matches = editedRun < 0 && run.linear && run.kind === 'text'
+      && run.pmFrom <= step.from && run.pmTo >= step.to
+      && run.sourceTo - run.sourceFrom === run.text.length
+      && run.sourceFrom + (step.from - run.pmFrom) === patch.from;
+    if (matches) {
+      // Preserve first-match affinity at touching run endpoints. An empty
+      // block still needs its separators rebuilt by the conservative path.
+      if (run.text.length === 0) return fail('empty-run');
+      editedRun = index;
       const localStart = step.from - run.pmFrom;
       const localEnd = step.to - run.pmFrom;
-      runs.push({ ...run,
+      next = { ...run,
         text: run.text.slice(0, localStart) + insert + run.text.slice(localEnd),
-        pmTo: run.pmTo + pmDelta, sourceTo: run.sourceTo + sourceDelta });
-      continue;
-    }
-    if (run.pmTo <= step.from) { runs.push(run); continue; }
-    if (run.pmFrom >= step.to) {
-      runs.push({ ...run,
+        pmTo: run.pmTo + pmDelta, sourceTo: run.sourceTo + sourceDelta };
+    } else if (run.pmTo <= step.from) next = run;
+    else if (run.pmFrom >= step.to) {
+      next = { ...run,
         pmFrom: run.pmFrom + pmDelta, pmTo: run.pmTo + pmDelta,
         sourceFrom: run.sourceFrom + sourceDelta, sourceTo: run.sourceTo + sourceDelta,
-        charMap: run.charMap ? run.charMap.map(char => ({ from: char.from + sourceDelta, to: char.to + sourceDelta })) : run.charMap });
-      continue;
-    }
-    return fail('run-overlap');
+        charMap: run.charMap ? run.charMap.map(char => ({ from: char.from + sourceDelta, to: char.to + sourceDelta })) : run.charMap };
+    } else return fail('run-overlap');
+    runs.push(next);
+    covered += Math.max(0, next.sourceTo - next.sourceFrom);
   }
+  if (editedRun < 0) return fail('run-not-found');
   // Only nodes in the edited top-level block can have new identity. Owners in
   // every other block keep the same immutable node, so rebuilding a document-
   // wide position map on every keystroke is wasted work.
@@ -174,18 +169,18 @@ function shiftModel(previous, step, patch, insert, intendedDoc) {
     segmentPmFrom = segmentPmTo;
   }
   if (edited < 0 || segments.length !== intendedDoc.childCount) return fail('edited-segment');
-  let editedPmFrom = 0;
-  for (let index = 0; index < edited; index++) editedPmFrom += segments[index].node.nodeSize;
+  const editedPmFrom = segmentPmFrom;
   const editedNode = intendedDoc.child(edited);
   const editedOldEnd = editedPmFrom + previous.doc.child(edited).nodeSize;
   const nodes = new Map();
   editedNode.descendants((node, position) => { if (!node.isText) nodes.set(editedPmFrom + 1 + position, node); });
   nodes.set(editedPmFrom, editedNode);
-  const owners = [];
+  const owners = [], ownerById = new Map();
   for (const owner of ledger.owners) {
     const inEdited = owner.pmFrom >= editedPmFrom && owner.pmFrom < editedOldEnd;
     if (!inEdited && owner.pmTo < step.to) {
       owners.push(owner);
+      ownerById.set(owner.id, owner);
       continue;
     }
     const shifted = { ...owner };
@@ -212,6 +207,7 @@ function shiftModel(previous, step, patch, insert, intendedDoc) {
     shifted.node = inEdited ? nodes.get(shifted.pmFrom) : owner.node;
     if (!shifted.node || shifted.node.type.name !== owner.type) return fail(`owner-node:${owner.type}:${shifted.pmFrom}:${editedPmFrom}:${editedNode.nodeSize}`);
     owners.push(shifted);
+    ownerById.set(shifted.id, shifted);
   }
   const ledgerGaps = ledger.gaps.map(gap => gap.sourceFrom >= patch.to
     ? { ...gap, sourceFrom: gap.sourceFrom + sourceDelta, sourceTo: gap.sourceTo + sourceDelta }
@@ -221,7 +217,7 @@ function shiftModel(previous, step, patch, insert, intendedDoc) {
     source: previous.source.slice(0, patch.from) + insert + previous.source.slice(patch.to),
     doc: intendedDoc,
     owners,
-    ownerById: new Map(owners.map(owner => [owner.id, owner])),
+    ownerById,
     runs,
     gaps: ledgerGaps,
     unmapped: ledger.unmapped.map(range => range.sourceFrom >= patch.to && range.pmFrom >= step.to
@@ -230,8 +226,6 @@ function shiftModel(previous, step, patch, insert, intendedDoc) {
       : range),
     metadata: (() => {
       const { exactOwners, partialOwners, unmappedOwners } = ledger.metadata;
-      let covered = 0;
-      for (const run of runs) covered += Math.max(0, run.sourceTo - run.sourceFrom);
       const sourceLength = ledger.metadata.sourceLength + sourceDelta;
       return {
         ...ledger.metadata,
