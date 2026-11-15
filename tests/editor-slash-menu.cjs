@@ -154,7 +154,12 @@ async function insertCommand(source, keys, typed = '') {
     await openSlash(page); await page.keyboard.type('code'); await page.keyboard.press('Enter');
     const language = page.getByRole('textbox', { name: 'Code fence info' });
     await language.waitFor({ state: 'visible', timeout: 3000 });
-    assert.equal(await language.evaluate(element => document.activeElement === element), true, 'new code blocks focus their language field');
+    // Focus is applied on the next animation frame after the block mounts, so
+    // wait for it instead of sampling the same frame that made the field visible.
+    await page.waitForFunction(() => {
+      const input = document.querySelector('.code-fence-info');
+      return !!input && !input.hidden && document.activeElement === input;
+    }, null, { timeout: 3000 });
     await page.keyboard.type('javascript'); await page.keyboard.press('Enter'); await page.keyboard.type('const x = 1;');
     await page.waitForFunction(() => current.content === 'Body.\n\n```javascript\nconst x = 1;\n```', null, { timeout: 3000 });
     assert.deepEqual(errors, []);
