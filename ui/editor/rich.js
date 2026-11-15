@@ -2048,7 +2048,7 @@ export function createRichEditor(parent, options) {
             view.focus();
           });
           return input;
-        }, { side: 1, stopEvent: () => true, destroy: node => refreshers.delete(node.folioRefresh) }));
+        }, { key: 'folio-trailing-input', side: 1, stopEvent: () => true, destroy: node => refreshers.delete(node.folioRefresh) }));
         const { selection } = state;
         const emptyDocument = state.doc.childCount === 1 && state.doc.firstChild?.type === schema.nodes.paragraph && state.doc.firstChild.content.size === 0;
         if (!options.isLocked() && !emptyDocument && selection.empty && selection.$from.depth === 1
@@ -2063,7 +2063,7 @@ export function createRichEditor(parent, options) {
             const label = document.createElement('span'); label.textContent = 'Type for blocks…';
             hint.append(key, label);
             return hint;
-          }, { side: 1 }));
+          }, { key: 'folio-empty-hint', side: 1 }));
         }
         return DecorationSet.create(state.doc, widgets);
       } } }),
@@ -4271,31 +4271,6 @@ export function createRichEditor(parent, options) {
   function syncTableChrome(rectangles) {
     if (!view) return;
     const locked = options.isLocked();
-    let anchor = null;
-    if (hoverAnchor && hoverAnchor.wrapper && hoverAnchor.wrapper.isConnected && hoverAnchor.table) {
-      anchor = hoverAnchor;
-    } else {
-      if (hoverAnchor) hoverAnchor = null;
-      const info = tableInfo();
-      if (info && info.wrapper && info.wrapper.isConnected) anchor = { ...info, zone: 'selection' };
-    }
-    // A focused control pins its chrome open for keyboard users even when
-    // the pointer is elsewhere.
-    if (anchor && (handlesLayer.contains(document.activeElement)
-        || document.activeElement === addRowBtn || document.activeElement === addColBtn)) {
-      const info = tableInfo();
-      if (info && info.wrapper && info.wrapper.isConnected) anchor = { ...info, zone: 'selection' };
-    }
-    addRowBtn.disabled = locked;
-    addColBtn.disabled = locked;
-    if (!anchor || !anchor.wrapper || !anchor.wrapper.isConnected) {
-      addRowBtn.hidden = true;
-      addColBtn.hidden = true;
-      handlesLayer.hidden = true;
-      dropLine.hidden = true;
-      closeTableMenu();
-      return;
-    }
     const wrapRect = rectangles?.get(anchor.wrapper) || anchor.wrapper.getBoundingClientRect();
     if (wrapRect.bottom < 0 || wrapRect.top > window.innerHeight || wrapRect.width <= 0 || wrapRect.height <= 0) {
       addRowBtn.hidden = true;
