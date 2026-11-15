@@ -11,8 +11,8 @@ const { openEditor } = require('./editor-browser.cjs');
    const action=host.getByRole('button',{name:`Expand ${kind}`});
    await action.waitFor({timeout:5000});
    assert.equal(await action.evaluate(el=>getComputedStyle(el).opacity),'0');
-   await host.hover(); assert.equal(await action.evaluate(el=>getComputedStyle(el).opacity),kind === 'table' ? '0' : '1');
-   if (kind === 'table') { await action.hover(); assert.equal(await action.evaluate(el=>getComputedStyle(el).opacity),'1'); }
+   await host.hover(); assert.equal(await action.evaluate(el=>getComputedStyle(el).opacity),'1','hovering the host reveals expand');
+   await action.hover(); assert.equal(await action.evaluate(el=>getComputedStyle(el).opacity),'1','hovering the control keeps it visible');
    await action.focus(); await page.keyboard.press('Enter');
    const dialog=page.getByRole('dialog',{name:`Expanded ${kind}`}); await dialog.waitFor();
    if (kind === 'math') {

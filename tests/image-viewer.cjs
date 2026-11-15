@@ -43,15 +43,15 @@ const { openEditor } = require('./editor-browser.cjs');
     const image = page.locator('#preview .image-widget img'); await image.waitFor();
     const expand = page.getByRole('button', {name:'Expand image'}); await expand.waitFor({timeout:3000});
     const before = await page.evaluate(() => current.content);
-    await expand.click(); const dialog = page.getByRole('dialog',{name:'Expanded image'}); await dialog.waitFor();
+    await expand.click(); const dialog = page.locator('dialog.diagram-viewer'); await dialog.waitFor({state:'visible'});
     assert.equal(await dialog.locator('img').getAttribute('alt'),'Landscape');
     assert.equal(await page.evaluate(() => current.content), before, 'opening the viewer never changes Markdown');
     // Fire the viewer's own close control directly. A late image-node refresh
-    // can close the viewer from under the pointer on slower CI hosts; the
-    // cleanup assertion below still requires the dialog to be hidden.
-    const close = dialog.getByRole('button',{name:'Close image'});
+    // can close the viewer before Playwright resolves it by role, so address
+    // the dialog and its control by CSS and tolerate an already-closed viewer.
+    const close = dialog.locator('button[aria-label="Close image"]');
     await close.waitFor({state:'attached'});
-    await close.evaluate(button => button.click());
+    if (await dialog.evaluate(element => element.open)) await close.evaluate(button => button.click());
     await dialog.waitFor({state:'hidden'});
     assert.deepEqual(session.errors, []);
     console.log('PASS: image expansion supports hover, fit, zoom, focus, cleanup and editor integrity');
