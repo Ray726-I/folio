@@ -197,8 +197,6 @@ function initializeDocumentAffordances() {
     refreshFormatState();
   };
   const schedule=()=>{
-    const selection=getSelection();
-    if(bubble.hidden&&(!selection||selection.isCollapsed))return;
     if(!bubbleFrame)bubbleFrame=requestAnimationFrame(updateBubble);
   };
   document.addEventListener('selectionchange',schedule);window.addEventListener('scroll',schedule,true);window.addEventListener('resize',schedule);
@@ -209,8 +207,9 @@ function initializeDocumentAffordances() {
   // Formatting can rebuild the paragraph DOM and leave the toolbar hidden
   // without a second selectionchange; reschedule after editor mutations too.
   new MutationObserver(() => {
-    const selection=getSelection();
-    if(bubble.hidden&&(!selection||selection.isCollapsed))return;
+    // Reading Selection here can force layout while the browser is still
+    // delivering an edit's DOM mutations. Coalesce the toolbar check into
+    // its frame, alongside its geometry reads, even for collapsed typing.
     schedule();
   }).observe($('preview'),{childList:true,subtree:true});
   bubble.onkeydown=event=>{if(event.key==='Escape'){event.preventDefault();hideFormatToolbar();editor?.focus();}};
