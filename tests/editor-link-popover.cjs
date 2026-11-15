@@ -5,6 +5,9 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
   const source = 'A [guide](https://example.com/guide) and [section](#target).\n\nBody text.\n\n## Target\n\n<a href="https://example.org/html">HTML link</a>\n\n[<kbd>keys</kbd>](https://example.org/keys)\n\n[prefix <kbd>wrapped</kbd> tail](https://example.org/wrap)\n';
   const s = await openIsolatedEditor(source, bundle.outfile, { width: 1000, height: 720 });
   const { page } = s;
+  // On macOS Control+click is the secondary-click gesture, so use Command for
+  // the modifier-open path the editor implements for both platforms.
+  const openModifier = process.platform === 'darwin' ? 'Meta' : 'Control';
   const popup = page.getByRole('dialog', { name: 'Link actions', exact: true });
   const link = () => page.getByRole('link', { name: 'guide', exact: true });
   const opened = () => page.evaluate(() => calls.filter(call => call.command === 'open_link').map(call => call.args.url));
@@ -31,7 +34,7 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
     await page.waitForFunction(() => current.content.includes('https://example.com/changed'));
     await page.keyboard.press('Control+z');
     await page.waitForFunction(value => current.content === value, source);
-    await link().click({ modifiers: ['Control'] });
+    await link().click({ modifiers: [openModifier] });
     await link().click({ button: 'middle' });
     assert.equal((await opened()).length, 3, 'modifier and middle clicks open directly');
     assert.equal(await popup.count(), 0);
@@ -59,7 +62,7 @@ const { buildEditorBundle, openIsolatedEditor } = require('./editor-temp-bundle.
     await page.getByRole('link', { name: 'HTML link', exact: true }).click(); await popup.waitFor({ timeout: 5000 });
     await popup.getByRole('button', { name: 'Open link', exact: true }).click();
     assert.equal((await opened()).at(-1), 'https://example.org/html');
-    await page.locator('.html-inline > a[href="https://example.org/keys"]').click({ modifiers: ['Control'] });
+    await page.locator('.html-inline > a[href="https://example.org/keys"]').click({ modifiers: [openModifier] });
     assert.equal((await opened()).at(-1), 'https://example.org/keys');
     await page.locator('.html-inline > a[href="https://example.org/keys"]').click(); await popup.waitFor({ timeout: 5000 });
     await popup.getByRole('button', { name: 'Edit link', exact: true }).click();
