@@ -11,7 +11,7 @@ import MarkdownIt from 'markdown-it';
 import { decodeHTML, decodeHTMLAttribute } from 'entities';
 import { schema, parseSource, updateSource, sourceToRich, richToSource, sourceMapping, richMapping, attachModel, INLINE_HTML_SPAN_TAGS } from './model.js';
 import { buildLedger, applySourcePatches } from './source-ledger.js';
-import { tryTextEdits, trySourceEdit } from './source-edits.js';
+import { tryTextEdits, trySourceEdit, trySourceCardEdit } from './source-edits.js';
 import { createHeadingMetadata } from './headings.js';
 import { parser as markdownParser, GFM } from '@lezer/markdown';
 
@@ -415,7 +415,7 @@ export function createRichEditor(parent, options) {
         sourceEdit = { from: from < sourceEdit.from ? Math.min(from, sourceEdit.from + delta) : sourceEdit.from,
           to: to <= sourceEdit.to ? sourceEdit.to + delta : Math.max(from + insert.length, sourceEdit.to) };
       }
-      parsed = sourceEdit ? parseSource(patched.source, sourceEdit) : trySourceEdit(model, { from, to, insert }) || parseSource(patched.source);
+      parsed = sourceEdit ? trySourceCardEdit(model, { from, to, insert }) || parseSource(patched.source, sourceEdit) : trySourceEdit(model, { from, to, insert }) || parseSource(patched.source);
     }
     catch {
       options.message('This edit could not be applied as an exact source change. The previous document is preserved.');

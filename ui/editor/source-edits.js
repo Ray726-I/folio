@@ -166,8 +166,12 @@ function shiftModel(previous, step, patch, insert, intendedDoc) {
   // every other block keep the same immutable node, so rebuilding a document-
   // wide position map on every keystroke is wasted work.
   let edited = -1;
+  let segmentPmFrom = 0;
   for (let index = 0; index < segments.length; index++) {
-    if (segments[index].from <= patch.from && segments[index].to >= patch.to) { edited = index; break; }
+    const segmentPmTo = segmentPmFrom + segments[index].node.nodeSize;
+    if (ledger.runs[editedRun].pmFrom >= segmentPmFrom && ledger.runs[editedRun].pmFrom < segmentPmTo &&
+        segments[index].from <= patch.from && segments[index].to >= patch.to) { edited = index; break; }
+    segmentPmFrom = segmentPmTo;
   }
   if (edited < 0 || segments.length !== intendedDoc.childCount) return fail('edited-segment');
   let editedPmFrom = 0;
@@ -455,4 +459,66 @@ export function trySourceEdit(previousModel, edit) {
   const patch = sourcePatchFor(ledger, step);
   if (!patch || patch.from !== edit.from || patch.to !== edit.to) return null;
   return localTextEdit(previousModel, step, patch, edit.insert);
+}
+
+// A source card is one literal raw_block, even when it projects several parsed
+// Markdown blocks. Parse it with both neighboring blocks and their separators:
+// unchanged neighbors and exact projected boundaries prove syntax stays inside
+// the card. Definitions have document-wide scope and retain the full parser.
+export function trySourceCardEdit(previousModel, edit) {
+  const { sourceEdit, ledger, segments, source } = previousModel || {};
+  if (!sourceEdit || !ledger || ledger.errors.length || !Array.isArray(segments) ||
+      previousModel.syntaxFacts?.hasReferences !== false || !edit ||
+      !Number.isInteger(edit.from) || !Number.isInteger(edit.to) || typeof edit.insert !== 'string' ||
+      edit.from < sourceEdit.from || edit.to > sourceEdit.to || edit.from > edit.to) return null;
+  const index = segments.findIndex(segment => segment.from === sourceEdit.from && segment.to === sourceEdit.to &&
+    segment.node.type.name === 'raw_block' && segment.node.attrs.kind === 'source-edit');
+  if (index < 0 || segments.length !== previousModel.doc.childCount) return null;
+  const segment = segments[index];
+  const owner = ledger.owners.find(item => item.node === segment.node && item.type === 'raw_block');
+  if (!owner || owner.confidence !== 'exact' || edit.from < owner.contentFrom || edit.to > owner.contentTo) return null;
+  // Display-math rules scan ahead across otherwise independent blocks. A new
+  // closer can activate a distant unmatched opener, or an opener can consume a
+  // distant closer. Probe entire affected lines, so deletions/joins that expose
+  // a delimiter are caught too; ordinary edits inside math bodies stay local.
+  const lineFrom = edit.from === 0 ? 0 : source.lastIndexOf('\n', edit.from - 1) + 1;
+  const newline = source.indexOf('\n', edit.to);
+  const lineTo = newline < 0 ? source.length : newline;
+  const affected = source.slice(lineFrom, edit.from) + edit.insert + source.slice(edit.to, lineTo);
+  const before = source.slice(lineFrom, lineTo);
+  const displayMath = /\$\$|\\\[|\\\]/;
+  if (displayMath.test(before) || displayMath.test(affected)) return null;
+  // Frontmatter uses the same unbounded lookahead from the first line. This
+  // also catches a delimiter exposed by deleting text or joining lines.
+  if ([before, affected].some(text => text.split('\n').some(line => line.trim() === '---'))) return null;
+  const first = Math.max(0, index - 1), last = Math.min(segments.length - 1, index + 1);
+  const windowFrom = first === 0 ? 0 : segments[first].from;
+  const windowTo = last === segments.length - 1 ? source.length : segments[last + 1].from;
+  // An unmatched opening frontmatter delimiter at the document start can be
+  // closed by an edit arbitrarily far away, before our preceding neighbor.
+  if (windowFrom && source.slice(0, source.indexOf('\n') < 0 ? source.length : source.indexOf('\n')).trim() === '---') return null;
+  const delta = edit.insert.length - (edit.to - edit.from);
+  const raw = source.slice(windowFrom, edit.from) + edit.insert + source.slice(edit.to, windowTo);
+  const projected = { from: sourceEdit.from - windowFrom, to: sourceEdit.to - windowFrom + delta };
+  let local;
+  try { local = parseSource(raw, projected); } catch { return null; }
+  if (local.syntaxFacts.hasReferences || local.sourceEdit?.from !== projected.from || local.sourceEdit?.to !== projected.to ||
+      local.segments.length !== last - first + 1) return null;
+  for (let i = first; i <= last; i++) {
+    const actual = local.segments[i - first], expected = segments[i];
+    if (actual.from !== expected.from - windowFrom + (i > index ? delta : 0) ||
+        actual.to !== expected.to - windowFrom + (i >= index ? delta : 0) ||
+        (i !== index && !actual.node.eq(expected.node))) return null;
+  }
+  const node = local.doc.child(index - first);
+  const expectedText = segment.node.textContent.slice(0, edit.from - segment.from) + edit.insert +
+    segment.node.textContent.slice(edit.to - segment.from);
+  if (node.type !== segment.node.type || node.attrs.kind !== 'source-edit' || node.textContent !== expectedText) return null;
+  const doc = previousModel.doc.copy(previousModel.doc.content.replaceChild(index, node));
+  const step = { from: owner.pmContentFrom + edit.from - owner.contentFrom, to: owner.pmContentFrom + edit.to - owner.contentFrom };
+  const next = shiftModel(previousModel, step, edit, edit.insert, doc);
+  if (!next) return null;
+  editDebug.local++;
+  editDebug.incremental++;
+  return { ...next, sourceEdit: { from: sourceEdit.from, to: sourceEdit.to + delta } };
 }
