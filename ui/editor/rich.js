@@ -4271,8 +4271,30 @@ export function createRichEditor(parent, options) {
   function syncTableChrome(rectangles) {
     if (!view) return;
     const locked = options.isLocked();
-    const wrapRect = rectangles?.get(anchor.wrapper) || anchor.wrapper.getBoundingClientRect();
-    if (wrapRect.bottom < 0 || wrapRect.top > window.innerHeight || wrapRect.width <= 0 || wrapRect.height <= 0) {
+    const focusedControl = handlesLayer.contains(document.activeElement)
+      || document.activeElement === addRowBtn || document.activeElement === addColBtn;
+    // Keyboard typing inside a table does not itself reveal overlays. Avoid
+    // resolving its map and forcing layout when all chrome stays hidden.
+    if (!hoverAnchor && !focusedControl && !handleDrag && handlesLayer.hidden
+        && addRowBtn.hidden && addColBtn.hidden) return;
+    let anchor = null;
+    if (hoverAnchor && hoverAnchor.wrapper && hoverAnchor.wrapper.isConnected && hoverAnchor.table) {
+      anchor = hoverAnchor;
+    } else {
+      if (hoverAnchor) hoverAnchor = null;
+      const info = tableInfo();
+      if (info && info.wrapper && info.wrapper.isConnected) anchor = { ...info, zone: 'selection' };
+    }
+    // A focused control pins its chrome open for keyboard users even when
+    // the pointer is elsewhere.
+    if (anchor && (handlesLayer.contains(document.activeElement)
+        || document.activeElement === addRowBtn || document.activeElement === addColBtn)) {
+      const info = tableInfo();
+      if (info && info.wrapper && info.wrapper.isConnected) anchor = { ...info, zone: 'selection' };
+    }
+    addRowBtn.disabled = locked;
+    addColBtn.disabled = locked;
+    if (!anchor || !anchor.wrapper || !anchor.wrapper.isConnected) {
       addRowBtn.hidden = true;
       addColBtn.hidden = true;
       handlesLayer.hidden = true;
@@ -4288,6 +4310,20 @@ export function createRichEditor(parent, options) {
     const showAddCol = zone === 'right' || (zone === 'selection' && document.activeElement === addColBtn);
     addRowBtn.hidden = !showAddRow;
     addColBtn.hidden = !showAddCol;
+    if (!showRowHandle && !showColHandle && !showAddRow && !showAddCol) {
+      handlesLayer.hidden = true;
+      dropLine.hidden = true;
+      return;
+    }
+    const wrapRect = rectangles?.get(anchor.wrapper) || anchor.wrapper.getBoundingClientRect();
+    if (wrapRect.bottom < 0 || wrapRect.top > window.innerHeight || wrapRect.width <= 0 || wrapRect.height <= 0) {
+      addRowBtn.hidden = true;
+      addColBtn.hidden = true;
+      handlesLayer.hidden = true;
+      dropLine.hidden = true;
+      closeTableMenu();
+      return;
+    }
     if (showAddRow) {
       const rowW = addRowBtn.offsetWidth || 28, rowH = addRowBtn.offsetHeight || 28;
       const rowLeft = Math.max(8, Math.min(window.innerWidth - rowW - 8, wrapRect.left + wrapRect.width / 2 - rowW / 2));
