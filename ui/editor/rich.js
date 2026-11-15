@@ -2086,10 +2086,6 @@ export function createRichEditor(parent, options) {
   // only a plain inline text range that differs replaces the selection.
   function captureDOMSelection() {
     if (!view) return;
-    // A valid source bookmark is the authoritative logical selection. Toggling
-    // to the source presentation must not replace it with a DOM position that
-    // has already been normalized through the non-injective projection.
-    if (bookmarkRange(view.state)) return;
     if (isTabCellSelection(view.state.selection)) return;
     const dom = window.getSelection();
     if (!dom || dom.rangeCount !== 1 || !dom.anchorNode || !dom.focusNode) return;
@@ -2107,6 +2103,10 @@ export function createRichEditor(parent, options) {
     // inline text range that differs from the selection it represents.
     if (!(current instanceof TextSelection) && current.anchor === anchor && current.head === head) return;
     const next = TextSelection.between($anchor, $head);
+    // Preserve exact source endpoints while their normalized DOM projection
+    // still matches. A secondary click can move the native caret without the
+    // primary-mousedown bookmark reset, so a differing DOM range must replace
+    // the old bookmark before opening a source card or running a command.
     if (current.eq(next)) return;
     view.dispatch(view.state.tr.setSelection(next));
   }
