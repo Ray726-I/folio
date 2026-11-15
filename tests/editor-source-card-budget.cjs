@@ -11,11 +11,24 @@ const { openMarkdown } = require('./editor-test-actions.cjs');
     const card = page.locator('.folio-source-edit');
     await card.waitFor();
     await card.locator('code').click();
+    // The card node view can be replaced while it opens. Make sure the editable
+    // host kept focus before sending End/typing so platform-specific scrolling
+    // keys cannot land outside the card on slower hosts.
+    const focusesCard = () => page.waitForFunction(() => {
+      const card = document.querySelector('.folio-source-edit');
+      return !!card && !!document.activeElement?.contains(card);
+    }, null, { timeout: 3000 });
+    await focusesCard().catch(async () => { await card.locator('code').click(); await focusesCard(); });
     await page.keyboard.press('End');
     await page.evaluate(() => editor.resetStats());
     await page.keyboard.type('abc');
     const expected = source.replace('# Source card', '# Source cardabc');
-    await page.waitForFunction(value => current.content === value, expected);
+    try {
+      await page.waitForFunction(value => current.content === value, expected);
+    } catch (error) {
+      const actual = await page.evaluate(() => current.content.slice(0, 120));
+      throw new Error(`source-card typing did not commit: ${JSON.stringify(actual)}`, { cause: error });
+    }
     const stats = await page.evaluate(() => editor.stats());
     assert.ok(stats.sourceParseBytes < 1000, `three source-card keystrokes parsed ${stats.sourceParseBytes} bytes of ${source.length}`);
     assert.equal(await page.locator('.folio-source-edit').count(), 1, 'typing keeps the source card active');

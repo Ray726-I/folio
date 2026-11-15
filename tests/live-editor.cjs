@@ -68,6 +68,7 @@ const source = '# Heading\n\nBefore **bold** café 😀.\n\n| First | Second |\n
     await mathSource.waitFor({ state: 'visible' });
     assert.equal(await page.evaluate(() => editor.isSource()), false, 'math edit stays in formatted mode');
     assert.ok((await mathSource.textContent()).includes('x^2'));
+    await mathSource.click();
     await mathSource.evaluate(element => { element.focus(); window.getSelection().selectAllChildren(element); });
     // selectionchange alone does not adopt a programmatic DOM range. Capture
     // it through the public editor API so the insert replaces the formula even
